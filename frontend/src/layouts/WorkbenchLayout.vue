@@ -62,11 +62,11 @@
       >
         <el-menu-item index="/creation">
           <el-icon><EditPen /></el-icon>
-          <template #title>主题创作</template>
+          <template #title>主题创作<span v-if="counts.creation" class="nav-count">{{ counts.creation }}</span></template>
         </el-menu-item>
         <el-menu-item index="/analysis">
           <el-icon><Document /></el-icon>
-          <template #title>资料分析</template>
+          <template #title>资料分析<span v-if="counts.analysis" class="nav-count">{{ counts.analysis }}</span></template>
         </el-menu-item>
         <el-menu-item index="/history">
           <el-icon><Clock /></el-icon>
@@ -78,13 +78,28 @@
         </el-menu-item>
       </el-menu>
 
-      <!-- 最近任务：结构骨架，真实列表属后续工单（TB-7 / TB-10） -->
+      <!-- 最近任务：读真实历史（最近 5 条），点击续作 / 打开 -->
       <div class="side-block">
         <div class="side-block-head">
           <h2>最近任务</h2>
         </div>
-        <p class="side-empty">
-          任务历史列表（工单 TB-10）。可先在「主题创作」页新建任务。
+        <div v-if="recent.length" class="side-task-list">
+          <button
+            v-for="it in recent"
+            :key="it.id"
+            class="task-item"
+            type="button"
+            @click="clickRecent(it)"
+          >
+            <div class="t-top">
+              <i class="tf-dot" :class="statusInfo(it.status).dot"></i>
+              <span class="t-name">{{ it.title || '未命名任务' }}</span>
+            </div>
+            <div class="t-meta">第 {{ it.rounds }} 轮 · {{ it.dialogue_messages }} 条 · {{ relTime(it.updated_at) }}</div>
+          </button>
+        </div>
+        <p v-else class="side-empty">
+          {{ backend === 'down' ? '后端未启动，暂无法加载最近任务。' : '还没有任务，到「主题创作」发起一条。' }}
         </p>
       </div>
 
@@ -119,12 +134,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { Clock, Document, EditPen, Lock, Setting } from '@element-plus/icons-vue'
-import { checkHealth } from '../api/client'
+import { checkHealth, listHistory, type HistoryCounts, type HistoryItem } from '../api/client'
+import { statusFromTask } from '../utils/resumeMeta'
 
 const route = useRoute()
+const router = useRouter()
 
 // 侧栏高亮跟随当前路由（/creation、/analysis、/history、/settings）。
 const activeRoute = computed(() => route.path)
@@ -148,11 +165,49 @@ const backendLabel = computed(
     ({ checking: '检测中…', ok: '正常', down: '未启动' })[backend.value]
 )
 
+// 最近任务 + 导航徽标分计数（一次 GET /history 拿齐）。
+const recent = ref<HistoryItem[]>([])
+const counts = ref<HistoryCounts>({ all: 0, creation: 0, analysis: 0 })
+
+function statusInfo(status: HistoryItem['status']) {
+  return statusFromTask(status)
+}
+
+function relTime(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const diff = (Date.now() - d.getTime()) / 1000
+  if (diff < 60) return '刚刚'
+  if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`
+  if (diff < 86400) return `今天 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  if (diff < 172800) return '昨天'
+  return `${d.getMonth() + 1} 月 ${d.getDate()} 日`
+}
+
+async function loadRecent(): Promise<void> {
+  try {
+    const res = await listHistory({ limit: 5 })
+    recent.value = res.items
+    counts.value = res.counts
+  } catch {
+    recent.value = []
+    counts.value = { all: 0, creation: 0, analysis: 0 }
+  }
+}
+
+function clickRecent(item: HistoryItem): void {
+  if (item.kind === 'creation') router.push(`/creation?task=${item.id}`)
+  else router.push('/analysis')
+}
+
 // 窄屏自动收为图标栏，保证内容区不被挤压；
 // 真正的离屏抽屉（遮罩 + 浮层）成本高，留待后续工单实现（见报告遗留点）。
 function applyResponsive(): void {
   if (window.innerWidth <= 760) collapsed.value = true
 }
+
+// 进入各视图时刷新最近任务（本地单用户，一次 limit=5 的 GET 足够轻）。
+watch(() => route.path, loadRecent)
 
 onMounted(() => {
   applyResponsive()
@@ -164,6 +219,7 @@ onMounted(() => {
     .catch(() => {
       backend.value = 'down'
     })
+    .finally(loadRecent)
 })
 
 onBeforeUnmount(() => {
@@ -271,6 +327,19 @@ onBeforeUnmount(() => {
   border-right: none;
   background: transparent;
 }
+.nav-count {
+  margin-left: 8px;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  background: var(--bg-sunken);
+  border-radius: var(--r-pill);
+  padding: 0 7px;
+  font-weight: 400;
+}
+:deep(.el-menu-item.is-active) .nav-count {
+  background: var(--bg-surface);
+  color: var(--brand-600);
+}
 
 /* 最近任务骨架 */
 .side-block {
@@ -303,6 +372,47 @@ onBeforeUnmount(() => {
   color: var(--text-4);
   background: var(--bg-sunken);
   border-radius: var(--r-sm);
+}
+
+/* 最近任务列表（状态点 + 名称 + 元信息行，对齐原型 .task-item） */
+.side-task-list {
+  overflow: auto;
+  min-height: 0;
+  padding-bottom: var(--sp-2);
+}
+.task-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 1px solid transparent;
+  background: none;
+  border-radius: var(--r-sm);
+  padding: var(--sp-2);
+  margin-bottom: 2px;
+}
+.task-item:hover {
+  background: var(--bg-hover);
+  border-color: var(--line-1);
+}
+.t-top {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.t-name {
+  font-size: var(--fs-sm);
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.t-meta {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  padding-left: 16px;
+  margin-top: 2px;
 }
 
 /* 侧栏脚部：真实环境信息 */

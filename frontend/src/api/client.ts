@@ -432,6 +432,130 @@ export function resolveOpenItem(
   })
 }
 
+/* ============================================================
+   历史、续作与删除 —— TB-10
+   权威来源：backend/app/models/{history,task}.py、routes/{history,tasks}.py
+   ============================================================ */
+
+/** 续作的下一步动作（由已持久化数据推导）。 */
+export type ResumeNext =
+  | 'answers'
+  | 'advance'
+  | 'plan_confirm'
+  | 'generation'
+  | 'completed'
+  | 'deleted'
+
+/** 历史列表中的一条任务（含元信息行所需字段）。 */
+export interface HistoryItem {
+  id: number
+  kind: TaskKind
+  title: string | null
+  status: TaskStatus
+  created_at: string
+  updated_at: string
+  dialogue_messages: number
+  rounds: number
+}
+
+/** 导航徽标用的分计数（全局，不随过滤变化）。 */
+export interface HistoryCounts {
+  all: number
+  creation: number
+  analysis: number
+}
+
+/** 历史列表响应：当页条目 + 过滤后总数 + 分页参数 + 分计数。 */
+export interface HistoryListResponse {
+  items: HistoryItem[]
+  total: number
+  limit: number
+  offset: number
+  counts: HistoryCounts
+}
+
+/** 任务详情 + 续作状态（「打开详情并续作」的单一入口）。 */
+export interface HistoryDetail {
+  task: Task
+  deleted_at: string | null
+  dialogue: Dialogue
+  plan: Plan | null
+  open_items: OpenItem[]
+  unresolved_open_items: number
+  last_round_no: number
+  pending_round: FrontierRound | null
+  awaiting: ResumeNext
+}
+
+/** 删除影响范围（确认弹层数据源；数字全部来自真实持久化数据）。 */
+export interface DeletionImpact {
+  task_id: number
+  title: string | null
+  kind: TaskKind
+  status: TaskStatus
+  dialogue_messages: number
+  rounds: number
+  plans: number
+  plan_revisions: number
+  open_items: number
+  deliverable_files: number
+  summary: string
+}
+
+/** 删除结果：软删除后的任务留痕 + 本次确认的影响范围。 */
+export interface DeletionResult {
+  task: Task
+  deleted_at: string
+  already_deleted: boolean
+  impact: DeletionImpact
+}
+
+export interface HistoryQuery {
+  kind?: TaskKind
+  status?: TaskStatus
+  limit?: number
+  offset?: number
+}
+
+/** 历史列表：GET /api/history。默认排除已删除；显式 status=deleted 查留痕。 */
+export function listHistory(params: HistoryQuery = {}): Promise<HistoryListResponse> {
+  const query = new URLSearchParams()
+  if (params.kind) query.set('kind', params.kind)
+  if (params.status) query.set('status', params.status)
+  if (params.limit != null) query.set('limit', String(params.limit))
+  if (params.offset != null) query.set('offset', String(params.offset))
+  const qs = query.toString()
+  return request<HistoryListResponse>(qs ? `/history?${qs}` : '/history')
+}
+
+/** 打开详情并续作：GET /api/history/{id}（复原所需一切 + awaiting / pending_round）。 */
+export function getHistoryDetail(taskId: number): Promise<HistoryDetail> {
+  return request<HistoryDetail>(`/history/${taskId}`)
+}
+
+/** 删除影响范围预览：GET /api/tasks/{id}/deletion-impact（不改动任何数据）。 */
+export function getDeletionImpact(taskId: number): Promise<DeletionImpact> {
+  return request<DeletionImpact>(`/tasks/${taskId}/deletion-impact`)
+}
+
+/**
+ * 删除任务：DELETE /api/tasks/{id}?confirm=true。
+ * 不带 confirm 后端返回 409（detail 即影响范围）；带 confirm 走软删除（留痕、不丢数据）。
+ */
+export function deleteTask(taskId: number, confirm: boolean): Promise<DeletionResult> {
+  return request<DeletionResult>(`/tasks/${taskId}?confirm=${confirm ? 'true' : 'false'}`, {
+    method: 'DELETE'
+  })
+}
+
+/** 状态迁移：POST /api/tasks/{id}/status（进行中 ↔ 已完成；deleted 只能走删除入口）。 */
+export function setTaskStatus(taskId: number, status: 'in_progress' | 'completed'): Promise<Task> {
+  return request<Task>(`/tasks/${taskId}/status`, {
+    method: 'POST',
+    body: JSON.stringify({ status })
+  })
+}
+
 export default {
   API_BASE_URL,
   checkHealth,
@@ -455,5 +579,10 @@ export default {
   revisePlan,
   listRevisions,
   listOpenItems,
-  resolveOpenItem
+  resolveOpenItem,
+  listHistory,
+  getHistoryDetail,
+  getDeletionImpact,
+  deleteTask,
+  setTaskStatus
 }

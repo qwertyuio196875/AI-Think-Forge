@@ -109,6 +109,15 @@
           <template v-else-if="dialogue">
             <div v-if="dayLabel" class="day-sep">{{ dayLabel }}</div>
 
+            <!-- 续作提示：仅当由历史 / 侧栏进入（带真实 awaiting）时显示 -->
+            <div v-if="awaiting" class="note resume" :class="awaiting === 'deleted' ? 'warn' : 'info'">
+              <el-icon class="ico"><InfoFilled /></el-icon>
+              <div class="note-body">
+                <b>续作 · {{ awaitingLabel(awaiting) }}</b>
+                <span>{{ awaitingResumeHint(awaiting) }}</span>
+              </div>
+            </div>
+
             <!-- 种子输入（用户原始想法）——真实内容，不拆解成“目标/背景” -->
             <div v-if="dialogue.seed_input" class="msg-user">
               <div class="bubble"><p>{{ dialogue.seed_input }}</p></div>
@@ -496,7 +505,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   ArrowLeft,
@@ -517,6 +527,7 @@ import {
   BackendUnavailableError,
   confirmPlan as confirmPlanApi,
   getDialogue,
+  getHistoryDetail,
   getPlan,
   isSkipAnswer,
   listOpenItems,
@@ -533,13 +544,17 @@ import {
   type PlanChangeKind,
   type PlanRevision,
   type ResolveStatus,
+  type ResumeNext,
   type Task
 } from '../api/client'
 import { splitPlanSections } from '../utils/markdown'
 import { formatDateTime, statusDotClass, statusLabel } from '../utils/taskMeta'
+import { awaitingLabel, awaitingResumeHint } from '../utils/resumeMeta'
 
 type ListState = 'loading' | 'ready' | 'error'
 type ChatState = 'loading' | 'ready' | 'error'
+
+const route = useRoute()
 
 const items = ref<Task[]>([])
 const listState = ref<ListState>('loading')
@@ -569,6 +584,8 @@ const starting = ref(false)
 const drafts = ref<string[]>([])
 const skippedQ = ref<number[]>([])
 const ideaRef = ref<HTMLTextAreaElement | null>(null)
+
+const awaiting = ref<ResumeNext | null>(null)
 
 const isChat = computed(() => view.value === 'chat')
 
@@ -782,6 +799,7 @@ async function startIdea(): Promise<void> {
     showRevisions.value = false
     reviseText.value = ''
     expandedIds.value = []
+    awaiting.value = null
     syncDrafts(d)
     view.value = 'chat'
     idea.value = ''
@@ -802,8 +820,40 @@ async function openTask(t: Task): Promise<void> {
   showRevisions.value = false
   reviseText.value = ''
   expandedIds.value = []
+  awaiting.value = null
   view.value = 'chat'
   await reloadDialogue()
+}
+
+/** 从历史 / 侧栏进入：用 history 详情一次复原对话、方案与待确认事项，并显示「停在哪一步」。 */
+async function resumeByTaskId(id: number): Promise<void> {
+  activeTask.value = null
+  dialogue.value = null
+  plan.value = null
+  openItems.value = []
+  revisions.value = []
+  showRevisions.value = false
+  expandedIds.value = []
+  dialogueState.value = 'loading'
+  view.value = 'chat'
+  try {
+    const d = await getHistoryDetail(id)
+    activeTask.value = d.task
+    dialogue.value = d.dialogue
+    plan.value = d.plan
+    openItems.value = d.open_items
+    awaiting.value = d.awaiting
+    syncDrafts(d.dialogue)
+    revisions.value = d.plan ? (await listRevisions(id)).items : []
+    dialogueState.value = 'ready'
+  } catch (err) {
+    dialogue.value = null
+    plan.value = null
+    awaiting.value = null
+    dialogueState.value = 'error'
+    dialogueError.value =
+      err instanceof BackendUnavailableError ? '后端未启动，无法打开任务' : '打开任务失败'
+  }
 }
 
 async function reloadDialogue(): Promise<void> {
@@ -857,6 +907,7 @@ function backToList(): void {
   drafts.value = []
   skippedQ.value = []
   expandedIds.value = []
+  awaiting.value = null
   loadTasks()
 }
 
@@ -871,6 +922,7 @@ async function newTask(): Promise<void> {
   reviseText.value = ''
   drafts.value = []
   skippedQ.value = []
+  awaiting.value = null
   idea.value = ''
   await nextTick()
   ideaRef.value?.focus()
@@ -906,6 +958,7 @@ async function advanceAndRefresh(): Promise<boolean> {
   const task = activeTask.value
   if (!task) return false
   const res = await advanceGrilling(task.id)
+  awaiting.value = null
   await refreshChat()
   return res.converged
 }
@@ -977,6 +1030,7 @@ async function doConfirm(): Promise<void> {
   try {
     plan.value = await confirmPlanApi(task.id)
     confirmDialog.value = false
+    awaiting.value = null
     ElMessage.success('方案已确认')
   } catch (err) {
     ElMessage.error(describeFlowError(err, '确认'))
@@ -1029,7 +1083,25 @@ function describeFlowError(err: unknown, action: string): string {
   return `${action}失败：${msg}`
 }
 
-onMounted(loadTasks)
+function taskIdFromQuery(): number | null {
+  const raw = route.query.task
+  const id = Array.isArray(raw) ? Number(raw[0]) : Number(raw)
+  return Number.isFinite(id) && id > 0 ? id : null
+}
+
+// 进入本页时：带 ?task=id（来自历史页 / 左栏「最近任务」）→ 直接续作；否则显示任务列表。
+watch(
+  () => route.query.task,
+  () => {
+    const id = taskIdFromQuery()
+    if (id) void resumeByTaskId(id)
+  },
+  { immediate: true }
+)
+
+onMounted(() => {
+  if (!taskIdFromQuery()) void loadTasks()
+})
 </script>
 
 <style scoped>
