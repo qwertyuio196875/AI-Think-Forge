@@ -7,6 +7,7 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.ruff_cache/
 *.egg-info/
 
 # Node / 前端构建兜底（frontend/.gitignore 已覆盖大部分）
@@ -15,5 +16,6 @@ dist/
 
 # 工具与本地环境
 .openchamber/
+.slim/
 .env
 *.local

@@ -29,17 +29,17 @@
 
 ## 当前状态
 
-本项目**处于文档与规格先行阶段，功能实现尚未开始**。请勿把读到的规格当作可用能力。
+领域文档与规格已就位，**后端行走骨架（TB-0）已落地并带自动化测试**；其余功能与前端仍在按曳光弹工单推进。除下表标 ✅ 者外，请以规格为准，勿当作已实现能力。
 
 | 部分 | 现状 |
 | --- | --- |
 | 领域文档 | ✅ `GLOSSARY.md`、`docs/adr/0001~0003` |
 | 规格与工单 | ✅ 权威规格 `.scratch/workbench-v1/issues/08-v1-unified-spec.md`；曳光弹工单 TB-0 ~ TB-10 |
 | 页面原型 | ✅ `.scratch/workbench-v1/prototype/index.html`（静态自包含四视图，含评审标注 `REVIEW.md`） |
-| 前端骨架 | ⚠️ 部分：三栏壳与四路由已就位，但 `src/views/` 尚未落地，`npm run build` 目前会因缺少视图组件而失败 |
-| 后端 | ⚠️ 仅空虚拟环境 `backend/.venv`（Python 3.12.10），尚无应用代码 |
-| 运行时目录 | ⬜ `data/`、`templates/`、`启动.bat`、根 `.gitignore` 尚未建立（由 TB-0 落地） |
-| 自动化测试 | ⬜ 尚无 |
+| 前端骨架 | ⚠️ 部分：三栏壳与四路由已就位；`src/views/` 视图组件与构建由并行前端工作推进 |
+| 后端 | ✅ 行走骨架 TB-0：FastAPI 应用（`backend/app`）、`tasks` 最小表、健康检查与任务创建 / 列表 / 读取、模型客户端与 URL 抓取两个 fake 注入点接缝 |
+| 运行时目录 | ✅ `data/`（运行时 SQLite 落此处，gitignored）、`启动.bat`、根 `.gitignore`（覆盖 `/data/`、`/templates/`、`.slim/`） |
+| 自动化测试 | ✅ `backend/tests`（pytest，进程内 HTTP 接缝，12 项通过） |
 
 ---
 
@@ -95,7 +95,40 @@ npm run dev      # Vite 开发服务器，默认 http://localhost:5173
 
 ### 后端
 
-后端应用尚未实现。TB-0（行走骨架）完成后，预计提供一条 `启动.bat`：拉起后端并托管前端构建产物，浏览器直接打开工作台。届时本节会更新为可复现的真实步骤。
+后端为 FastAPI 应用（`backend/app`），仅监听本机回环 `127.0.0.1:8720`，API 前缀 `/api`；`tasks` 表在应用启动时幂等建表，SQLite 文件落在 `data/`（gitignored）。
+
+首次准备（在仓库根）：
+
+```powershell
+python -m venv backend\.venv
+backend\.venv\Scripts\python.exe -m pip install fastapi "uvicorn[standard]" pydantic httpx pytest ruff
+```
+
+> 依赖记录在根 `pyproject.toml`（运行时依赖 + `dev` extras），不另设 `requirements.txt`。
+
+运行测试（在仓库根；进程内 HTTP 接缝，不起端口、不联网）：
+
+```powershell
+backend\.venv\Scripts\python.exe -m pytest -q
+```
+
+启动后端（开发）：
+
+```powershell
+cd backend
+.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8720
+```
+
+或直接双击仓库根 `启动.bat`：拉起后端，若 `frontend/dist` 存在则由后端静态托管工作台并自动打开浏览器。
+
+当前提供的 API：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/health` | 存活探针，返回 `{"status":"ok",...}` |
+| POST | `/api/tasks` | 创建任务，body `{"kind":"creation"\|"analysis","title":string?}` → 201 |
+| GET | `/api/tasks?kind=&status=` | 任务列表 `{"items":[...],"total":n}` |
+| GET | `/api/tasks/{id}` | 单个任务；不存在返回 404 |
 
 ---
 

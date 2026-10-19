@@ -1,0 +1,36 @@
+# ThinkForge 本地工作台 —— 项目与工具配置（唯一依赖来源）
+#
+# 依赖只在此处记录，不另建 requirements.txt，避免两套并存。
+# 运行时依赖在 [project].dependencies，开发/测试依赖在 [project.optional-dependencies].dev。
+
+[project]
+name = "thinkforge"
+version = "0.1.0"
+description = "运行在个人 Windows 上的 AI 阅读与内容创作工作台（本地 FastAPI 后端）"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "httpx>=0.27",
+    "pytest>=8.3",
+    "ruff>=0.7",
+]
+
+[tool.pytest.ini_options]
+# 让 `import app.*` 可用：把 backend/ 加入导入路径，测试可从仓库根直接运行。
+pythonpath = ["backend"]
+testpaths = ["backend/tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint.isort]
+# `app` 是后端应用包（位于 backend/），按第一方导入排序。
+known-first-party = ["app"]
