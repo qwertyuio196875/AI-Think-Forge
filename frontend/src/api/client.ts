@@ -72,7 +72,17 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   if (!response.ok) {
-    throw new Error(`请求失败：${response.status} ${response.statusText}`)
+    // 附带 FastAPI 的可读 detail（若有），让 400/409/500 等原因在前端可直接展示；
+    // 保留「请求失败：<code>」前缀，既有按状态码分支（includes('404') 等）不受影响。
+    let detail = ''
+    try {
+      const body = (await response.json()) as { detail?: unknown }
+      if (body && typeof body.detail === 'string') detail = body.detail
+    } catch {
+      // 非 JSON 错误体（如纯文本）忽略
+    }
+    const base = `请求失败：${response.status} ${response.statusText}`
+    throw new Error(detail ? `${base} · ${detail}` : base)
   }
 
   if (response.status === 204) {
@@ -334,11 +344,112 @@ export function confirmPlan(taskId: number): Promise<Plan> {
 
 /**
  * 请求生成成品：POST /api/tasks/{id}/generations。
- * 服务端硬闸门：无方案 / 未确认 → 409；仍有未处置待确认事项 → 409；
- * 已确认且无未定条目 → 501（生成管线属 TB-5/TB-6）。当前任何调用都会抛错。
+ * 服务端硬闸门：无方案 / 未确认 / 有未处置待确认事项 → 409；单文件 HTML（format=html）→ 501（TB-6）；
+ * 模板缺失 / 非 .docx → 400；完整性检查未过 → 500。通过后产出 .docx 并返回生成记录 + 产物元数据。
  */
-export function requestGeneration(taskId: number): Promise<void> {
-  return request<void>(`/tasks/${taskId}/generations`, { method: 'POST' })
+export function generateDeliverable(
+  taskId: number,
+  req: GenerationRequest = {}
+): Promise<GenerationResponse> {
+  return request<GenerationResponse>(`/tasks/${taskId}/generations`, {
+    method: 'POST',
+    body: JSON.stringify({
+      format: req.format ?? 'docx',
+      template: req.template && req.template.length > 0 ? req.template : null
+    })
+  })
+}
+
+/* ============================================================
+   成品（generation）与模板（template）—— TB-5
+   权威来源：backend/app/models/generation.py、routes/{generations,templates}.py
+   术语：成品 / 模板 / 默认模板 / 临时覆盖（临时选择不改变全局默认）。
+   ============================================================ */
+
+/** 成品格式（ADR-0003 首版双轨；pptx 不在后端枚举 = v1.1 计划，前端只作不可用展示）。 */
+export type GenerationFormat = 'docx' | 'html'
+
+/** 生成记录（GET 列表项的字段集）。 */
+export interface Generation {
+  id: number
+  task_id: number
+  plan_id: number
+  format: GenerationFormat
+  file_path: string
+  template_used: string
+  created_at: string
+}
+
+/** 生成结果：记录 + 产物元数据（样式是否贴合模板、完整性检查结论）。 */
+export interface GenerationResponse extends Generation {
+  template_style_applied: boolean
+  missing_styles: string[]
+  headings: number
+  integrity_ok: boolean
+}
+
+/** 某任务的成品列表。 */
+export interface GenerationListResponse {
+  items: Generation[]
+  total: number
+}
+
+/** 生成请求：格式 + 可选的任务级临时覆盖模板（不改变全局默认）。 */
+export interface GenerationRequest {
+  format?: GenerationFormat
+  template?: string | null
+}
+
+/** 模板条目：名称 / 格式 / 是否全局默认 / 是否内置 / 可用 / 已登记 / 文件已缺失。 */
+export interface Template {
+  name: string
+  format: string
+  is_default: boolean
+  builtin: boolean
+  usable: boolean
+  registered: boolean
+  missing: boolean
+}
+
+/** 模板清单。 */
+export interface TemplateListResponse {
+  items: Template[]
+  total: number
+}
+
+/** 登记 / 设默认结果：模板条目 + 该格式当前生效的全局默认名。 */
+export interface TemplateRegisterResponse {
+  template: Template
+  default_template: string | null
+}
+
+/** 某任务的成品记录列表：GET /api/tasks/{id}/generations。 */
+export function listGenerations(taskId: number): Promise<GenerationListResponse> {
+  return request<GenerationListResponse>(`/tasks/${taskId}/generations`)
+}
+
+/** 模板清单：GET /api/templates（以模板目录实际情况为准）。 */
+export function getTemplates(): Promise<TemplateListResponse> {
+  return request<TemplateListResponse>('/templates')
+}
+
+/** 登记模板：POST /api/templates（只接受已放入 templates/ 的 .docx；非 .docx → 400）。 */
+export function registerTemplate(
+  name: string,
+  isDefault = false
+): Promise<TemplateRegisterResponse> {
+  return request<TemplateRegisterResponse>('/templates', {
+    method: 'POST',
+    body: JSON.stringify({ name, is_default: isDefault })
+  })
+}
+
+/** 设为全局默认模板：PUT /api/templates/{name}/default（同格式至多一个默认）。 */
+export function setDefaultTemplate(name: string): Promise<TemplateRegisterResponse> {
+  return request<TemplateRegisterResponse>(
+    `/templates/${encodeURIComponent(name)}/default`,
+    { method: 'PUT' }
+  )
 }
 
 /* ============================================================
@@ -575,7 +686,11 @@ export default {
   advanceGrilling,
   getPlan,
   confirmPlan,
-  requestGeneration,
+  generateDeliverable,
+  listGenerations,
+  getTemplates,
+  registerTemplate,
+  setDefaultTemplate,
   revisePlan,
   listRevisions,
   listOpenItems,

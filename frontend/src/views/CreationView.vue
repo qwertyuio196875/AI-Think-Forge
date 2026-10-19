@@ -420,11 +420,17 @@
                   >
                     确认方案
                   </el-button>
-                  <el-button v-else size="large" disabled>生成成品（待接入）</el-button>
 
                   <p class="hint">{{ generationHint }}</p>
                 </div>
               </div>
+
+              <!-- 生成面板：确认且无未处置项后真实可用（Word 成品） -->
+              <GenerationPanel
+                :task-id="plan.task_id"
+                :locked="panelLocked"
+                :lock-reason="panelLockReason"
+              />
             </template>
           </template>
         </template>
@@ -550,6 +556,7 @@ import {
 import { splitPlanSections } from '../utils/markdown'
 import { formatDateTime, statusDotClass, statusLabel } from '../utils/taskMeta'
 import { awaitingLabel, awaitingResumeHint } from '../utils/resumeMeta'
+import GenerationPanel from '../components/GenerationPanel.vue'
 
 type ListState = 'loading' | 'ready' | 'error'
 type ChatState = 'loading' | 'ready' | 'error'
@@ -685,7 +692,19 @@ const generationHint = computed(() => {
       ? `仍有 ${openItemCount.value} 项待确认事项未处置；处置并确认后才会进入生成`
       : '确认前不会生成任何成品；方案的修改通过上方「继续对话修订方案」进行'
   if (openItemCount.value > 0) return `仍有 ${openItemCount.value} 项待确认事项未处置 · 生成闸门关闭`
-  return '闸门已放行 · 成品生成（Word / 单文件 HTML）由 TB-5 / TB-6 落地，此处不提供可用假象'
+  return '方案已确认 · 可在下方「生成面板」产出 Word 成品（单文件 HTML 属 TB-6，暂不可用）'
+})
+
+const panelLocked = computed(
+  () => !(plan.value?.status === 'confirmed' && openItemCount.value === 0)
+)
+const panelLockReason = computed(() => {
+  if (!plan.value) return '尚未生成结构化方案。'
+  if (plan.value.status !== 'confirmed')
+    return '方案还是草稿，确认后才进入生成；未经确认的推测不会写进任何文件。'
+  if (openItemCount.value > 0)
+    return `还有 ${openItemCount.value} 项待确认事项未处置，请先在上方处置（确认或驳回）后再生成。`
+  return ''
 })
 
 function changeKindText(kind: PlanChangeKind): string {
@@ -735,7 +754,7 @@ const steps = computed(() => {
       no: 4,
       label: '生成成品',
       state: plan.value?.status === 'confirmed' ? 'now' : 'todo',
-      note: plan.value?.status === 'confirmed' ? '待 TB-5 / TB-6' : '未开始'
+      note: plan.value?.status === 'confirmed' ? 'Word 可生成 · HTML 属 TB-6' : '未开始'
     }
   ]
 })

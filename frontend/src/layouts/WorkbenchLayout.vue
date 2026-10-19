@@ -121,6 +121,11 @@
           <el-icon class="env-ico"><Lock /></el-icon>
           <span>仅监听本机回环 · 数据不出机（除调用云端模型）</span>
         </div>
+        <div class="budget">
+          <div class="budget-line">额度 · <b>暂无数据</b></div>
+          <div class="bar"><i style="width: 0"></i></div>
+          <div class="budget-sub">无额度统计接口，未伪造数字（属后续工单）</div>
+        </div>
       </div>
     </aside>
 
@@ -443,6 +448,34 @@ onBeforeUnmount(() => {
   color: var(--text-3);
 }
 
+/* 额度条：无数据时如实标注，进度条留空不伪造 */
+.budget {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+.budget-line b {
+  color: var(--text-2);
+  font-weight: 600;
+}
+.bar {
+  height: 4px;
+  border-radius: var(--r-pill);
+  background: var(--line-1);
+  overflow: hidden;
+  margin-top: 5px;
+}
+.bar > i {
+  display: block;
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: var(--brand-500);
+  width: 0;
+}
+.budget-sub {
+  margin-top: 3px;
+  color: var(--text-4);
+}
+
 /* 主列 */
 .main {
   display: flex;
@@ -463,7 +496,8 @@ onBeforeUnmount(() => {
 }
 .shell.rail .wordmark,
 .shell.rail .rail-toggle,
-.shell.rail .side-block {
+.shell.rail .side-block,
+.shell.rail .budget {
   display: none;
 }
 .shell.rail .side-foot {

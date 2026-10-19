@@ -158,6 +158,119 @@
           </div>
         </section>
 
+        <!-- ============ 默认模板 ============ -->
+        <section class="sec">
+          <header>
+            <h3>默认模板</h3>
+            <p>全局默认模板 + 任务级临时覆盖；每次生成记录实际所用模板。Word 模板由你提供，系统从不联网搜模板</p>
+          </header>
+          <div class="sec-body">
+            <div v-if="tplState === 'loading'" class="list-loading">
+              <el-skeleton :rows="2" animated />
+            </div>
+            <div v-else-if="tplState === 'error'" class="note err" role="alert">
+              <el-icon class="ico"><WarningFilled /></el-icon>
+              <div class="note-body">
+                <b>{{ tplError }}</b>
+                <span>暂时读不到模板目录。</span>
+                <div><el-button size="small" @click="loadTemplates">重新加载</el-button></div>
+              </div>
+            </div>
+
+            <template v-else>
+              <!-- Word 模板清单 -->
+              <div class="sub-label">Word 模板 · 全局默认</div>
+              <div v-if="!docxTemplates.length" class="pend-empty">
+                模板目录里还没有 .docx。把模板放入 <span class="mono">templates/</span> 后登记，即可选为全局默认；在此之前生成走内置最小默认模板。
+              </div>
+              <ul v-else class="tpl-list">
+                <li v-for="t in docxTemplates" :key="t.name" class="tpl-row" :class="{ sel: t.is_default }">
+                  <div class="tpl-main">
+                    <b>{{ t.name }}</b>
+                    <div class="meta">
+                      <span v-if="t.builtin">内置最小默认 · 只保证 标题层级 / 正文 / 列表 / 表格 的基本映射</span>
+                      <span v-else-if="t.missing" class="err-t">文件已缺失（登记过，但 templates/ 里已无此文件）</span>
+                      <span v-else>用户模板 · {{ t.registered ? '已登记' : '未登记' }}{{ t.usable ? '' : '（不可用）' }}</span>
+                    </div>
+                  </div>
+                  <div class="tpl-acts">
+                    <el-tag v-if="t.is_default" size="small" effect="dark">默认</el-tag>
+                    <el-button
+                      v-else-if="!t.missing && t.usable"
+                      size="small"
+                      :loading="settingTpl === t.name"
+                      @click="doSetDefaultTpl(t.name)"
+                    >
+                      设为默认
+                    </el-button>
+                  </div>
+                </li>
+              </ul>
+
+              <div class="reg-row">
+                <el-input
+                  v-model="regName"
+                  size="small"
+                  placeholder="登记已在 templates/ 的 .docx 文件名，例如 公司模板.docx"
+                />
+                <el-button size="small" :loading="regBusy" :disabled="!regName.trim()" @click="doRegister">
+                  登记
+                </el-button>
+              </div>
+              <p class="hint">
+                上传文件入口属 TB-7；此处仅登记「已放入 templates/ 目录」的文件名。非 .docx 会被拒绝（400），不会静默接受。
+              </p>
+
+              <!-- HTML 默认主题（TB-6） -->
+              <div class="sub-label spaced">单文件 HTML 演示 · 默认主题</div>
+              <div class="theme-grid">
+                <label
+                  v-for="th in HTML_THEMES"
+                  :key="th.id"
+                  class="theme-opt"
+                  :class="{ sel: htmlTheme === th.id }"
+                >
+                  <input v-model="htmlTheme" type="radio" name="htmltheme" :value="th.id" />
+                  <span>
+                    <b>{{ th.name }}</b>
+                    <span class="td">{{ th.desc }}</span>
+                    <span class="theme-chips">
+                      <i :style="{ background: th.colors[0] }"></i>
+                      <i :style="{ background: th.colors[1] }"></i>
+                      <i :style="{ background: th.colors[2] }"></i>
+                    </span>
+                  </span>
+                </label>
+              </div>
+              <p class="hint">
+                主题取自 OpenDesign（Apache-2.0）本地资产。单文件 HTML 成品与主题落地属 TB-6；此处选择<strong>不写入后端</strong>（暂无默认主题接口），仅为本页预览。色卡为该主题的示意配色。
+              </p>
+
+              <!-- pptx 计划项（不可用） -->
+              <div class="tpl-row is-plan">
+                <div class="tpl-main">
+                  <b>PowerPoint .pptx<el-tag class="mini" size="small" type="info" effect="plain">v1.1 计划</el-tag></b>
+                  <div class="meta">v1 不生成 .pptx；汇报演示由单文件 HTML 承担，两条路互不转换。此项仅告知，不提供可用入口。</div>
+                </div>
+              </div>
+
+              <!-- 最近生成记录 -->
+              <div class="sub-label spaced">最近生成记录（实际所用模板）</div>
+              <table class="tbl">
+                <thead>
+                  <tr>
+                    <th>任务</th>
+                    <th class="col-hide">成品</th>
+                    <th>实际所用模板</th>
+                    <th class="col-hide">时间</th>
+                  </tr>
+                </thead>
+              </table>
+              <div class="pend-empty">暂无跨任务的生成记录汇总接口；单任务的成品见创作页「生成面板」的成品卡。</div>
+            </template>
+          </div>
+        </section>
+
         <!-- ============ 本地与隐私 ============ -->
         <section class="sec">
           <header>
@@ -281,12 +394,16 @@ import {
   BackendUnavailableError,
   createProvider,
   deleteProvider,
+  getTemplates,
   listProviders,
+  registerTemplate,
   setDefaultProvider,
+  setDefaultTemplate,
   testProvider,
   updateProvider,
   type Provider,
-  type ProviderKind
+  type ProviderKind,
+  type Template
 } from '../api/client'
 import { describeConnection, kindLabel, type ConnectionReport } from '../utils/providerMeta'
 
@@ -294,6 +411,24 @@ type ListState = 'loading' | 'ready' | 'error'
 const providers = ref<Provider[]>([])
 const listState = ref<ListState>('loading')
 const listError = ref('')
+
+// 默认模板区（TB-5）
+const templates = ref<Template[]>([])
+const tplState = ref<ListState>('loading')
+const tplError = ref('')
+const settingTpl = ref<string | null>(null)
+const regName = ref('')
+const regBusy = ref(false)
+const htmlTheme = ref('slate')
+
+// HTML 主题仅为 TB-6 的本地预览（无后端默认主题接口，选择不写库）；色卡是该主题的示意配色。
+const HTML_THEMES: Array<{ id: string; name: string; desc: string; colors: [string, string, string] }> = [
+  { id: 'slate', name: 'Slate 极简', desc: '无衬线 · 浅色 · 适合技术分享', colors: ['#1c2027', '#f5f7fa', '#2f6bdf'] },
+  { id: 'ember', name: 'Ember 暖调', desc: '衬线标题 · 适合观点类讲述', colors: ['#2a2018', '#fbf6ef', '#c4712a'] },
+  { id: 'mono', name: 'Mono 等宽', desc: '代码感 · 深色 · 适合工具类教程', colors: ['#0f1115', '#e8edf5', '#3f9d70'] }
+]
+
+const docxTemplates = computed(() => templates.value.filter((t) => t.format === 'docx'))
 
 const testingMap = reactive<Record<string, boolean>>({})
 const testResultMap = ref<Record<string, ConnectionReport>>({})
@@ -486,7 +621,67 @@ async function saveProvider(): Promise<void> {
   }
 }
 
-onMounted(loadProviders)
+async function loadTemplates(): Promise<void> {
+  tplState.value = 'loading'
+  try {
+    templates.value = (await getTemplates()).items
+    tplState.value = 'ready'
+  } catch (err) {
+    templates.value = []
+    tplState.value = 'error'
+    tplError.value =
+      err instanceof BackendUnavailableError ? '后端未启动，无法读取模板' : '模板读取失败'
+  }
+}
+
+async function doSetDefaultTpl(name: string): Promise<void> {
+  if (settingTpl.value) return
+  settingTpl.value = name
+  try {
+    await setDefaultTemplate(name)
+    ElMessage.success(`已将「${name}」设为全局默认模板`)
+    await loadTemplates()
+  } catch (err) {
+    ElMessage.error(describeTplError(err, '设为默认'))
+  } finally {
+    settingTpl.value = null
+  }
+}
+
+async function doRegister(): Promise<void> {
+  const name = regName.value.trim()
+  if (!name || regBusy.value) return
+  regBusy.value = true
+  try {
+    await registerTemplate(name, false)
+    ElMessage.success('已登记模板')
+    regName.value = ''
+    await loadTemplates()
+  } catch (err) {
+    ElMessage.error(describeTplError(err, '登记'))
+  } finally {
+    regBusy.value = false
+  }
+}
+
+function describeTplError(err: unknown, action: string): string {
+  if (err instanceof BackendUnavailableError) return `后端未启动，${action}失败`
+  const msg = (err as Error).message || ''
+  if (msg.includes('404')) return '模板文件不存在：请先把 .docx 放入 templates/ 目录'
+  if (msg.includes('400')) return `该文件不可作为模板（只接受 .docx）：${tailDetail(msg)}`
+  return `${action}失败：${msg}`
+}
+
+/** 从「请求失败：<code> <text> · <detail>」里取可读 detail 部分。 */
+function tailDetail(msg: string): string {
+  const idx = msg.indexOf('·')
+  return idx >= 0 ? msg.slice(idx + 1).trim() : msg
+}
+
+onMounted(() => {
+  loadProviders()
+  loadTemplates()
+})
 </script>
 
 <style scoped>
@@ -656,5 +851,138 @@ onMounted(loadProviders)
 }
 .field:first-child {
   margin-top: 0;
+}
+
+/* 默认模板区 */
+.sub-label {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  margin-bottom: var(--sp-2);
+}
+.sub-label.spaced {
+  margin-top: var(--sp-5);
+}
+.pend-empty {
+  border: 1px dashed var(--line-3);
+  border-radius: var(--r-sm);
+  background: var(--bg-sunken);
+  padding: var(--sp-3) var(--sp-4);
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+  text-align: center;
+  line-height: 1.6;
+}
+.tpl-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.tpl-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-md);
+  margin-bottom: var(--sp-2);
+  flex-wrap: wrap;
+}
+.tpl-row:hover {
+  border-color: var(--line-2);
+}
+.tpl-row.sel {
+  border-color: var(--brand-200);
+  background: var(--brand-50);
+}
+.tpl-main {
+  flex: 1;
+  min-width: 200px;
+}
+.tpl-main b {
+  font-size: var(--fs-md);
+  color: var(--text-1);
+}
+.tpl-acts {
+  margin-left: auto;
+  display: flex;
+  gap: var(--sp-1);
+  align-items: center;
+}
+.err-t {
+  color: var(--err-fg);
+}
+.mini {
+  margin-left: 6px;
+  vertical-align: 1px;
+}
+.reg-row {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: center;
+  margin-top: var(--sp-3);
+}
+.reg-row .el-input {
+  flex: 1;
+  min-width: 0;
+}
+.theme-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: var(--sp-3);
+}
+.theme-opt {
+  display: flex;
+  gap: var(--sp-3);
+  align-items: flex-start;
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-md);
+  padding: var(--sp-3);
+  cursor: pointer;
+  background: var(--bg-surface);
+}
+.theme-opt:hover {
+  border-color: var(--brand-200);
+}
+.theme-opt input {
+  margin-top: 3px;
+  accent-color: var(--brand-500);
+  flex: none;
+}
+.theme-opt > span {
+  min-width: 0;
+}
+.theme-opt b {
+  display: block;
+  font-size: var(--fs-sm);
+}
+.theme-opt .td {
+  display: block;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+.theme-opt.sel {
+  border-color: var(--brand-500);
+  background: var(--brand-50);
+  box-shadow: 0 0 0 2px var(--brand-50);
+}
+.theme-chips {
+  display: flex;
+  gap: 3px;
+  margin-top: 6px;
+}
+.theme-chips i {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  display: block;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+@media (max-width: 820px) {
+  .col-hide {
+    display: none;
+  }
 }
 </style>
