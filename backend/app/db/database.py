@@ -41,6 +41,22 @@ CREATE TABLE IF NOT EXISTS settings (
     key        TEXT PRIMARY KEY,
     value      TEXT
 );
+
+-- 对话消息（规格 §4）：拷问轮次的提问与回答**同序落库**。
+-- - round_no：种子输入为 0，第 N 轮为 N；
+-- - role：user = 用户输入 / 回答；assistant = 系统产出的问题集（前沿）；system 预留；
+-- - 顺序由自增 id 保证：同一轮内 assistant（问题集）先于该轮的 user（回答）。
+-- - assistant 的 content 为结构化 JSON（见 MessageRepository 文档）。
+CREATE TABLE IF NOT EXISTS messages (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id    INTEGER NOT NULL REFERENCES tasks(id),
+    round_no   INTEGER NOT NULL,
+    role       TEXT NOT NULL CHECK (role IN ('system', 'assistant', 'user')),
+    content    TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_messages_task_round ON messages (task_id, round_no, id);
 """
 
 

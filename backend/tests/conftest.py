@@ -11,10 +11,10 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from fakes import InMemoryKeyStore
+from fakes import InMemoryKeyStore, ScriptedModelClient
 from fastapi.testclient import TestClient
 
-from app.api.deps import get_key_store
+from app.api.deps import get_key_store, get_model_client
 from app.main import create_app
 
 
@@ -45,4 +45,24 @@ def app(db_path: Path, key_store: InMemoryKeyStore):
 def client(app) -> Iterator[TestClient]:
     """进程内 HTTP 客户端；上下文管理器会触发应用 lifespan（建表）。"""
     with TestClient(app) as test_client:
+        yield test_client
+
+
+@pytest.fixture
+def scripted_model_client() -> ScriptedModelClient:
+    """脚本化模型客户端（fake 注入点）；默认返回空前沿，测试按需 set_result。"""
+    return ScriptedModelClient(result='{"frontier": []}')
+
+
+@pytest.fixture
+def grilling_app(app, scripted_model_client: ScriptedModelClient):
+    """在既有 app 上把模型客户端替换为脚本化 fake（拷问接缝测试用）。"""
+    app.dependency_overrides[get_model_client] = lambda: scripted_model_client
+    return app
+
+
+@pytest.fixture
+def grilling_client(grilling_app) -> Iterator[TestClient]:
+    """注入 fake 模型客户端后的进程内 HTTP 客户端。"""
+    with TestClient(grilling_app) as test_client:
         yield test_client

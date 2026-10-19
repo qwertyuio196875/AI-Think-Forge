@@ -44,6 +44,10 @@ class ScriptedModelClient:
             raise self._error
         return self._result
 
+    def set_result(self, result: str) -> None:
+        """替换后续调用返回的脚本化应答（测试中途改脚本）。"""
+        self._result = result
+
 
 class ScriptedModelClientFactory:
     """固定返回同一个替身客户端的工厂，并记录收到的配置与密钥。"""

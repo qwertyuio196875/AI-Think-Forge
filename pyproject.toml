@@ -16,6 +16,8 @@ dependencies = [
     "httpx>=0.27",
     # keyring：密钥存 Windows 凭据管理器，SQLite 不落密钥。
     "keyring>=25.4",
+    # langgraph：拷问流程的状态机（规格 §2）。
+    "langgraph>=1.2",
 ]
 
 [project.optional-dependencies]

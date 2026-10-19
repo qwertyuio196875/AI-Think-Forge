@@ -10,6 +10,7 @@ from typing import Annotated
 
 from fastapi import Depends, Request
 
+from app.db.message_repository import MessageRepository
 from app.db.provider_repository import ProviderRepository
 from app.db.task_repository import TaskRepository
 from app.providers.key_store import KeyStore
@@ -30,6 +31,11 @@ def get_task_repository(db_path: str = Depends(get_db_path)) -> TaskRepository:
 def get_provider_repository(db_path: str = Depends(get_db_path)) -> ProviderRepository:
     """模型配置仓库依赖。"""
     return ProviderRepository(db_path)
+
+
+def get_message_repository(db_path: str = Depends(get_db_path)) -> MessageRepository:
+    """对话消息仓库依赖（拷问轮次的提问与回答同序落库）。"""
+    return MessageRepository(db_path)
 
 
 def get_key_store(request: Request) -> KeyStore:
@@ -55,6 +61,7 @@ def get_url_fetcher(request: Request) -> UrlFetcher:
 # Annotated 别名：路由以类型标注声明依赖，避免在参数默认值里调用 Depends。
 TaskRepositoryDep = Annotated[TaskRepository, Depends(get_task_repository)]
 ProviderRepositoryDep = Annotated[ProviderRepository, Depends(get_provider_repository)]
+MessageRepositoryDep = Annotated[MessageRepository, Depends(get_message_repository)]
 KeyStoreDep = Annotated[KeyStore, Depends(get_key_store)]
 ModelClientDep = Annotated[ModelClient, Depends(get_model_client)]
 ModelClientFactoryDep = Annotated[ProviderModelClientFactory, Depends(get_model_client_factory)]
