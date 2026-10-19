@@ -36,7 +36,7 @@ def _frontier_json(*triples: tuple[str, str, str]) -> str:
 
 def test_prompt_asset_is_versioned_with_attribution_and_deviations() -> None:
     """提示词资产带版本号、MIT 署名，并显式记录移植偏离。"""
-    assert prompts.GRILLING_PROMPT_VERSION == "grilling-v1"
+    assert prompts.GRILLING_PROMPT_VERSION == "grilling-v2"
 
     asset = prompts.load_asset()
 

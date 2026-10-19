@@ -41,8 +41,9 @@
 | 模型配置与连接测试 | ✅ TB-1：`providers` / `settings` 表、DeepSeek 默认播种（3 档角色）、密钥存 Windows 凭据管理器、OpenAI 兼容 httpx 客户端、配置 CRUD 与连接测试（错误分级）、开发期仅本机源的 CORS |
 | 拷问第一轮 | ✅ TB-2：`messages` 表（轮次 / 角色 / 内容 / 时间，问答同序落库）、版本化提示词资产（MIT 署名，见 ADR-0001）、LangGraph 最小节点图（分析输入 → 生成前沿 → 落库返回，前沿为空即停）、`/api/grilling/*` 发起 / 作答 / 读取对话 |
 | 收敛 → 方案 → 确认闸门 | ✅ TB-3：`plans` 表（内容 / 状态 draft\|confirmed / 确认时间 / 关联轮次）、每轮按上轮回答重算前沿、前沿为空即收敛并生成结构灵活的结构化方案草稿、显式确认动作、生成入口在方案未确认时服务端拒绝（409）、版本化方案提示词资产 |
+| 方案修订与待确认事项 | ✅ TB-4：`plan_revisions`（修订前 / 修订后 / 时间 / 差异提示，旧版本不丢）、`open_items`（来源轮次 / 条目 / 状态）、对话式修订（`POST …/plan/revisions`）与差异提示、前沿问题新增 `why`（为什么现在问）/ `alternatives`（备选方向）（资产升 `grilling-v2`）、「暂时跳过」入待确认事项、未处置条目拦截生成（409） |
 | 运行时目录 | ✅ `data/`（运行时 SQLite 落此处，gitignored）、`启动.bat`、根 `.gitignore`（覆盖 `/data/`、`/templates/`、`.slim/`） |
-| 自动化测试 | ✅ `backend/tests`（pytest，进程内 HTTP 接缝，不联网；99 项通过） |
+| 自动化测试 | ✅ `backend/tests`（pytest，进程内 HTTP 接缝，不联网；129 项通过） |
 
 ---
 
@@ -138,13 +139,17 @@ cd backend
 | DELETE | `/api/providers/{id}` | 删除配置，同时删除其凭据 → 204 |
 | POST | `/api/providers/{id}/default` | 设为唯一默认 |
 | POST | `/api/providers/{id}/test` | 连接测试，返回 `{"ok":bool,"category":str,"message":str}`；`category` ∈ `ok \| network_error \| auth_error \| model_error \| insufficient_balance \| rate_limited \| request_error \| server_error` |
-| POST | `/api/grilling/tasks` | 从一句话 / 一段描述发起主题创作，body `{"idea":string}` → 201，返回 `{"task":Task,"round":{round_no,frontier:[{title,body,recommended_answer}],answers}}`（第一轮前沿，1~5 个相互独立问题、每题带推荐答案） |
-| POST | `/api/grilling/tasks/{id}/answers` | 提交某轮回答（与前沿问题一一对应），body `{"round_no":int,"answers":[string]}` → 写后对话状态 `Dialogue` |
+| POST | `/api/grilling/tasks` | 从一句话 / 一段描述发起主题创作，body `{"idea":string}` → 201，返回 `{"task":Task,"round":{round_no,frontier:[{title,body,recommended_answer,why,alternatives}],answers}}`（第一轮前沿，1~5 个相互独立问题；每题带推荐答案，以及「为什么现在问」`why` 与「备选方向」`alternatives`，二者缺失容错） |
+| POST | `/api/grilling/tasks/{id}/answers` | 提交某轮回答（与前沿问题一一对应），body `{"round_no":int,"answers":[string\|null]}`；`null`（或纯空白）= **暂时跳过**，该题入待确认事项、保持未定 → 写后对话状态 `Dialogue` |
 | GET | `/api/grilling/tasks/{id}/dialogue` | 读取某任务的对话 / 轮次（种子输入 + 各轮前沿与回答 + 原始消息流），供前端渲染对话流 |
 | POST | `/api/grilling/tasks/{id}/advance` | 按上一轮回答重算下一轮前沿；前沿为空即收敛并生成方案草稿。返回 `{"task_id","converged","next_round"\|null,"plan"\|null}` |
 | GET | `/api/grilling/tasks/{id}/plan` | 读取当前结构化方案（`{id,task_id,round_no,content_md,status,confirmed_at}`）；尚无方案返回 404 |
 | POST | `/api/grilling/tasks/{id}/plan/confirm` | **方案确认**：`draft → confirmed` 并记录 `confirmed_at`（进入生成阶段的唯一闸门） |
-| POST | `/api/tasks/{id}/generations` | 成品生成入口（硬闸门）：方案未确认或无方案 → 409；已确认 → 交生成管线（TB-5/TB-6，暂 501） |
+| POST | `/api/grilling/tasks/{id}/plan/revisions` | **对话式修订**：body `{"instruction":string}` → 更新方案正文并返回 `{"plan","revision"}`；`revision.change_summary` 为差异提示（`added/removed/modified` + 章节标题），旧版本留痕。方案回到 `draft`（原确认不再覆盖新内容） |
+| GET | `/api/grilling/tasks/{id}/plan/revisions` | 方案的修订历史（逐条含修订前 / 修订后内容与时间）`{"items":[...],"total":n}` |
+| GET | `/api/grilling/tasks/{id}/open-items` | **待确认事项**清单 `{"items":[{id,task_id,round_no,text,status,created_at,resolved_at}],"total":n}` |
+| POST | `/api/grilling/tasks/{id}/open-items/{item_id}/resolve` | 处置一条待确认事项：body `{"status":"confirmed"\|"dismissed"}`（用户确认动作） |
+| POST | `/api/tasks/{id}/generations` | 成品生成入口（硬闸门）：方案未确认 / 无方案 → 409；**仍有未处置的待确认事项 → 409**；已确认且无未定条目 → 交生成管线（TB-5/TB-6，暂 501） |
 
 ### 真实连接测试操作手册（配好 `DEEPSEEK_API_KEY` 后自证真连）
 

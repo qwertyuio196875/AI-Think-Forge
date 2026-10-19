@@ -11,7 +11,9 @@ from typing import Annotated
 from fastapi import Depends, Request
 
 from app.db.message_repository import MessageRepository
+from app.db.open_item_repository import OpenItemRepository
 from app.db.plan_repository import PlanRepository
+from app.db.plan_revision_repository import PlanRevisionRepository
 from app.db.provider_repository import ProviderRepository
 from app.db.task_repository import TaskRepository
 from app.providers.key_store import KeyStore
@@ -44,6 +46,16 @@ def get_plan_repository(db_path: str = Depends(get_db_path)) -> PlanRepository:
     return PlanRepository(db_path)
 
 
+def get_open_item_repository(db_path: str = Depends(get_db_path)) -> OpenItemRepository:
+    """待确认事项仓库依赖（来源轮次 / 条目 / 状态）。"""
+    return OpenItemRepository(db_path)
+
+
+def get_plan_revision_repository(db_path: str = Depends(get_db_path)) -> PlanRevisionRepository:
+    """方案版本记录仓库依赖（对话式修订留痕，旧版本不可丢）。"""
+    return PlanRevisionRepository(db_path)
+
+
 def get_key_store(request: Request) -> KeyStore:
     """密钥库依赖（默认写 Windows 凭据管理器；测试注入内存替身）。"""
     return request.app.state.key_store
@@ -69,6 +81,10 @@ TaskRepositoryDep = Annotated[TaskRepository, Depends(get_task_repository)]
 ProviderRepositoryDep = Annotated[ProviderRepository, Depends(get_provider_repository)]
 MessageRepositoryDep = Annotated[MessageRepository, Depends(get_message_repository)]
 PlanRepositoryDep = Annotated[PlanRepository, Depends(get_plan_repository)]
+OpenItemRepositoryDep = Annotated[OpenItemRepository, Depends(get_open_item_repository)]
+PlanRevisionRepositoryDep = Annotated[
+    PlanRevisionRepository, Depends(get_plan_revision_repository)
+]
 KeyStoreDep = Annotated[KeyStore, Depends(get_key_store)]
 ModelClientDep = Annotated[ModelClient, Depends(get_model_client)]
 ModelClientFactoryDep = Annotated[ProviderModelClientFactory, Depends(get_model_client_factory)]

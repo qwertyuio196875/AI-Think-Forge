@@ -3,8 +3,9 @@
 规格 §4：方案内容（`content_md`）、状态（draft/confirmed）与确认时间（`confirmed_at`）；
 工单 12 追加 `round_no`，记录方案由哪一轮问答产生（方案与轮次关联）。
 
-纪律：一张任务可能先后产生多份方案（对话式修订会在后续工单重建），
-因此以 `id` 最大者（`get_current`）为「当前方案」；确认动作只作用于当前方案。
+纪律：一张任务的方案正文就地更新（工单 13 的**对话式修订**），历史版本落在
+`plan_revisions`（见 `PlanRevisionRepository`），故 `get_current` 取 `id` 最大者；`id` 不变，
+`update_content` 只改正文并把方案置回草稿（原确认不再覆盖新内容）。确认动作只作用于当前方案。
 """
 
 from __future__ import annotations
@@ -68,6 +69,29 @@ class PlanRepository:
                 WHERE id = ?
                 """,
                 (now, plan_id),
+            )
+            connection.commit()
+            row = connection.execute(
+                "SELECT * FROM plans WHERE id = ?", (plan_id,)
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def update_content(self, plan_id: int, content_md: str) -> dict | None:
+        """用修订后的正文替换方案内容，并把方案置回**草稿**；不存在返回 None。
+
+        置回草稿的理由（规格 User Story 9/10）：内容一变，用户此前的**方案确认**
+        不再覆盖新内容，生成闸门必须重新关闭——未获批准的内容永不写出。
+        """
+        with connect(self._db_path) as connection:
+            connection.execute(
+                """
+                UPDATE plans
+                SET content_md = ?,
+                    status = 'draft',
+                    confirmed_at = NULL
+                WHERE id = ?
+                """,
+                (content_md, plan_id),
             )
             connection.commit()
             row = connection.execute(

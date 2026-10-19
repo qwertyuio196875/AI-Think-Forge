@@ -4,8 +4,10 @@
 一轮内的顺序由自增 id 保证：同轮里 assistant（问题集）先于该轮的 user（回答）。
 
 assistant 消息的 `content` 为结构化 JSON，供前端渲染问题卡片：
-    {"frontier": [{"title", "body", "recommended_answer"}, ...]}
-user 消息的 `content` 为纯文本（用户输入或某题回答）。
+    {"frontier": [{"title", "body", "recommended_answer", "why", "alternatives"}, ...]}
+    （`why` / `alternatives` 见 `grilling-v2` 输出契约；缺失容错为 null / []）
+user 消息的 `content` 为纯文本（用户输入或某题回答）；用户「暂时跳过」的问题
+以 `（暂时跳过）` 占位落库（保持与问题的按位对齐），见 `app.grilling.open_items`。
 """
 
 from __future__ import annotations

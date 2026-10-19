@@ -1,11 +1,14 @@
 """前沿问题的解析与序列化。
 
-模型输出契约（见提示词资产 grilling_v1.md）：
-    {"frontier": [{"title", "body", "recommended_answer"}, ...]}
+模型输出契约（见提示词资产 grilling_v2.md）：
+    {"frontier": [{"title", "body", "recommended_answer", "why", "alternatives"}, ...]}
 
 解析刻意做防御性处理：容忍模型偶尔包裹说明文字或 Markdown 代码围栏；结构不合法
 （尤其缺 `recommended_answer`）一律抛 `FrontierParseError`，由 API 层转为可读错误，
 绝不把半成品问题塞进对话。
+
+`why` 与 `alternatives` 是 `grilling-v2` 的新增字段：**提示词要求模型给出，
+解析层对缺失容错**（由 `FrontierQuestion` 的字段校验器归一为 `None` / `[]`）。
 """
 
 from __future__ import annotations

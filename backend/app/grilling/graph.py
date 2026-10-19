@@ -22,6 +22,7 @@ from langgraph.graph import END, START, StateGraph
 
 from app.db.message_repository import MessageRepository
 from app.grilling.frontier import parse_frontier
+from app.grilling.open_items import is_skip_answer
 from app.grilling.prompts import render_frontier_messages
 from app.providers.model_client import ModelClient
 
@@ -36,6 +37,8 @@ class GrillingState(TypedDict, total=False):
     rounds: list[dict]
     # 已确定决策（分析输入产出）：`["<问题标题> → <用户回答>", ...]`。
     determined: list[str]
+    # 未定的待确认事项条目（跳过的问题），单列并不参与「已定」判定。
+    open_items: list[str]
     frontier: list[dict]
     frontier_empty: bool
 
@@ -52,14 +55,18 @@ def _normalize_rounds(rounds: list[dict]) -> list[dict]:
     ]
 
 
-def _derive_determined(rounds: list[dict]) -> list[str]:
-    """从历轮问答派生「已确定决策」清单（问题标题 → 用户回答）。"""
+def derive_determined(rounds: list[dict]) -> list[str]:
+    """从历轮问答派生「已确定决策」清单（问题标题 → 用户回答）。
+
+    被「暂时跳过」的作答**不算已定决策**：用户未回应不等于同意，它只进待确认事项。
+    """
     determined: list[str] = []
     for round_info in rounds:
         answers = round_info.get("answers", [])
         for index, question in enumerate(round_info.get("frontier", [])):
-            if index < len(answers) and answers[index]:
-                determined.append(f"{question['title']} → {answers[index]}")
+            answer = answers[index] if index < len(answers) else None
+            if answer and not is_skip_answer(answer):
+                determined.append(f"{question['title']} → {answer}")
     return determined
 
 
@@ -72,20 +79,22 @@ def build_grilling_graph(
     """构建并编译拷问最小节点图（依赖以闭包注入，路由按请求构造）。"""
 
     def analyze_input(state: GrillingState) -> GrillingState:
-        """分析输入：归一已知信息，并把历轮问答解析为已确定决策。"""
+        """分析输入：归一已知信息，把历轮问答解析为已确定决策，并保留未定项。"""
         rounds = _normalize_rounds(state.get("rounds", []))
         return {
             "known_input": state["known_input"].strip(),
             "rounds": rounds,
-            "determined": _derive_determined(rounds),
+            "determined": derive_determined(rounds),
+            "open_items": list(state.get("open_items", [])),
         }
 
     def generate_frontier(state: GrillingState) -> GrillingState:
-        """生成前沿问题：把已知信息 + 已确定决策 + 历轮问答喂进提示词重算。"""
+        """生成前沿问题：把已知信息 + 已确定决策 + 未定 + 历轮问答喂进提示词重算。"""
         messages = render_frontier_messages(
             state["known_input"],
             state.get("rounds", []),
             state.get("determined", []),
+            state.get("open_items", []),
         )
         raw = model_client.complete(messages, model=model_name)
         questions = parse_frontier(raw)

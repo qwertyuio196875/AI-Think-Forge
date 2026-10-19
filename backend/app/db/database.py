@@ -2,7 +2,8 @@
 
 TB-0 落地 `tasks` 表最小集；TB-1 追加 `providers`（模型配置非敏感字段）与
 `settings`（应用设置项）；TB-2 追加 `messages`（对话轮次）；TB-3 追加 `plans`
-（结构化方案，draft/confirmed）。密钥字段刻意不存在于任何表——凭据只进系统凭据管理器。
+（结构化方案，draft/confirmed）；TB-4 追加 `open_items`（待确认事项）与
+`plan_revisions`（方案版本记录）。密钥字段刻意不存在于任何表——凭据只进系统凭据管理器。
 资料登记 / 文本分块 / 嵌入版本等字段由后续工单（含 v1.1 RAG 预留）追加。
 """
 
@@ -75,6 +76,42 @@ CREATE TABLE IF NOT EXISTS plans (
 );
 
 CREATE INDEX IF NOT EXISTS idx_plans_task ON plans (task_id, id);
+
+-- 待确认事项（规格 §4 术语「待确认事项」；工单 13）：系统标记的、尚未决定的关键信息清单。
+-- - round_no：来源轮次（该条目由哪一轮的「暂时跳过」产生），供前端回指；
+-- - text：条目内容（跳过的前沿问题标题）；
+-- - status：open（待确认）/ confirmed（用户确认其成为已定需求）/ dismissed（用户认定不需要）；
+-- - resolved_at：用户处置时刻（未处置为 NULL）。
+-- 纪律：**open 的条目不得作为已定需求进入下游**——既不得写进方案正文的「已确定」部分，
+-- 也不得让生成闸门放行（未经确认的推测绝不直接变成成品，规格 US 9）。
+CREATE TABLE IF NOT EXISTS open_items (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id     INTEGER NOT NULL REFERENCES tasks(id),
+    round_no    INTEGER NOT NULL,
+    text        TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'open'
+                CHECK (status IN ('open', 'confirmed', 'dismissed')),
+    created_at  TEXT NOT NULL,
+    resolved_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_open_items_task ON open_items (task_id, id);
+
+-- 方案版本记录（工单 13）：对话式修订留痕，**旧版本不可丢**。
+-- 每条记录一次修订：触发修订的用户指令、修订前内容、修订后内容、修订时间与差异提示。
+-- 当前方案正文仍以 `plans.content_md` 为准；本表保存全部历史版本供回查。
+CREATE TABLE IF NOT EXISTS plan_revisions (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_id             INTEGER NOT NULL REFERENCES plans(id),
+    task_id             INTEGER NOT NULL REFERENCES tasks(id),
+    instruction         TEXT NOT NULL,
+    previous_content_md TEXT NOT NULL,
+    content_md          TEXT NOT NULL,
+    change_summary      TEXT NOT NULL,
+    created_at          TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_plan_revisions_plan ON plan_revisions (plan_id, id);
 """
 
 

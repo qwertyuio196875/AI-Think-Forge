@@ -12,18 +12,27 @@ from fastapi import APIRouter, HTTPException, status
 from app.api.deps import (
     MessageRepositoryDep,
     ModelClientDep,
+    OpenItemRepositoryDep,
     PlanRepositoryDep,
+    PlanRevisionRepositoryDep,
     ProviderRepositoryDep,
     TaskRepositoryDep,
 )
 from app.db.task_repository import TaskRepository
 from app.grilling.frontier import FrontierParseError
+from app.grilling.open_items import (
+    SKIP_ANSWER_MARKER,
+    is_skip_answer,
+    skipped_items,
+)
 from app.grilling.service import (
     AdvanceError,
     PlanGenerationError,
+    PlanRevisionError,
     advance_round,
     build_dialogue,
     frontier_for_round,
+    revise_plan,
     start_first_round,
 )
 from app.models.grilling import (
@@ -33,7 +42,18 @@ from app.models.grilling import (
     GrillingStartRequest,
     GrillingStartResponse,
 )
-from app.models.plan import Plan
+from app.models.open_items import (
+    OpenItem,
+    OpenItemListResponse,
+    OpenItemResolveRequest,
+)
+from app.models.plan import (
+    Plan,
+    PlanRevision,
+    PlanRevisionListResponse,
+    PlanRevisionRequest,
+    PlanRevisionResponse,
+)
 from app.models.task import Task
 
 router = APIRouter(prefix="/grilling", tags=["grilling"])
@@ -65,6 +85,7 @@ def start_grilling_task(
     payload: GrillingStartRequest,
     task_repository: TaskRepositoryDep,
     message_repository: MessageRepositoryDep,
+    open_item_repository: OpenItemRepositoryDep,
     provider_repository: ProviderRepositoryDep,
     model_client: ModelClientDep,
 ) -> GrillingStartResponse:
@@ -79,6 +100,7 @@ def start_grilling_task(
             task_id=task_record["id"],
             idea=payload.idea,
             message_repository=message_repository,
+            open_item_repository=open_item_repository,
             model_client=model_client,
             model_name=model_name,
         )
@@ -97,8 +119,13 @@ def submit_answers(
     payload: AnswerSubmitRequest,
     task_repository: TaskRepositoryDep,
     message_repository: MessageRepositoryDep,
+    open_item_repository: OpenItemRepositoryDep,
 ) -> Dialogue:
-    """把某轮的用户回答写入消息表，返回写后的对话状态。"""
+    """把某轮的用户回答写入消息表，返回写后的对话状态。
+
+    `answers` 里为 `null`（或纯空白）的项表示该问题被「**暂时跳过**」：
+    它保持未定，作为待确认事项入清单（来源轮次 = 本轮），绝不当作已定需求。
+    """
     _require_task(task_repository, task_id)
 
     messages = message_repository.list_for_task(task_id)
@@ -116,8 +143,12 @@ def submit_answers(
             ),
         )
 
+    for title in skipped_items(frontier, payload.answers):
+        open_item_repository.create(task_id, payload.round_no, title)
+
     for answer in payload.answers:
-        message_repository.append(task_id, payload.round_no, "user", answer)
+        content = SKIP_ANSWER_MARKER if is_skip_answer(answer) else (answer or "").strip()
+        message_repository.append(task_id, payload.round_no, "user", content)
 
     return build_dialogue(task_id, message_repository.list_for_task(task_id))
 
@@ -127,6 +158,7 @@ def advance(
     task_id: int,
     task_repository: TaskRepositoryDep,
     message_repository: MessageRepositoryDep,
+    open_item_repository: OpenItemRepositoryDep,
     plan_repository: PlanRepositoryDep,
     provider_repository: ProviderRepositoryDep,
     model_client: ModelClientDep,
@@ -141,6 +173,7 @@ def advance(
         outcome = advance_round(
             task_id=task_id,
             message_repository=message_repository,
+            open_item_repository=open_item_repository,
             model_client=model_client,
             plan_repository=plan_repository,
             model_name=model_name,
@@ -205,6 +238,66 @@ def confirm_plan(
     return Plan(**confirmed)
 
 
+# --- 方案对话式修订（工单 13）--------------------------------------------------
+
+
+@router.post("/tasks/{task_id}/plan/revisions", response_model=PlanRevisionResponse)
+def revise(
+    task_id: int,
+    payload: PlanRevisionRequest,
+    task_repository: TaskRepositoryDep,
+    message_repository: MessageRepositoryDep,
+    open_item_repository: OpenItemRepositoryDep,
+    plan_repository: PlanRepositoryDep,
+    revision_repository: PlanRevisionRepositoryDep,
+    provider_repository: ProviderRepositoryDep,
+    model_client: ModelClientDep,
+) -> PlanRevisionResponse:
+    """对已生成方案继续对话 → 方案更新，并返回差异提示（哪些部分被改动）。
+
+    旧版本留痕（修订前 / 修订后 / 时间）落在方案版本记录里；方案本体回到 draft，
+    原确认不再覆盖新内容。
+    """
+    _require_task(task_repository, task_id)
+
+    default_provider = provider_repository.get_default()
+    model_name = default_provider["model_name"] if default_provider else None
+
+    try:
+        outcome = revise_plan(
+            task_id=task_id,
+            instruction=payload.instruction,
+            message_repository=message_repository,
+            open_item_repository=open_item_repository,
+            plan_repository=plan_repository,
+            revision_repository=revision_repository,
+            model_client=model_client,
+            model_name=model_name,
+        )
+    except PlanRevisionError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except PlanGenerationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=f"方案修订失败：{exc}"
+        ) from exc
+
+    return PlanRevisionResponse(plan=outcome.plan, revision=outcome.revision)
+
+
+@router.get("/tasks/{task_id}/plan/revisions", response_model=PlanRevisionListResponse)
+def list_revisions(
+    task_id: int,
+    task_repository: TaskRepositoryDep,
+    revision_repository: PlanRevisionRepositoryDep,
+) -> PlanRevisionListResponse:
+    """读取方案的修订历史（旧版本留痕，可逐条回查）。"""
+    _require_task(task_repository, task_id)
+    items = [
+        PlanRevision(**record) for record in revision_repository.list_for_task(task_id)
+    ]
+    return PlanRevisionListResponse(items=items, total=len(items))
+
+
 @router.get("/tasks/{task_id}/dialogue", response_model=Dialogue)
 def get_dialogue(
     task_id: int,
@@ -214,3 +307,45 @@ def get_dialogue(
     """读取某任务的对话 / 轮次，供前端渲染对话流。"""
     _require_task(task_repository, task_id)
     return build_dialogue(task_id, message_repository.list_for_task(task_id))
+
+
+# --- 待确认事项（工单 13）------------------------------------------------------
+
+
+@router.get("/tasks/{task_id}/open-items", response_model=OpenItemListResponse)
+def list_open_items(
+    task_id: int,
+    task_repository: TaskRepositoryDep,
+    open_item_repository: OpenItemRepositoryDep,
+) -> OpenItemListResponse:
+    """读取某任务的待确认事项清单（术语「待确认事项」；未回应不等于同意）。"""
+    _require_task(task_repository, task_id)
+    items = [OpenItem(**record) for record in open_item_repository.list_for_task(task_id)]
+    return OpenItemListResponse(items=items, total=len(items))
+
+
+@router.post("/tasks/{task_id}/open-items/{item_id}/resolve", response_model=OpenItem)
+def resolve_open_item(
+    task_id: int,
+    item_id: int,
+    payload: OpenItemResolveRequest,
+    task_repository: TaskRepositoryDep,
+    open_item_repository: OpenItemRepositoryDep,
+) -> OpenItem:
+    """用户处置一条待确认事项：confirmed（承认成为已定需求）/ dismissed（认定不需要）。
+
+    这是打开生成闸门所需的**用户确认动作**：open 的条目在处置前一律拦截生成。
+    """
+    _require_task(task_repository, task_id)
+
+    item = open_item_repository.get(item_id)
+    if item is None or item["task_id"] != task_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"待确认事项 {item_id} 不存在"
+        )
+    resolved = open_item_repository.resolve(item_id, payload.status.value)
+    if resolved is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"待确认事项 {item_id} 不存在"
+        )
+    return OpenItem(**resolved)

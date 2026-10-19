@@ -12,12 +12,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.db.message_repository import MessageRepository
+from app.db.open_item_repository import OpenItemRepository
 from app.db.plan_repository import PlanRepository
+from app.db.plan_revision_repository import PlanRevisionRepository
 from app.grilling.frontier import frontier_from_content
-from app.grilling.graph import build_grilling_graph
-from app.grilling.prompts import render_plan_messages
+from app.grilling.graph import build_grilling_graph, derive_determined
+from app.grilling.prompts import render_plan_messages, render_revision_messages
+from app.grilling.revision import compute_changes
 from app.models.grilling import Dialogue, DialogueMessage, FrontierQuestion, FrontierRound
-from app.models.plan import Plan
+from app.models.plan import Plan, PlanRevision
 from app.providers.model_client import ModelClient
 
 # 种子输入（用户最初的一句话 / 一段描述）记为第 0 轮，使对话流可从头复原。
@@ -32,6 +35,10 @@ class AdvanceError(ValueError):
 
 class PlanGenerationError(ValueError):
     """方案生成失败：模型未返回可用的方案内容。"""
+
+
+class PlanRevisionError(ValueError):
+    """无法修订：该任务尚无已生成的结构化方案。"""
 
 
 @dataclass(frozen=True)
@@ -117,10 +124,16 @@ def generate_plan(
     rounds: list[dict],
     *,
     model_client: ModelClient,
+    determined: list[str] | None = None,
+    open_items: list[str] | None = None,
     model_name: str | None = None,
 ) -> str:
-    """收敛后生成结构化方案正文（Markdown）；章节随任务类型裁剪。"""
-    messages = render_plan_messages(known_input, rounds)
+    """收敛后生成结构化方案正文（Markdown）；章节随任务类型裁剪。
+
+    `determined`（已定决策）与 `open_items`（未定待确认事项）分列喂进提示词：
+    未定的推测只能落在方案「待确认事项」一节，绝不写成已定需求。
+    """
+    messages = render_plan_messages(known_input, rounds, determined, open_items)
     content = model_client.complete(messages, model=model_name).strip()
     if not content:
         raise PlanGenerationError("模型未返回方案内容")
@@ -132,6 +145,7 @@ def start_first_round(
     task_id: int,
     idea: str,
     message_repository: MessageRepository,
+    open_item_repository: OpenItemRepository,
     model_client: ModelClient,
     model_name: str | None = None,
 ) -> FrontierRound:
@@ -140,7 +154,13 @@ def start_first_round(
 
     graph = build_grilling_graph(model_client, message_repository, model_name=model_name)
     state = graph.invoke(
-        {"task_id": task_id, "known_input": idea, "round_no": FIRST_ROUND_NO, "rounds": []}
+        {
+            "task_id": task_id,
+            "known_input": idea,
+            "round_no": FIRST_ROUND_NO,
+            "rounds": [],
+            "open_items": open_item_repository.open_texts(task_id),
+        }
     )
 
     frontier = [FrontierQuestion(**item) for item in state.get("frontier", [])]
@@ -151,6 +171,7 @@ def advance_round(
     *,
     task_id: int,
     message_repository: MessageRepository,
+    open_item_repository: OpenItemRepository,
     model_client: ModelClient,
     plan_repository: PlanRepository,
     model_name: str | None = None,
@@ -167,6 +188,7 @@ def advance_round(
     known_input = _seed_input(messages)
     last_round_no = rounds[-1]["round_no"]
     next_round_no = last_round_no + 1
+    open_items = open_item_repository.open_texts(task_id)
 
     graph = build_grilling_graph(model_client, message_repository, model_name=model_name)
     state = graph.invoke(
@@ -175,6 +197,7 @@ def advance_round(
             "known_input": known_input,
             "round_no": next_round_no,
             "rounds": rounds,
+            "open_items": open_items,
         }
     )
 
@@ -186,7 +209,71 @@ def advance_round(
         )
 
     content_md = generate_plan(
-        known_input, rounds, model_client=model_client, model_name=model_name
+        known_input,
+        rounds,
+        model_client=model_client,
+        determined=state.get("determined", []),
+        open_items=open_items,
+        model_name=model_name,
     )
     record = plan_repository.create(task_id, content_md, round_no=last_round_no)
     return AdvanceOutcome(next_round=None, plan=Plan(**record))
+
+
+@dataclass(frozen=True)
+class RevisionOutcome:
+    """一次对话式修订的结果：更新后的方案 + 本次修订的版本记录。"""
+
+    plan: Plan
+    revision: PlanRevision
+
+
+def revise_plan(
+    *,
+    task_id: int,
+    instruction: str,
+    message_repository: MessageRepository,
+    open_item_repository: OpenItemRepository,
+    plan_repository: PlanRepository,
+    revision_repository: PlanRevisionRepository,
+    model_client: ModelClient,
+    model_name: str | None = None,
+) -> RevisionOutcome:
+    """对已生成方案继续对话：按用户修订指令更新方案正文，并留痕旧版本。
+
+    步骤：取当前方案正文 → 渲染修订提示词（当前方案 + 指令 + 已定 + 未定）→ 模型返回新正文
+    → 计算差异提示 → 就地更新方案（置回 draft）→ 追加一条版本记录（修订前 / 修订后 / 时间）。
+    """
+    current = plan_repository.get_current(task_id)
+    if current is None:
+        raise PlanRevisionError(f"任务 {task_id} 尚无结构化方案，无法修订")
+
+    messages = message_repository.list_for_task(task_id)
+    rounds = rounds_from_messages(messages)
+
+    prompt = render_revision_messages(
+        current["content_md"],
+        instruction,
+        _seed_input(messages),
+        rounds,
+        derive_determined(rounds),
+        open_item_repository.open_texts(task_id),
+    )
+    content_md = model_client.complete(prompt, model=model_name).strip()
+    if not content_md:
+        raise PlanGenerationError("模型未返回修订后的方案内容")
+
+    changes = compute_changes(current["content_md"], content_md)
+    updated = plan_repository.update_content(current["id"], content_md)
+    if updated is None:
+        raise PlanRevisionError(f"方案 {current['id']} 不存在，无法修订")
+
+    revision = revision_repository.create(
+        current["id"],
+        task_id,
+        instruction,
+        current["content_md"],
+        content_md,
+        changes,
+    )
+    return RevisionOutcome(plan=Plan(**updated), revision=PlanRevision(**revision))
