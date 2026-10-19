@@ -1,7 +1,8 @@
 """SQLite 连接管理与建表。
 
 TB-0 落地 `tasks` 表最小集；TB-1 追加 `providers`（模型配置非敏感字段）与
-`settings`（应用设置项）。密钥字段刻意不存在于任何表——凭据只进系统凭据管理器。
+`settings`（应用设置项）；TB-2 追加 `messages`（对话轮次）；TB-3 追加 `plans`
+（结构化方案，draft/confirmed）。密钥字段刻意不存在于任何表——凭据只进系统凭据管理器。
 资料登记 / 文本分块 / 嵌入版本等字段由后续工单（含 v1.1 RAG 预留）追加。
 """
 
@@ -57,6 +58,23 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_task_round ON messages (task_id, round_no, id);
+
+-- 结构化方案（规格 §4）：拷问收敛后的阶段性产物，未经确认只是草稿。
+-- - content_md：方案正文（Markdown；章节随任务类型裁剪，不要求所有任务同一结构）；
+-- - status：draft（草稿）/ confirmed（用户显式确认，进入生成阶段的唯一闸门）；
+-- - confirmed_at：确认时刻（未确认为 NULL），供下游（生成）判定放行；
+-- - round_no：方案由哪一轮问答产生（工单 12 要求「方案与轮次关联」）。
+CREATE TABLE IF NOT EXISTS plans (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id      INTEGER NOT NULL REFERENCES tasks(id),
+    round_no     INTEGER NOT NULL,
+    content_md   TEXT NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'draft'
+                 CHECK (status IN ('draft', 'confirmed')),
+    confirmed_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_plans_task ON plans (task_id, id);
 """
 
 

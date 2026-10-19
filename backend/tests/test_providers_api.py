@@ -136,6 +136,47 @@ def test_edit_updates_kind_role_label(client: TestClient) -> None:
     assert response.json()["kind"] == "max"
 
 
+def test_edit_kind_can_be_cleared_to_null(client: TestClient) -> None:
+    """档位可被显式置空：传 `kind: null` 必须把已有档位改回 NULL，而非被当成「未提供」。"""
+    created = client.post(
+        "/api/providers",
+        json={
+            "name": "清空档位",
+            "base_url": "https://example.test",
+            "model_name": "m",
+            "kind": "plus",
+        },
+    ).json()
+    assert created["kind"] == "plus"
+
+    response = client.put(f"/api/providers/{created['id']}", json={"kind": None})
+
+    assert response.status_code == 200
+    assert response.json()["kind"] is None
+
+    # 落库确为 NULL（不依赖响应体自证）
+    after = client.get("/api/providers").json()["items"]
+    assert next(item for item in after if item["id"] == created["id"])["kind"] is None
+
+
+def test_edit_without_kind_keeps_existing_kind(client: TestClient) -> None:
+    """未提供 kind 与显式置空必须可区分：不传 kind 时保留原有档位。"""
+    created = client.post(
+        "/api/providers",
+        json={
+            "name": "保留档位",
+            "base_url": "https://example.test",
+            "model_name": "m",
+            "kind": "max",
+        },
+    ).json()
+
+    response = client.put(f"/api/providers/{created['id']}", json={"model_name": "m2"})
+
+    assert response.status_code == 200
+    assert response.json()["kind"] == "max"
+
+
 def test_rename_migrates_credential(client: TestClient, key_store: InMemoryKeyStore) -> None:
     """凭据以 name 为键：改名时迁移凭据，避免遗留孤儿密钥。"""
     created = client.post(

@@ -31,22 +31,40 @@ class InMemoryKeyStore:
 
 
 class ScriptedModelClient:
-    """按脚本应答或抛错的模型客户端替身。"""
+    """按脚本应答或抛错的模型客户端替身。
+
+    支持两种脚本方式（TB-3 多轮推进需要「本轮前沿 / 收敛 / 方案」三次不同应答）：
+    - `set_result`：之后每次调用返回同一条应答；
+    - `set_sequence`：按调用顺序逐条返回，超出后重复最后一条。
+    """
 
     def __init__(self, *, result: str = "ok", error: BaseException | None = None) -> None:
         self._result = result
         self._error = error
+        self._sequence: list[str] = []
+        self._sequence_index = 0
         self.calls: list[dict] = []
 
     def complete(self, messages: list[dict], *, model: str | None = None) -> str:
         self.calls.append({"messages": messages, "model": model})
         if self._error is not None:
             raise self._error
+        if self._sequence:
+            index = min(self._sequence_index, len(self._sequence) - 1)
+            self._sequence_index += 1
+            return self._sequence[index]
         return self._result
 
     def set_result(self, result: str) -> None:
         """替换后续调用返回的脚本化应答（测试中途改脚本）。"""
         self._result = result
+        self._sequence = []
+        self._sequence_index = 0
+
+    def set_sequence(self, *results: str) -> None:
+        """按调用顺序逐条应答；调用次数超出后用最后一条。"""
+        self._sequence = list(results)
+        self._sequence_index = 0
 
 
 class ScriptedModelClientFactory:

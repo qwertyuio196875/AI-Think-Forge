@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.models.plan import Plan
 from app.models.task import Task
 
 
@@ -78,3 +79,14 @@ class AnswerSubmitRequest(BaseModel):
 
     round_no: int = Field(ge=0)
     answers: list[str]
+
+
+class AdvanceResponse(BaseModel):
+    """一次推进的结果：下一轮前沿，或收敛产出的方案草稿。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: int
+    converged: bool
+    next_round: FrontierRound | None
+    plan: Plan | None

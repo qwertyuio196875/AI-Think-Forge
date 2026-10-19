@@ -99,8 +99,15 @@ def update_provider(
     old_name = existing["name"]
     new_name = payload.name if payload.name is not None else old_name
 
+    # `kind` 可空：用 model_fields_set 区分「未提供」（保持原值）与「显式置空」
+    # （`"kind": null` → 写回 NULL）。exclude_none=True 会把显式 null 也剔除，
+    # 因此不能只用它。
+    fields = payload.model_dump(exclude={"api_key"}, exclude_none=True)
+    if "kind" in payload.model_fields_set:
+        fields["kind"] = payload.kind.value if payload.kind is not None else None
+
     try:
-        updated = repository.update(provider_id, payload.model_dump(exclude={"api_key"}, exclude_none=True))
+        updated = repository.update(provider_id, fields)
     except sqlite3.IntegrityError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=f"模型配置名已存在：{new_name}"

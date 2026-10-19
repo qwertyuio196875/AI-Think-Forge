@@ -1,15 +1,16 @@
 """拷问的 LangGraph 状态机（规格 §2：拷问流程用 LangGraph）。
 
-本单落地**最小节点图**，一次 `invoke` 推进一轮：
+一次 `invoke` 推进一轮：
 
     分析输入 → 生成前沿问题 →（有前沿）落库并返回 /（前沿为空）收敛停止
 
-扩展点（供 TB-3 多轮重算 / TB-4 修订）：
-- `analyze_input` 将扩展为识别目标 / 背景 / 约束 / 已知信息，并纳入历轮消息；
-- `generate_frontier` 将基于「已确定决策 + 历轮问答」重算前沿。
+TB-3 扩展（工单 12）：
+- `analyze_input` 归一已知信息，并把**历轮问答**解析为**已确定决策**；
+- `generate_frontier` 基于「已知信息 + 已确定决策 + 历轮问答」重算前沿——
+  每轮问题集随上一轮回答变化，而不是固定问题集。
 
-状态存储纪律：轮次与消息的持久化只走规格 §4 的 SQLite `messages` 表，图内状态是
-请求内的临时值，**不引入第二套隐藏状态存储**。
+状态存储纪律：轮次与消息的持久化只走规格 §4 的 SQLite `messages` 表，
+`rounds` / `determined` 都是请求内由消息复原的临时值，**不引入第二套隐藏状态存储**。
 """
 
 from __future__ import annotations
@@ -31,8 +32,35 @@ class GrillingState(TypedDict, total=False):
     task_id: int
     known_input: str
     round_no: int
+    # 历轮问答：`[{"round_no", "frontier", "answers"}, ...]`，由消息表复原。
+    rounds: list[dict]
+    # 已确定决策（分析输入产出）：`["<问题标题> → <用户回答>", ...]`。
+    determined: list[str]
     frontier: list[dict]
     frontier_empty: bool
+
+
+def _normalize_rounds(rounds: list[dict]) -> list[dict]:
+    """归一历轮问答：去掉回答两端空白，保持与问题一一对应的顺序。"""
+    return [
+        {
+            "round_no": round_info["round_no"],
+            "frontier": round_info.get("frontier", []),
+            "answers": [answer.strip() for answer in round_info.get("answers", [])],
+        }
+        for round_info in rounds
+    ]
+
+
+def _derive_determined(rounds: list[dict]) -> list[str]:
+    """从历轮问答派生「已确定决策」清单（问题标题 → 用户回答）。"""
+    determined: list[str] = []
+    for round_info in rounds:
+        answers = round_info.get("answers", [])
+        for index, question in enumerate(round_info.get("frontier", [])):
+            if index < len(answers) and answers[index]:
+                determined.append(f"{question['title']} → {answers[index]}")
+    return determined
 
 
 def build_grilling_graph(
@@ -44,12 +72,21 @@ def build_grilling_graph(
     """构建并编译拷问最小节点图（依赖以闭包注入，路由按请求构造）。"""
 
     def analyze_input(state: GrillingState) -> GrillingState:
-        """分析输入：归一用户已知信息（TB-3 将扩展为结构化识别）。"""
-        return {"known_input": state["known_input"].strip()}
+        """分析输入：归一已知信息，并把历轮问答解析为已确定决策。"""
+        rounds = _normalize_rounds(state.get("rounds", []))
+        return {
+            "known_input": state["known_input"].strip(),
+            "rounds": rounds,
+            "determined": _derive_determined(rounds),
+        }
 
     def generate_frontier(state: GrillingState) -> GrillingState:
-        """生成前沿问题：把已知信息喂进提示词，经模型客户端取得问题集。"""
-        messages = render_frontier_messages(state["known_input"])
+        """生成前沿问题：把已知信息 + 已确定决策 + 历轮问答喂进提示词重算。"""
+        messages = render_frontier_messages(
+            state["known_input"],
+            state.get("rounds", []),
+            state.get("determined", []),
+        )
         raw = model_client.complete(messages, model=model_name)
         questions = parse_frontier(raw)
         return {

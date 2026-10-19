@@ -11,6 +11,7 @@ from typing import Annotated
 from fastapi import Depends, Request
 
 from app.db.message_repository import MessageRepository
+from app.db.plan_repository import PlanRepository
 from app.db.provider_repository import ProviderRepository
 from app.db.task_repository import TaskRepository
 from app.providers.key_store import KeyStore
@@ -38,6 +39,11 @@ def get_message_repository(db_path: str = Depends(get_db_path)) -> MessageReposi
     return MessageRepository(db_path)
 
 
+def get_plan_repository(db_path: str = Depends(get_db_path)) -> PlanRepository:
+    """结构化方案仓库依赖（draft/confirmed + 确认时间）。"""
+    return PlanRepository(db_path)
+
+
 def get_key_store(request: Request) -> KeyStore:
     """密钥库依赖（默认写 Windows 凭据管理器；测试注入内存替身）。"""
     return request.app.state.key_store
@@ -62,6 +68,7 @@ def get_url_fetcher(request: Request) -> UrlFetcher:
 TaskRepositoryDep = Annotated[TaskRepository, Depends(get_task_repository)]
 ProviderRepositoryDep = Annotated[ProviderRepository, Depends(get_provider_repository)]
 MessageRepositoryDep = Annotated[MessageRepository, Depends(get_message_repository)]
+PlanRepositoryDep = Annotated[PlanRepository, Depends(get_plan_repository)]
 KeyStoreDep = Annotated[KeyStore, Depends(get_key_store)]
 ModelClientDep = Annotated[ModelClient, Depends(get_model_client)]
 ModelClientFactoryDep = Annotated[ProviderModelClientFactory, Depends(get_model_client_factory)]
