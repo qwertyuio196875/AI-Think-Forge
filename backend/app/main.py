@@ -16,6 +16,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app import config
 from app.api.router import api_router
@@ -27,6 +28,35 @@ from app.providers.openai_client import HttpModelClientFactory
 from app.providers.provider_backed_client import ProviderBackedModelClient
 from app.providers.tiered_client import TieredModelClient
 from app.providers.url_fetcher import HttpUrlFetcher
+
+
+class SPAStaticFiles(StaticFiles):
+    """静态托管 + SPA history 路由回退。
+
+    前端使用 `createWebHistory`，像 `/analysis?source=1` 这样的深链在浏览器刷新
+    时必须仍返回 `index.html`，由 Vue Router 接管；`/api/**` 的未知路径仍返回
+    JSON 404，`/assets/**` 或带扩展名的缺失文件仍返回 404，不能被前端入口吞掉。
+    """
+
+    @staticmethod
+    def _is_spa_route(path: str) -> bool:
+        normalized = path.replace("\\", "/")
+        last_segment = normalized.rsplit("/", 1)[-1]
+        return (
+            not normalized.startswith(("api/", "assets/"))
+            and "." not in last_segment
+        )
+
+    async def get_response(self, path: str, scope):
+        try:
+            response = await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code == 404 and self._is_spa_route(path):
+                return await super().get_response("index.html", scope)
+            raise
+        if response.status_code == 404 and self._is_spa_route(path):
+            return await super().get_response("index.html", scope)
+        return response
 
 
 def _resolve_db_path(db_path: str | Path | None) -> str:
@@ -105,7 +135,7 @@ def create_app(
     if mount_frontend and config.FRONTEND_DIST_DIR.is_dir():
         app.mount(
             "/",
-            StaticFiles(directory=str(config.FRONTEND_DIST_DIR), html=True),
+            SPAStaticFiles(directory=str(config.FRONTEND_DIST_DIR), html=True),
             name="frontend",
         )
 
