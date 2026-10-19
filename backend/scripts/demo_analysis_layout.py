@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 
@@ -24,8 +25,8 @@ TESTS_DIR = BACKEND_DIR / "tests"
 if str(TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(TESTS_DIR))
 
-from fastapi.testclient import TestClient  # noqa: E402
-from layout_samples import (  # noqa: E402
+from fastapi.testclient import TestClient
+from layout_samples import (
     PDF_MIME,
     PPTX_MIME,
     corrupt_pdf_bytes,
@@ -34,11 +35,11 @@ from layout_samples import (  # noqa: E402
     text_pptx_bytes,
 )
 
-from app import config  # noqa: E402
-from app.db.provider_repository import ProviderRepository  # noqa: E402
-from app.main import create_app  # noqa: E402
-from app.providers.model_client import ModelClientConfig  # noqa: E402
-from app.providers.tiered_client import TieredModelClient  # noqa: E402
+from app import config
+from app.db.provider_repository import ProviderRepository
+from app.main import create_app
+from app.providers.model_client import ModelClientConfig
+from app.providers.tiered_client import TieredModelClient
 
 
 class _NoKeyStore:
@@ -142,6 +143,8 @@ def _show_summary(client: TestClient, uploaded: dict, scripted: _ScriptedClient)
 def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
+    # 演示输出只保留接缝证据：pypdf 对损坏文件的告警在这里是噪声（失败已由 API 明示）。
+    logging.getLogger("pypdf").setLevel(logging.CRITICAL)
 
     config.DATA_DIR.mkdir(parents=True, exist_ok=True)
     demo_dir = config.DATA_DIR / "demo"
