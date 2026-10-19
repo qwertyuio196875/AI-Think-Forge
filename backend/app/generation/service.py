@@ -13,11 +13,13 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
 from app import config
 from app.db.generation_repository import GenerationRepository
+from app.db.summary_deliverable_repository import SummaryDeliverableRepository
 from app.db.template_repository import TemplateRepository
 from app.generation.deck import build_html_deck, verify_html_deliverable
 from app.generation.templates import resolve_template
@@ -88,6 +90,80 @@ def generate_word_deliverable(
     }
 
 
+def generate_summary_word_deliverable(
+    *,
+    source: dict,
+    summary: dict,
+    requested_template: str | None,
+    data_dir: str | Path,
+    templates_dir: str | Path,
+    template_repository: TemplateRepository,
+    deliverable_repository: SummaryDeliverableRepository,
+) -> dict:
+    """由「总结 + 引用」按模板生成 Word 交付并记录。
+
+    与方案成品同一条纪律：**先确认产物合格，再落库**；任何失败删除半成品。
+    总结没有结构化方案，故独立记入 `summary_deliverables`，绝不伪造 plan。
+    """
+    default_record = template_repository.get_default(FORMAT_DOCX)
+    resolved = resolve_template(
+        templates_dir,
+        requested=requested_template,
+        default_name=default_record["name"] if default_record else None,
+    )
+
+    task_id = source["task_id"]
+    output_dir = (
+        Path(data_dir) / config.DELIVERABLES_SUBDIR / str(task_id or "analysis")
+    )
+    output_path = _unique_summary_output_path(output_dir, source["id"])
+
+    build = build_word_deliverable(
+        build_summary_markdown(source, summary), resolved.path, output_path
+    )
+    try:
+        verify_word_deliverable(build)
+    except Exception:
+        # 结构损坏：丢弃产物，绝不交付、绝不落库（规格 US 22）。
+        output_path.unlink(missing_ok=True)
+        raise
+
+    record = deliverable_repository.create(
+        source["id"],
+        task_id=task_id,
+        file_path=str(output_path),
+        template_used=resolved.template_used,
+    )
+    return {
+        **record,
+        "format": FORMAT_DOCX,
+        "template_style_applied": build.template_style_applied,
+        "missing_styles": list(build.missing_styles),
+        "headings": build.headings,
+    }
+
+
+def build_summary_markdown(source: dict, summary: dict) -> str:
+    """把总结与引用组织成 Word 写入用的 Markdown（来源 / 总结 / 引用）。"""
+    meta = source.get("meta") or {}
+    name = meta.get("original_name") or source["ref"]
+    lines = ["# 资料总结", "", "## 来源", "", f"- 名称：{name}"]
+    url = meta.get("url") or meta.get("final_url")
+    if url:
+        lines.append(f"- URL：{url}")
+
+    lines.extend(["", "## 总结", "", summary["text"], "", "## 引用", ""])
+    for citation in summary.get("citations") or []:
+        locator = json.dumps(
+            citation.get("locator") or {}, ensure_ascii=False, sort_keys=True
+        )
+        lines.append(
+            f"- 分块 {citation.get('chunk_seq')} · {locator}："
+            f"{citation.get('excerpt') or ''}"
+        )
+    return "\n".join(lines) + "\n"
+
+
 def generate_html_deliverable(
     *,
     task_id: int,
@@ -147,4 +223,15 @@ def _unique_output_path(output_dir: Path, plan_id: int, *, suffix: str) -> Path:
     while candidate.exists():
         order += 1
         candidate = output_dir / f"plan-{plan_id}-{stamp}-{order}{suffix}"
+    return candidate
+
+
+def _unique_summary_output_path(output_dir: Path, source_id: int) -> Path:
+    """总结 Word 文件名：`summary-{source_id}-{timestamp}.docx`（同秒追加序号）。"""
+    stamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
+    candidate = output_dir / f"summary-{source_id}-{stamp}.docx"
+    order = 1
+    while candidate.exists():
+        order += 1
+        candidate = output_dir / f"summary-{source_id}-{stamp}-{order}.docx"
     return candidate

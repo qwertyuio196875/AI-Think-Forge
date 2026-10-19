@@ -17,6 +17,8 @@ from app.db.open_item_repository import OpenItemRepository
 from app.db.plan_repository import PlanRepository
 from app.db.plan_revision_repository import PlanRevisionRepository
 from app.db.provider_repository import ProviderRepository
+from app.db.settings_repository import SettingsRepository
+from app.db.summary_deliverable_repository import SummaryDeliverableRepository
 from app.db.task_repository import TaskRepository
 from app.db.template_repository import TemplateRepository
 from app.providers.key_store import KeyStore
@@ -85,6 +87,18 @@ def get_analysis_repository(db_path: str = Depends(get_db_path)) -> AnalysisRepo
     return AnalysisRepository(db_path)
 
 
+def get_summary_deliverable_repository(
+    db_path: str = Depends(get_db_path),
+) -> SummaryDeliverableRepository:
+    """总结 Word 交付记录仓库依赖。"""
+    return SummaryDeliverableRepository(db_path)
+
+
+def get_settings_repository(db_path: str = Depends(get_db_path)) -> SettingsRepository:
+    """应用设置仓库依赖（key-value）。"""
+    return SettingsRepository(db_path)
+
+
 def get_key_store(request: Request) -> KeyStore:
     """密钥库依赖（默认写 Windows 凭据管理器；测试注入内存替身）。"""
     return request.app.state.key_store
@@ -124,6 +138,10 @@ GenerationRepositoryDep = Annotated[
 ]
 TemplateRepositoryDep = Annotated[TemplateRepository, Depends(get_template_repository)]
 AnalysisRepositoryDep = Annotated[AnalysisRepository, Depends(get_analysis_repository)]
+SummaryDeliverableRepositoryDep = Annotated[
+    SummaryDeliverableRepository, Depends(get_summary_deliverable_repository)
+]
+SettingsRepositoryDep = Annotated[SettingsRepository, Depends(get_settings_repository)]
 DataDirDep = Annotated[str, Depends(get_data_dir)]
 TemplatesDirDep = Annotated[str, Depends(get_templates_dir)]
 KeyStoreDep = Annotated[KeyStore, Depends(get_key_store)]

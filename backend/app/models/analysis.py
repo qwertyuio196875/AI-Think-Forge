@@ -78,6 +78,63 @@ class AnalysisSourceResponse(BaseModel):
     message: str | None = None
 
 
+class AnalysisSourceListItem(BaseModel):
+    """来源列表条目：来源 + 最新文档 + 总结标记（供历史续看 / 分析页列表）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: SourceInfo
+    document: DocumentInfo | None = None
+    has_summary: bool
+    summary_id: int | None = None
+    summary_created_at: str | None = None
+
+
+class AnalysisSourceListResponse(BaseModel):
+    """来源列表响应：当页条目 + 总数 + 分页参数。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[AnalysisSourceListItem]
+    total: int
+    limit: int
+    offset: int
+
+
+class SummaryWordRequest(BaseModel):
+    """总结 Word 生成请求：可选任务级模板覆盖；为空走该格式的全局默认模板。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    template: str | None = None
+
+    @field_validator("template")
+    @classmethod
+    def _blank_is_absent(cls, value: str | None) -> str | None:
+        """纯空白模板名视为未指定（走全局默认 / 内置模板）。"""
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
+
+
+class SummaryWordDeliverableResponse(BaseModel):
+    """总结 Word 交付：记录 + 产物元数据（样式是否贴合模板 / 缺哪些样式 / 标题数）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    source_id: int
+    task_id: int | None
+    format: str = "docx"
+    file_path: str
+    template_used: str
+    created_at: str
+    template_style_applied: bool = False
+    missing_styles: list[str] = Field(default_factory=list)
+    headings: int = 0
+
+
 class SummaryCitation(BaseModel):
     """总结引用：来自哪个分块、什么位置、该块开头摘录。"""
 

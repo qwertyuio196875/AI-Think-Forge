@@ -16,8 +16,10 @@ from app.api.deps import (
     OpenItemRepositoryDep,
     PlanRepositoryDep,
     PlanRevisionRepositoryDep,
+    ProviderRepositoryDep,
     TaskRepositoryDep,
 )
+from app.api.errors import require_task
 from app.db.generation_repository import GenerationRepository
 from app.db.message_repository import MessageRepository
 from app.db.open_item_repository import OpenItemRepository
@@ -31,6 +33,7 @@ from app.models.task import (
     TaskDeletionResult,
     TaskKind,
     TaskListResponse,
+    TaskModelUpdate,
     TaskStatus,
     TaskStatusUpdate,
 )
@@ -40,8 +43,10 @@ router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=Task)
 def create_task(payload: TaskCreate, repository: TaskRepositoryDep) -> Task:
-    """新建任务（主题创作 / 资料分析）。"""
-    record = repository.create(payload.kind.value, payload.title)
+    """新建任务（主题创作 / 资料分析）；可带任务级模型覆盖。"""
+    record = repository.create(
+        payload.kind.value, payload.title, provider_id=payload.provider_id
+    )
     return Task.from_record(record)
 
 
@@ -63,10 +68,38 @@ def list_tasks(
 @router.get("/{task_id}", response_model=Task)
 def get_task(task_id: int, repository: TaskRepositoryDep) -> Task:
     """按 id 读取任务；不存在返回 404（已软删除的任务仍可读，删除只是留痕标记）。"""
-    record = repository.get(task_id)
-    if record is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"任务 {task_id} 不存在")
-    return Task.from_record(record)
+    return Task.from_record(require_task(repository, task_id))
+
+
+@router.put("/{task_id}/model", response_model=Task)
+def update_task_model(
+    task_id: int,
+    payload: TaskModelUpdate,
+    task_repository: TaskRepositoryDep,
+    provider_repository: ProviderRepositoryDep,
+) -> Task:
+    """设置 / 清除任务级模型覆盖（US23）；`provider_id=null` 回到默认。"""
+    task = require_task(task_repository, task_id)
+    if task["status"] == TaskStatus.deleted.value:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"任务 {task_id} 已删除，无法变更模型配置（删除是留痕的终态）",
+        )
+
+    if payload.provider_id is not None:
+        provider = provider_repository.get_by_id(payload.provider_id)
+        if provider is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"模型配置 {payload.provider_id} 不存在，请重新选择",
+            )
+
+    updated = task_repository.set_provider_id(task_id, payload.provider_id)
+    if updated is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"任务 {task_id} 不存在"
+        )
+    return Task.from_record(updated)
 
 
 @router.post("/{task_id}/status", response_model=Task)
@@ -79,9 +112,7 @@ def update_task_status(
 
     已删除的任务不可再迁移（409）：删除是留痕的终态，不靠改状态复活。
     """
-    current = repository.get(task_id)
-    if current is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"任务 {task_id} 不存在")
+    current = require_task(repository, task_id)
     if current["status"] == TaskStatus.deleted.value:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -112,9 +143,7 @@ def delete_task(
     - 带 `confirm=true` → 软删除（置为已删除并留 `deleted_at`），对话与方案一条不删；
       重复删除幂等，保留首次删除时间。
     """
-    task = task_repository.get(task_id)
-    if task is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"任务 {task_id} 不存在")
+    task = require_task(task_repository, task_id)
 
     impact = _impact_for(
         task,
@@ -155,9 +184,7 @@ def get_deletion_impact(
     generation_repository: GenerationRepositoryDep,
 ) -> TaskDeletionImpact:
     """取删除影响范围（确认弹层的数据源；不改动任何数据）。"""
-    task = task_repository.get(task_id)
-    if task is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"任务 {task_id} 不存在")
+    task = require_task(task_repository, task_id)
 
     return _impact_for(
         task,

@@ -8,7 +8,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Query
 
 from app.api.deps import (
     MessageRepositoryDep,
@@ -16,6 +16,7 @@ from app.api.deps import (
     PlanRepositoryDep,
     TaskRepositoryDep,
 )
+from app.api.errors import require_task
 from app.grilling.service import build_dialogue
 from app.history import derive_resume
 from app.models.history import HistoryCounts, HistoryDetail, HistoryItem, HistoryListResponse
@@ -71,11 +72,7 @@ def get_history_detail(
     续作状态由既有持久化数据推导（`app.history.derive_resume`），不新建状态：
     关闭系统再打开，同一份对话与方案必然推导出同一处「从哪继续」。
     """
-    task = task_repository.get(task_id)
-    if task is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=f"任务 {task_id} 不存在"
-        )
+    task = require_task(task_repository, task_id)
 
     dialogue = build_dialogue(task_id, message_repository.list_for_task(task_id))
     plan_record = plan_repository.get_current(task_id)

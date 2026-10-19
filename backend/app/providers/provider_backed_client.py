@@ -29,10 +29,13 @@ NO_DEFAULT_PROVIDER_MESSAGE = (
 
 
 class ProviderBackedModelClient:
-    """按默认 provider 配置解析并委托给真实客户端的 `ModelClient` 实现。
+    """按 provider 配置解析并委托给真实客户端的 `ModelClient` 实现。
 
     构造参数为接缝协作者（provider 仓库 / 密钥库 / 客户端工厂），便于测试注入
     内存替身；生产由 `app.main` 以 `app.state` 上的实例装配。
+
+    `provider_id` 非空时表示**任务级模型覆盖**（US23）：按该 provider 的
+    `base_url` / `name`（取密钥）解析，`model_name` 仍由调用方传入。
     """
 
     def __init__(
@@ -40,19 +43,40 @@ class ProviderBackedModelClient:
         provider_repository: ProviderRepository,
         key_store: KeyStore,
         factory: ProviderModelClientFactory,
+        *,
+        provider_id: int | None = None,
     ) -> None:
         self.provider_repository = provider_repository
         self.key_store = key_store
         self.factory = factory
+        self.provider_id = provider_id
+
+    def for_task(self, provider_id: int | None) -> ProviderBackedModelClient:
+        """返回绑定任务级 provider 的客户端；`None` 表示沿用默认（返回自身）。"""
+        if provider_id is None:
+            return self
+        return ProviderBackedModelClient(
+            self.provider_repository,
+            self.key_store,
+            self.factory,
+            provider_id=provider_id,
+        )
 
     def complete(self, messages: list[dict], *, model: str | None = None) -> str:
-        """解析默认 provider 配置与密钥，构造真实客户端并委托调用。
+        """解析 provider 配置与密钥，构造真实客户端并委托调用。
 
         `model` 显式传入时以调用方为准，否则用 provider 的 `model_name`。
         """
-        provider = self.provider_repository.get_default()
-        if provider is None:
-            raise ModelCallError(NO_DEFAULT_PROVIDER_MESSAGE)
+        if self.provider_id is not None:
+            provider = self.provider_repository.get_by_id(self.provider_id)
+            if provider is None:
+                raise ModelCallError(
+                    f"任务指定的模型配置 {self.provider_id} 不存在，请重新选择模型"
+                )
+        else:
+            provider = self.provider_repository.get_default()
+            if provider is None:
+                raise ModelCallError(NO_DEFAULT_PROVIDER_MESSAGE)
 
         config = ModelClientConfig(
             base_url=provider["base_url"],

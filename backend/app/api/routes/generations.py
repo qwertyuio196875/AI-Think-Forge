@@ -26,13 +26,21 @@ from app.api.deps import (
     GenerationRepositoryDep,
     OpenItemRepositoryDep,
     PlanRepositoryDep,
+    SettingsRepositoryDep,
     TaskRepositoryDep,
     TemplateRepositoryDep,
     TemplatesDirDep,
 )
+from app.api.errors import require_task
 from app.generation.service import generate_html_deliverable, generate_word_deliverable
 from app.generation.templates import TemplateError
-from app.generation.themes import DeckThemeError, deck_theme
+from app.generation.themes import (
+    DECK_THEME_SETTING_KEY,
+    DECK_THEMES,
+    DEFAULT_THEME_ID,
+    DeckThemeError,
+    deck_theme,
+)
 from app.generation.word import DeliverableIntegrityError
 from app.models.generation import (
     Generation,
@@ -52,10 +60,7 @@ def _require_confirmed_plan(
     task_id: int, task_repository, plan_repository, open_item_repository
 ) -> dict:
     """闸门判定：返回已确认且无未定条目的方案；否则抛 404/409。"""
-    if task_repository.get(task_id) is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=f"任务 {task_id} 不存在"
-        )
+    require_task(task_repository, task_id)
 
     plan = plan_repository.get_current(task_id)
     if plan is None:
@@ -93,6 +98,7 @@ def request_generation(
     open_item_repository: OpenItemRepositoryDep,
     template_repository: TemplateRepositoryDep,
     generation_repository: GenerationRepositoryDep,
+    settings_repository: SettingsRepositoryDep,
     data_dir: DataDirDep,
     templates_dir: TemplatesDirDep,
     payload: GenerationRequest | None = None,
@@ -111,6 +117,7 @@ def request_generation(
             request=request,
             task_repository=task_repository,
             generation_repository=generation_repository,
+            settings_repository=settings_repository,
             data_dir=data_dir,
         )
 
@@ -144,15 +151,23 @@ def _generate_deck(
     request: GenerationRequest,
     task_repository,
     generation_repository,
+    settings_repository,
     data_dir: str,
 ) -> GenerationResponse:
     """单文件 HTML 演示一轨：解析主题 → 渲染 → 完整性检查 → 记录。
 
+    未显式给 theme 时读取全局默认主题（US20）；显式 theme 始终优先。
     主题未知 → 400（明确报错，不静默退回默认主题）；完整性检查未通过（含外部网络引用）
     → 500 且产物已由服务层丢弃。
     """
+    theme_id = request.theme
+    if theme_id is None:
+        stored = settings_repository.get(DECK_THEME_SETTING_KEY, DEFAULT_THEME_ID)
+        # 设置写入时已校验；若库中值失效（手工改库 / 旧版本），回到内建默认。
+        theme_id = stored if stored in DECK_THEMES else DEFAULT_THEME_ID
+
     try:
-        theme = deck_theme(request.theme)
+        theme = deck_theme(theme_id)
     except DeckThemeError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -182,10 +197,7 @@ def list_generations(
     generation_repository: GenerationRepositoryDep,
 ) -> GenerationListResponse:
     """某任务已生成的成品记录（供成品卡渲染；含每次实际所用模板）。"""
-    if task_repository.get(task_id) is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=f"任务 {task_id} 不存在"
-        )
+    require_task(task_repository, task_id)
 
     items = [Generation(**record) for record in generation_repository.list_for_task(task_id)]
     return GenerationListResponse(items=items, total=len(items))

@@ -1,8 +1,9 @@
 """URL 抓取接缝（fake 注入点 2）：协议 + 真实实现 + 安全边界。
 
 业务代码只依赖 `UrlFetcher` 协议；真实实现 `HttpUrlFetcher` 在每次请求前与**每一跳
-重定向**后都调用 `app.security.url_guard.validate_url` 重新校验（防 SSRF / DNS
-rebinding），并强制超时与下载大小上限。抓取结论一律是 `FetchedPage`（含
+重定向**后都调用 `app.security.url_guard.validate_url` 重新校验，以缓解 DNS rebinding
+（连接前后复核）；仍有解析 / 连接之间的 TOCTOU 窗口，见工单 18 遗留风险。同时强制
+超时与下载大小上限。抓取结论一律是 `FetchedPage`（含
 `final_url` / `status` / `content_type` / `size` / `fetched_at` 元数据）或带可读原因的
 `UrlFetchError`——**绝不绕过**站点权限边界，也绝不用空内容冒充成功。
 

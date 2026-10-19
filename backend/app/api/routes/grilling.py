@@ -18,6 +18,8 @@ from app.api.deps import (
     ProviderRepositoryDep,
     TaskRepositoryDep,
 )
+from app.api.errors import require_task
+from app.db.provider_repository import ProviderRepository
 from app.db.task_repository import TaskRepository
 from app.grilling.frontier import FrontierParseError
 from app.grilling.open_items import (
@@ -71,12 +73,32 @@ def _derive_title(idea: str) -> str:
     return first_line[:TITLE_MAX_LENGTH]
 
 
-def _require_task(task_repository: TaskRepository, task_id: int) -> None:
-    """任务不存在时抛 404。"""
-    if task_repository.get(task_id) is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=f"任务 {task_id} 不存在"
-        )
+def _require_task(task_repository: TaskRepository, task_id: int) -> dict:
+    """任务不存在时抛 404（统一走 `app.api.errors.require_task`）。"""
+    return require_task(task_repository, task_id)
+
+
+def _model_for_task(
+    task: dict, provider_repository: ProviderRepository, model_client
+) -> tuple:
+    """解析任务级模型覆盖：返回（客户端, model_name）。
+
+    - 任务 pin 了 provider：客户端按其配置调用，`model_name` 取该 provider 的；
+    - 未 pin：行为与既有实现一致（默认 provider 的 model_name）；
+    - 测试注入的 fake 没有 `for_task` 时原样使用，保持既有接缝。
+    """
+    provider_id = task.get("provider_id")
+    client = (
+        model_client.for_task(provider_id)
+        if hasattr(model_client, "for_task")
+        else model_client
+    )
+    provider = (
+        provider_repository.get_by_id(provider_id)
+        if provider_id is not None
+        else provider_repository.get_default()
+    )
+    return client, provider["model_name"] if provider is not None else None
 
 
 @router.post(
@@ -93,10 +115,22 @@ def start_grilling_task(
     model_client: ModelClientDep,
 ) -> GrillingStartResponse:
     """从一句话 / 一段描述发起主题创作，产出第一轮前沿问题集。"""
-    task_record = task_repository.create("creation", _derive_title(payload.idea))
+    if (
+        payload.provider_id is not None
+        and provider_repository.get_by_id(payload.provider_id) is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"模型配置 {payload.provider_id} 不存在，请重新选择",
+        )
 
-    default_provider = provider_repository.get_default()
-    model_name = default_provider["model_name"] if default_provider else None
+    task_record = task_repository.create(
+        "creation", _derive_title(payload.idea), provider_id=payload.provider_id
+    )
+
+    client, model_name = _model_for_task(
+        task_record, provider_repository, model_client
+    )
 
     try:
         frontier_round = start_first_round(
@@ -104,7 +138,7 @@ def start_grilling_task(
             idea=payload.idea,
             message_repository=message_repository,
             open_item_repository=open_item_repository,
-            model_client=model_client,
+            model_client=client,
             model_name=model_name,
         )
     except FrontierParseError as exc:
@@ -173,17 +207,15 @@ def advance(
     model_client: ModelClientDep,
 ) -> AdvanceResponse:
     """按上一轮回答重算下一轮前沿；前沿为空即收敛并生成结构化方案草稿。"""
-    _require_task(task_repository, task_id)
-
-    default_provider = provider_repository.get_default()
-    model_name = default_provider["model_name"] if default_provider else None
+    task = _require_task(task_repository, task_id)
+    client, model_name = _model_for_task(task, provider_repository, model_client)
 
     try:
         outcome = advance_round(
             task_id=task_id,
             message_repository=message_repository,
             open_item_repository=open_item_repository,
-            model_client=model_client,
+            model_client=client,
             plan_repository=plan_repository,
             model_name=model_name,
         )
@@ -292,10 +324,8 @@ def revise(
     旧版本留痕（修订前 / 修订后 / 时间）落在方案版本记录里；方案本体回到 draft，
     原确认不再覆盖新内容。
     """
-    _require_task(task_repository, task_id)
-
-    default_provider = provider_repository.get_default()
-    model_name = default_provider["model_name"] if default_provider else None
+    task = require_task(task_repository, task_id)
+    client, model_name = _model_for_task(task, provider_repository, model_client)
 
     try:
         outcome = revise_plan(
@@ -305,7 +335,7 @@ def revise(
             open_item_repository=open_item_repository,
             plan_repository=plan_repository,
             revision_repository=revision_repository,
-            model_client=model_client,
+            model_client=client,
             model_name=model_name,
         )
     except PlanRevisionError as exc:

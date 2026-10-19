@@ -1,7 +1,7 @@
 """任务相关的请求 / 响应模型。
 
-字段集固定为 id、kind、title、status、created_at、updated_at（规格 §4 最小集
-+ title 小幅增补，供前端任务列表显示可读标签）。
+字段集固定为 id、kind、title、provider_id、status、created_at、updated_at（规格 §4 最小集
++ title 小幅增补，供前端任务列表显示可读标签；provider_id 为任务级模型覆盖，US23）。
 """
 
 from __future__ import annotations
@@ -52,6 +52,16 @@ class TaskCreate(BaseModel):
 
     kind: TaskKind
     title: str | None = None
+    # 任务级模型覆盖（US23）：为空表示沿用默认 provider。
+    provider_id: int | None = None
+
+
+class TaskModelUpdate(BaseModel):
+    """任务级模型覆盖请求体：`provider_id=null` 表示清除覆盖、回到默认。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider_id: int | None = None
 
 
 class Task(BaseModel):
@@ -62,6 +72,7 @@ class Task(BaseModel):
     id: int
     kind: TaskKind
     title: str | None
+    provider_id: int | None = None
     status: TaskStatus
     created_at: str
     updated_at: str
@@ -77,6 +88,7 @@ class Task(BaseModel):
             id=record["id"],
             kind=record["kind"],
             title=record["title"],
+            provider_id=record.get("provider_id"),
             status=record["status"],
             created_at=record["created_at"],
             updated_at=record["updated_at"],

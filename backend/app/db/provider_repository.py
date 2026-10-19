@@ -40,6 +40,10 @@ class ProviderRepository:
             ).fetchone()
         return dict(row) if row is not None else None
 
+    def get_by_id(self, provider_id: int) -> dict | None:
+        """按 id 读取单条（任务级模型覆盖解析用）；不存在返回 None。"""
+        return self.get(provider_id)
+
     def get_by_name(self, name: str) -> dict | None:
         """按 name 读取单条（name 唯一）。"""
         with connect(self._db_path) as connection:

@@ -18,7 +18,8 @@ from pathlib import Path
 from typing import Annotated
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
+from fastapi.responses import FileResponse
 
 from app.analysis.chunking import Chunk, build_chunks
 from app.analysis.parsing import SUPPORTED_SUFFIXES, ParseError, parse_document
@@ -39,13 +40,21 @@ from app.api.deps import (
     AnalysisRepositoryDep,
     DataDirDep,
     MessageRepositoryDep,
+    SummaryDeliverableRepositoryDep,
     TaskRepositoryDep,
+    TemplateRepositoryDep,
+    TemplatesDirDep,
     TieredModelClientDep,
     UrlFetcherDep,
 )
+from app.generation.service import generate_summary_word_deliverable
+from app.generation.templates import TemplateError
+from app.generation.word import DeliverableIntegrityError
 from app.grilling.service import SEED_ROUND_NO
 from app.models.analysis import (
     AnalysisResultResponse,
+    AnalysisSourceListItem,
+    AnalysisSourceListResponse,
     AnalysisSourceResponse,
     AnalysisSummary,
     DocumentInfo,
@@ -53,6 +62,8 @@ from app.models.analysis import (
     SendToCreationResponse,
     SourceInfo,
     SummaryCitation,
+    SummaryWordDeliverableResponse,
+    SummaryWordRequest,
     UnrecognizedContent,
     UrlSourceRequest,
 )
@@ -76,6 +87,10 @@ UPLOAD_SUBDIR = "uploads"
 EXCERPT_MAX_CHARS = 80
 # 任务标题取文件名截断，与主题创作的标题口径一致。
 TITLE_MAX_LENGTH = 60
+# 总结 Word 交付的媒体类型（下载端点用）。
+DOCX_MEDIA_TYPE = (
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+)
 
 
 def _original_name(source: dict) -> str:
@@ -106,6 +121,59 @@ def _document_info(record: dict, *, chunks: int) -> DocumentInfo:
         images=record["images"],
         chunks=chunks,
         created_at=record["created_at"],
+    )
+
+
+def _persist_parsed_document(
+    analysis_repository: AnalysisRepositoryDep,
+    source: dict,
+    path: str,
+    parsed,
+    *,
+    parse_status: str,
+    unrecognized: dict | None = None,
+    unrecognized_parts: list[dict] | None = None,
+    message: str | None = None,
+    encoding: str | None = None,
+    images: int = 0,
+) -> AnalysisSourceResponse:
+    """「落库 + 解析结果 + 分块」共用管线（上传与 URL 两个入口行为一致）。
+
+    `parse_status="parsed"` 时按解析块建分块；`unrecognized` 时只落文档与显式契约，
+    绝不建块、不生成空总结。`encoding` / `images` 由入口显式传入，保持两条入口
+    既有的字段口径完全不变。
+    """
+    headings = sum(1 for block in parsed.blocks if block.heading_level is not None)
+    chunks = build_chunks(parsed.blocks, parsed.format) if parse_status == "parsed" else []
+    document = analysis_repository.create_document(
+        source["id"],
+        path,
+        parse_status=parse_status,
+        heading_source=parsed.heading_source,
+        parser=parsed.parser,
+        encoding=encoding,
+        headings=headings,
+        images=images,
+        unrecognized=unrecognized,
+        unrecognized_parts=unrecognized_parts,
+    )
+    if chunks:
+        analysis_repository.add_chunks(
+            document["id"],
+            [
+                {"seq": chunk.seq, "text": chunk.text, "locator": chunk.locator}
+                for chunk in chunks
+            ],
+        )
+
+    return AnalysisSourceResponse(
+        source=SourceInfo(**source),
+        document=_document_info(document, chunks=len(chunks)),
+        unrecognized=UnrecognizedContent(**unrecognized) if unrecognized else None,
+        unrecognized_parts=[
+            UnrecognizedContent(**item) for item in (unrecognized_parts or [])
+        ],
+        message=message,
     )
 
 
@@ -185,58 +253,35 @@ def upload_source(
             message=str(exc),
         )
 
-    headings = sum(1 for block in parsed.blocks if block.heading_level is not None)
     primary = primary_unrecognized(parsed)
     parts = unrecognized_parts(parsed)
 
     if primary is not None:
-        document = analysis_repository.create_document(
-            source["id"],
+        return _persist_parsed_document(
+            analysis_repository,
+            source,
             relative,
+            parsed,
             parse_status="unrecognized",
-            heading_source=parsed.heading_source,
-            parser=parsed.parser,
-            encoding=parsed.encoding,
-            headings=headings,
-            images=parsed.images,
             unrecognized=primary,
             unrecognized_parts=parts,
-        )
-        return AnalysisSourceResponse(
-            source=SourceInfo(**source),
-            document=_document_info(document, chunks=0),
-            unrecognized=UnrecognizedContent(**primary),
-            unrecognized_parts=[UnrecognizedContent(**item) for item in parts],
             message=(
                 "未识别到可分析的文本"
                 + ("（疑似扫描件 / 图片，未做 OCR）" if parsed.images else "")
             ),
+            encoding=parsed.encoding,
+            images=parsed.images,
         )
 
-    chunks = build_chunks(parsed.blocks, parsed.format)
-    document = analysis_repository.create_document(
-        source["id"],
+    return _persist_parsed_document(
+        analysis_repository,
+        source,
         relative,
+        parsed,
         parse_status="parsed",
-        heading_source=parsed.heading_source,
-        parser=parsed.parser,
-        encoding=parsed.encoding,
-        headings=headings,
-        images=parsed.images,
         unrecognized_parts=parts,
-    )
-    analysis_repository.add_chunks(
-        document["id"],
-        [
-            {"seq": chunk.seq, "text": chunk.text, "locator": chunk.locator}
-            for chunk in chunks
-        ],
-    )
-
-    return AnalysisSourceResponse(
-        source=SourceInfo(**source),
-        document=_document_info(document, chunks=len(chunks)),
-        unrecognized_parts=[UnrecognizedContent(**item) for item in parts],
+        encoding=parsed.encoding,
+        images=parsed.images,
     )
 
 
@@ -320,46 +365,56 @@ def create_url_source(
             },
             "needs_ocr": False,
         }
-        document = analysis_repository.create_document(
-            source["id"],
+        return _persist_parsed_document(
+            analysis_repository,
+            source,
             page.final_url,
+            parsed,
             parse_status="unrecognized",
-            parser=parsed.parser,
-            heading_source=parsed.heading_source,
             unrecognized=contract,
-        )
-        return AnalysisSourceResponse(
-            source=SourceInfo(**source),
-            document=_document_info(document, chunks=0),
-            unrecognized=UnrecognizedContent(**contract),
             message=(
                 "该网页未提取到可分析的正文"
                 "（可能是登录页 / 动态渲染页面 / 非文章页）"
             ),
         )
 
-    headings = sum(1 for block in parsed.blocks if block.heading_level is not None)
-    chunks = build_chunks(parsed.blocks, parsed.format)
-    document = analysis_repository.create_document(
-        source["id"],
+    return _persist_parsed_document(
+        analysis_repository,
+        source,
         page.final_url,
+        parsed,
         parse_status="parsed",
-        parser=parsed.parser,
-        heading_source=parsed.heading_source,
         encoding=parsed.encoding,
-        headings=headings,
-    )
-    analysis_repository.add_chunks(
-        document["id"],
-        [
-            {"seq": chunk.seq, "text": chunk.text, "locator": chunk.locator}
-            for chunk in chunks
-        ],
     )
 
-    return AnalysisSourceResponse(
-        source=SourceInfo(**source),
-        document=_document_info(document, chunks=len(chunks)),
+
+@router.get("/sources", response_model=AnalysisSourceListResponse)
+def list_sources(
+    analysis_repository: AnalysisRepositoryDep,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> AnalysisSourceListResponse:
+    """来源列表（按 id 倒序）：带最新文档与总结标记，供历史续看 / 分析页列表。"""
+    records, total = analysis_repository.list_sources(limit=limit, offset=offset)
+    items = [
+        AnalysisSourceListItem(
+            source=SourceInfo(**record["source"]),
+            document=(
+                _document_info(
+                    record["document"],
+                    chunks=analysis_repository.count_chunks(record["document"]["id"]),
+                )
+                if record["document"] is not None
+                else None
+            ),
+            has_summary=record["has_summary"],
+            summary_id=record["summary_id"],
+            summary_created_at=record["summary_created_at"],
+        )
+        for record in records
+    ]
+    return AnalysisSourceListResponse(
+        items=items, total=total, limit=limit, offset=offset
     )
 
 
@@ -449,8 +504,16 @@ def analyze_source(
         )
 
     try:
+        task = (
+            task_repository.get(source["task_id"])
+            if source["task_id"] is not None
+            else None
+        )
         outcome = analyze_chunks(
-            chunks, source_name=_original_name(source), resolver=tiered_model_client
+            chunks,
+            source_name=_original_name(source),
+            resolver=tiered_model_client,
+            provider_id=task.get("provider_id") if task is not None else None,
         )
     except ModelCallError as exc:
         raise HTTPException(
@@ -515,6 +578,84 @@ def get_summary(
         )
 
     return _summary_model(record, hanzi_count=count_hanzi(record["text"]))
+
+
+@router.post(
+    "/sources/{source_id}/summary/word",
+    response_model=SummaryWordDeliverableResponse,
+)
+def generate_summary_word(
+    source_id: int,
+    analysis_repository: AnalysisRepositoryDep,
+    summary_deliverable_repository: SummaryDeliverableRepositoryDep,
+    template_repository: TemplateRepositoryDep,
+    data_dir: DataDirDep,
+    templates_dir: TemplatesDirDep,
+    payload: SummaryWordRequest | None = None,
+) -> SummaryWordDeliverableResponse:
+    """按模板把某来源的最新总结生成 Word（US16），并记录本次实际所用模板。
+
+    - 来源不存在 → 404；尚无总结 → 409（不凭空生成空文档）；
+    - 模板缺失 / 损坏 → 400（明确报错，不静默退回内置模板）；
+    - 完整性检查未通过 → 500，且产物已由服务层丢弃、不落记录（US22）。
+    """
+    source = analysis_repository.get_source(source_id)
+    if source is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"来源 {source_id} 不存在"
+        )
+
+    summary = analysis_repository.get_summary_for_source(source_id)
+    if summary is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"来源 {source_id} 尚无总结，请先执行分析",
+        )
+
+    request = payload or SummaryWordRequest()
+    try:
+        result = generate_summary_word_deliverable(
+            source=source,
+            summary=summary,
+            requested_template=request.template,
+            data_dir=data_dir,
+            templates_dir=templates_dir,
+            template_repository=template_repository,
+            deliverable_repository=summary_deliverable_repository,
+        )
+    except TemplateError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+    except DeliverableIntegrityError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"成品完整性检查未通过，已丢弃产物：{exc}",
+        ) from exc
+
+    return SummaryWordDeliverableResponse(**result)
+
+
+@router.get("/summary-deliverables/{deliverable_id}")
+def download_summary_word(
+    deliverable_id: int,
+    summary_deliverable_repository: SummaryDeliverableRepositoryDep,
+) -> FileResponse:
+    """下载已生成的总结 Word 成品；记录不存在或文件已丢失均 404。"""
+    record = summary_deliverable_repository.get(deliverable_id)
+    if record is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"总结成品 {deliverable_id} 不存在",
+        )
+
+    path = Path(record["file_path"])
+    if not path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"总结成品 {deliverable_id} 的文件已不存在：{path}",
+        )
+    return FileResponse(path, media_type=DOCX_MEDIA_TYPE, filename=path.name)
 
 
 @router.post(

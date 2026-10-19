@@ -29,16 +29,18 @@ class TaskRepository:
     def __init__(self, db_path: str | Path) -> None:
         self._db_path = str(db_path)
 
-    def create(self, kind: str, title: str | None) -> dict:
-        """新建任务，初始状态 in_progress。"""
+    def create(
+        self, kind: str, title: str | None, provider_id: int | None = None
+    ) -> dict:
+        """新建任务，初始状态 in_progress；可带任务级模型覆盖。"""
         now = utcnow_iso()
         with connect(self._db_path) as connection:
             cursor = connection.execute(
                 """
-                INSERT INTO tasks (kind, title, status, created_at, updated_at)
-                VALUES (?, ?, 'in_progress', ?, ?)
+                INSERT INTO tasks (kind, title, provider_id, status, created_at, updated_at)
+                VALUES (?, ?, ?, 'in_progress', ?, ?)
                 """,
-                (kind, title, now, now),
+                (kind, title, provider_id, now, now),
             )
             connection.commit()
             row = connection.execute(
@@ -98,6 +100,9 @@ class TaskRepository:
 
         query = f"""
             SELECT t.id, t.kind, t.title, t.status, t.created_at, t.updated_at,
+                   (SELECT s.id FROM sources s
+                     WHERE s.task_id = t.id ORDER BY s.id DESC LIMIT 1)
+                       AS source_id,
                    (SELECT COUNT(*) FROM messages m WHERE m.task_id = t.id)
                        AS dialogue_messages,
                    (SELECT COUNT(DISTINCT m.round_no) FROM messages m
@@ -161,6 +166,22 @@ class TaskRepository:
             connection.execute(
                 "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?",
                 (status, utcnow_iso(), task_id),
+            )
+            connection.commit()
+            row = connection.execute(
+                "SELECT * FROM tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def set_provider_id(self, task_id: int, provider_id: int | None) -> dict | None:
+        """设置 / 清除任务级模型覆盖；不存在返回 None。
+
+        `provider_id=None` 表示回到默认 provider（不删任务、不改其它字段）。
+        """
+        with connect(self._db_path) as connection:
+            connection.execute(
+                "UPDATE tasks SET provider_id = ?, updated_at = ? WHERE id = ?",
+                (provider_id, utcnow_iso(), task_id),
             )
             connection.commit()
             row = connection.execute(

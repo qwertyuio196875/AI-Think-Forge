@@ -96,16 +96,21 @@ def unrecognized_parts(parsed: ParsedDocument) -> list[dict]:
 
 
 def analyze_chunks(
-    chunks: list[Chunk], *, source_name: str, resolver: TieredModelClient
+    chunks: list[Chunk],
+    *,
+    source_name: str,
+    resolver: TieredModelClient,
+    provider_id: int | None = None,
 ) -> SummaryOutcome:
     """逐块分析 N 次 + 综合 1 次（脚本化模型下可精确计数）。
 
     一次分析只解析一次档位；N 个分块对应 N 次逐块调用，最后恰好 1 次综合调用。
+    `provider_id` 非空时表示来源所属任务 pin 了 provider（US23），透传给解析器。
     """
     if not chunks:
         raise SummaryGenerationError("没有可分析的分块")
 
-    resolved = resolver.resolve(SUMMARY_PROVIDER_KIND)
+    resolved = resolver.resolve(SUMMARY_PROVIDER_KIND, provider_id=provider_id)
     total = len(chunks)
     notes: list[str] = []
     for chunk in chunks:
