@@ -29,7 +29,7 @@
 
 ## 当前状态
 
-领域文档与规格已就位，**后端已落地 TB-0（行走骨架）、TB-1（模型配置与连接测试）与 TB-2（拷问第一轮）并带自动化测试**；其余功能与前端仍在按曳光弹工单推进。除下表标 ✅ 者外，请以规格为准，勿当作已实现能力。
+领域文档与规格已就位，**后端已落地 TB-0（行走骨架）、TB-1（模型配置与连接测试）、TB-2（拷问第一轮）、TB-3（收敛 → 方案 → 确认闸门）、TB-4（方案修订与待确认事项）与 TB-5（Word 成品与模板机制）并带自动化测试**；其余功能与前端仍在按曳光弹工单推进。除下表标 ✅ 者外，请以规格为准，勿当作已实现能力。
 
 | 部分 | 现状 |
 | --- | --- |
@@ -42,8 +42,9 @@
 | 拷问第一轮 | ✅ TB-2：`messages` 表（轮次 / 角色 / 内容 / 时间，问答同序落库）、版本化提示词资产（MIT 署名，见 ADR-0001）、LangGraph 最小节点图（分析输入 → 生成前沿 → 落库返回，前沿为空即停）、`/api/grilling/*` 发起 / 作答 / 读取对话 |
 | 收敛 → 方案 → 确认闸门 | ✅ TB-3：`plans` 表（内容 / 状态 draft\|confirmed / 确认时间 / 关联轮次）、每轮按上轮回答重算前沿、前沿为空即收敛并生成结构灵活的结构化方案草稿、显式确认动作、生成入口在方案未确认时服务端拒绝（409）、版本化方案提示词资产 |
 | 方案修订与待确认事项 | ✅ TB-4：`plan_revisions`（修订前 / 修订后 / 时间 / 差异提示，旧版本不丢）、`open_items`（来源轮次 / 条目 / 状态）、对话式修订（`POST …/plan/revisions`）与差异提示、前沿问题新增 `why`（为什么现在问）/ `alternatives`（备选方向）（资产升 `grilling-v2`）、「暂时跳过」入待确认事项、未处置条目拦截生成（409） |
+| Word 成品与模板机制 | ✅ TB-5：`generations`（任务 / 方案 / 格式 / 产物位置 / **本次实际所用模板** / 时间）、`templates`（模板登记：名称 / 格式 / 是否默认）、确认方案后经 `python-docx` 生成 .docx（标题 / 正文 / 列表 / 表格按模板样式映射）、内置最小默认模板按需幂等生成、全局默认模板与任务级**临时覆盖**分离、产物**回读**完整性检查（US 22）、模板缺失 / 损坏 / 非 `.docx` 明确报错不静默空白生成 |
 | 运行时目录 | ✅ `data/`（运行时 SQLite 落此处，gitignored）、`启动.bat`、根 `.gitignore`（覆盖 `/data/`、`/templates/`、`.slim/`） |
-| 自动化测试 | ✅ `backend/tests`（pytest，进程内 HTTP 接缝，不联网；129 项通过） |
+| 自动化测试 | ✅ `backend/tests`（pytest，进程内 HTTP 接缝，不联网；180 项通过） |
 
 ---
 
@@ -64,10 +65,10 @@
 ## 目录结构
 
 ```
-backend/          # FastAPI 应用包 app/（api、db、models、providers、grilling、analysis、generation、security）+ tests/
+backend/          # FastAPI 应用包 app/（api、db、models、providers、grilling、analysis、generation、security）+ tests/ + scripts/（演示脚本）
 frontend/         # Vue3 + TS + Vite + Element Plus；src/{api,layouts,router}（views 待落地）
-data/             # 运行时数据（SQLite、上传件、生成产物）—— gitignore
-templates/        # 用户 Word / PPT 模板 + 内置默认模板 —— gitignore
+data/             # 运行时数据（SQLite、上传件、生成产物 data/deliverables/）—— gitignore
+templates/        # 用户 Word / PPT 模板 + 内置默认模板 templates/_builtin/ —— gitignore
 docs/
   adr/            # 架构决策记录（ADR-0001 ~ 0003）
   agents/         # 智能体工作约定（issue 跟踪、分诊标签、领域文档）
@@ -105,7 +106,7 @@ npm run dev      # Vite 开发服务器，默认 http://localhost:5173
 
 ```powershell
 python -m venv backend\.venv
-backend\.venv\Scripts\python.exe -m pip install fastapi "uvicorn[standard]" pydantic httpx keyring langgraph pytest ruff
+backend\.venv\Scripts\python.exe -m pip install fastapi "uvicorn[standard]" pydantic httpx keyring langgraph python-docx pytest ruff
 ```
 
 > 依赖记录在根 `pyproject.toml`（运行时依赖 + `dev` extras），不另设 `requirements.txt`。
@@ -149,7 +150,22 @@ cd backend
 | GET | `/api/grilling/tasks/{id}/plan/revisions` | 方案的修订历史（逐条含修订前 / 修订后内容与时间）`{"items":[...],"total":n}` |
 | GET | `/api/grilling/tasks/{id}/open-items` | **待确认事项**清单 `{"items":[{id,task_id,round_no,text,status,created_at,resolved_at}],"total":n}` |
 | POST | `/api/grilling/tasks/{id}/open-items/{item_id}/resolve` | 处置一条待确认事项：body `{"status":"confirmed"\|"dismissed"}`（用户确认动作） |
-| POST | `/api/tasks/{id}/generations` | 成品生成入口（硬闸门）：方案未确认 / 无方案 → 409；**仍有未处置的待确认事项 → 409**；已确认且无未定条目 → 交生成管线（TB-5/TB-6，暂 501） |
+| POST | `/api/tasks/{id}/generations` | **成品生成入口（硬闸门）**：方案未确认 / 无方案 → 409；**仍有未处置的待确认事项 → 409**；已确认且无未定条目 → 生成 Word 成品 → 201，返回成品记录 + 产物元数据（`template_style_applied` / `missing_styles` / `headings` / `integrity_ok`）。可选 body `{"format":"docx"\|"html","template":string?}`：`template` 为**任务级临时覆盖**（不改变全局默认）；`html` 一轨由 TB-6 落地，现返回 501。模板缺失 / 损坏 / 非 `.docx` → 400（明确报错，不产出成品） |
+| GET | `/api/tasks/{id}/generations` | 某任务已生成的成品记录 `{"items":[{id,task_id,plan_id,format,file_path,template_used,created_at}],"total":n}` |
+| GET | `/api/templates` | **模板清单**：模板目录里可被选用的模板（含内置 `_builtin/minimal-default.docx`）+ 是否全局默认 / 是否内置 / 是否可用 / 是否已登记 / 是否文件已缺失 |
+| POST | `/api/templates` | **模板登记**：body `{"name":string,"is_default":bool?}`，登记已放入 `templates/` 的模板 → 201；只接受 `.docx`，`.dotx` / `.dotm` / `.docm`（含改名成 `.docx` 的模板类型文件）→ 400 并提示「请另存为 .docx」；文件不存在 → 404 |
+| PUT | `/api/templates/{name}/default` | 设为该格式的**全局默认模板**（同格式至多一个） |
+
+### Word 成品与模板机制
+
+- **成品**：方案确认后，`POST /api/tasks/{id}/generations` 把结构化方案的正文确定性渲染成 `.docx`（不调用模型），产物落在 `data/deliverables/{任务 id}/`。
+- **样式映射**：`Heading 1~3` / 正文 / 列表 / 表格 六类样式按**模板自己的定义**套用，因此「换模板 → 成品外观随模板变化」。
+- **内置最小默认模板**：开箱可用，首次生成时按需幂等生成到 `templates/_builtin/minimal-default.docx`（**不往 Git 里塞二进制**；`templates/` 本身 gitignore）。它显式定义上述六类样式。
+- **用户模板**：把 `.docx` 模板放进仓库根 `templates/` 即可被选用（`GET /api/templates` 会列出），机制不变；登记（`POST /api/templates`）只补「是否全局默认」等元数据。
+- **默认模板 vs 临时覆盖**：`PUT /api/templates/{name}/default` 设**全局默认模板**；生成请求里的 `template` 是**任务级临时覆盖**——只影响当次生成，**不改变全局默认**，两者在数据与 API 上都分开。
+- **每次生成记录实际所用模板**（`generations.template_used`，取 `templates/` 下的相对路径）。
+- **明确报错而非静默降级**：模板缺失 / 损坏 / 是 `.dotx`、`.dotm`、`.docm` → 400 并提示「请另存为 .docx」；模板未定义某样式 → 该段回退为「直接设字号 / 加粗」并在产物元数据标 `template_style_applied: false`；产物回读完整性检查（US 22）未通过 → 丢弃产物、不落库、返回 5xx。
+- **可复现演示记录**：`backend\scripts\demo_word_deliverable.py`（进程内 HTTP 接缝 + 脚本化模型替身，不联网）会真的生成 .docx 并回读打印章节与样式映射，含换模板、缺模板、非 `.docx`、样式回退四种情形。
 
 ### 真实连接测试操作手册（配好 `DEEPSEEK_API_KEY` 后自证真连）
 

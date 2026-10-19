@@ -31,12 +31,30 @@ def key_store() -> InMemoryKeyStore:
 
 
 @pytest.fixture
-def app(db_path: Path, key_store: InMemoryKeyStore):
+def data_dir(tmp_path: Path) -> Path:
+    """每个测试独立的运行时数据目录（成品落此处），与仓库 data/ 隔离。"""
+    return tmp_path / "data"
+
+
+@pytest.fixture
+def templates_dir(tmp_path: Path) -> Path:
+    """每个测试独立的模板目录（含内置默认模板），与仓库 templates/ 隔离。"""
+    return tmp_path / "templates"
+
+
+@pytest.fixture
+def app(db_path: Path, key_store: InMemoryKeyStore, data_dir: Path, templates_dir: Path):
     """按可配置库路径构建应用实例（同一进程内多次重建，用于续作语义验证）。
 
-    密钥存储接缝经 `dependency_overrides` 注入内存替身（与 TB-0 的接缝风格一致）。
+    密钥存储接缝经 `dependency_overrides` 注入内存替身（与 TB-0 的接缝风格一致）；
+    数据目录与模板目录指向 pytest 临时目录，测试不写仓库 `data/`、`templates/`。
     """
-    application = create_app(db_path=db_path, mount_frontend=False)
+    application = create_app(
+        db_path=db_path,
+        mount_frontend=False,
+        data_dir=data_dir,
+        templates_dir=templates_dir,
+    )
     application.dependency_overrides[get_key_store] = lambda: key_store
     return application
 

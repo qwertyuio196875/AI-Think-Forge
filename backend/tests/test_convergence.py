@@ -286,9 +286,10 @@ def test_generation_for_missing_task_returns_404(grilling_client: TestClient) ->
 def test_generation_gate_opens_after_confirmation(
     grilling_client: TestClient, scripted_model_client: ScriptedModelClient
 ) -> None:
-    """确认后闸门放行：下游读到「已确认」，不再被 409 拦截。
+    """确认后闸门放行：下游读到「已确认」，不再被 409 拦截，并真的产出成品。
 
-    生成管线本身归 TB-5/TB-6，本单只保证闸门判定；放行后以 501 明确「能力待落地」。
+    生成管线本身归 TB-5（Word）与 TB-6（单文件 HTML）；此处只断言「放行 + 落地一份
+    可打开的 Word 成品」，样式映射的细节由 `test_generation_word.py` 覆盖。
     """
     task_id = _start(
         grilling_client,
@@ -303,4 +304,5 @@ def test_generation_gate_opens_after_confirmation(
 
     response = grilling_client.post(f"/api/tasks/{task_id}/generations")
 
-    assert response.status_code == 501
+    assert response.status_code == 201
+    assert Path(response.json()["file_path"]).exists()

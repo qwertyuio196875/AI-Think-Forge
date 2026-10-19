@@ -4,7 +4,8 @@ TB-0 落地 `tasks` 表最小集；TB-1 追加 `providers`（模型配置非敏�
 `settings`（应用设置项）；TB-2 追加 `messages`（对话轮次）；TB-3 追加 `plans`
 （结构化方案，draft/confirmed）；TB-4 追加 `open_items`（待确认事项）与
 `plan_revisions`（方案版本记录）；TB-10 给 `tasks` 补 `deleted_at`（删除留痕）与
-历史查询索引。密钥字段刻意不存在于任何表——凭据只进系统凭据管理器。
+历史查询索引；TB-5 追加 `generations`（成品记录，含本次实际所用模板）与 `templates`
+（模板登记：名称 / 格式 / 是否默认）。密钥字段刻意不存在于任何表——凭据只进系统凭据管理器。
 资料登记 / 文本分块 / 嵌入版本等字段由后续工单（含 v1.1 RAG 预留）追加。
 """
 
@@ -120,6 +121,41 @@ CREATE TABLE IF NOT EXISTS plan_revisions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_plan_revisions_plan ON plan_revisions (plan_id, id);
+
+-- 成品（规格 §4；工单 14）：方案确认后生成的最终文件（Word / 单文件 HTML，见 ADR-0003）。
+-- - plan_id：由哪一份结构化方案生成（方案确认是进入生成阶段的唯一闸门）；
+-- - format：成品格式（docx / html），与 ADR-0003 的首版双轨一致；
+-- - file_path：产物落盘位置（绝对路径；文件访问限定 data/ 白名单）；
+-- - template_used：**本次生成实际所用的模板**（规格 US 20「每次生成实际所用模板的记录」），
+--   取模板目录下的相对路径（内置默认模板为 `_builtin/minimal-default.docx`）。任务级
+--   **临时覆盖**只体现在本列，绝不改写全局默认（术语「默认模板 / 临时覆盖」）。
+CREATE TABLE IF NOT EXISTS generations (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id       INTEGER NOT NULL REFERENCES tasks(id),
+    plan_id       INTEGER NOT NULL REFERENCES plans(id),
+    format        TEXT NOT NULL CHECK (format IN ('docx', 'html')),
+    file_path     TEXT NOT NULL,
+    template_used TEXT NOT NULL,
+    created_at    TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_generations_task ON generations (task_id, id);
+
+-- 模板登记（工单 14「名称、格式、是否默认」）：模板 = 样式文件（GLOSSARY）。
+-- 系统只管理与应用，从不联网搜模板。字段取最小集：
+-- - name：模板文件名（相对 `templates/` 的 posix 相对路径，如 `corp.docx`）；
+-- - format：模板格式；本单只接受 docx —— `.dotx` / `.dotm` / `.docm` 打不开
+--   （python-docx 校验主部件内容类型，调研 A2 陷阱 1），登记入口即拒。
+-- - is_default：是否该格式的**全局默认模板**（同格式至多一个，写入时互斥）。
+-- **任务级临时覆盖不写本表**：它只影响单次生成的 `generations.template_used`，
+-- 不改变全局默认（术语「临时选择不改变全局默认」）。
+CREATE TABLE IF NOT EXISTS templates (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL UNIQUE,
+    format     TEXT NOT NULL,
+    is_default INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
+    created_at TEXT NOT NULL
+);
 """
 
 

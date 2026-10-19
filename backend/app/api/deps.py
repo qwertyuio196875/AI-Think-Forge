@@ -17,6 +17,7 @@ from app.db.plan_repository import PlanRepository
 from app.db.plan_revision_repository import PlanRevisionRepository
 from app.db.provider_repository import ProviderRepository
 from app.db.task_repository import TaskRepository
+from app.db.template_repository import TemplateRepository
 from app.providers.key_store import KeyStore
 from app.providers.model_client import ModelClient, ProviderModelClientFactory
 from app.providers.url_fetcher import UrlFetcher
@@ -25,6 +26,16 @@ from app.providers.url_fetcher import UrlFetcher
 def get_db_path(request: Request) -> str:
     """当前应用的 SQLite 库路径（由 create_app 写入 app.state）。"""
     return request.app.state.db_path
+
+
+def get_data_dir(request: Request) -> str:
+    """当前应用的运行时数据目录（成品落盘位置，`data/` 白名单）。"""
+    return request.app.state.data_dir
+
+
+def get_templates_dir(request: Request) -> str:
+    """当前应用的模板目录（用户模板 + 内置默认模板，`templates/` 白名单）。"""
+    return request.app.state.templates_dir
 
 
 def get_task_repository(db_path: str = Depends(get_db_path)) -> TaskRepository:
@@ -58,8 +69,13 @@ def get_plan_revision_repository(db_path: str = Depends(get_db_path)) -> PlanRev
 
 
 def get_generation_repository(db_path: str = Depends(get_db_path)) -> GenerationRepository:
-    """成品（成品文件）只读计数依赖（弱依赖 TB-5/TB-6，表未落地时计 0）。"""
+    """成品（成品文件）读写依赖（表未落地时只读计数仍计 0）。"""
     return GenerationRepository(db_path)
+
+
+def get_template_repository(db_path: str = Depends(get_db_path)) -> TemplateRepository:
+    """模板登记仓库依赖（名称 / 格式 / 是否全局默认）。"""
+    return TemplateRepository(db_path)
 
 
 def get_key_store(request: Request) -> KeyStore:
@@ -94,6 +110,9 @@ PlanRevisionRepositoryDep = Annotated[
 GenerationRepositoryDep = Annotated[
     GenerationRepository, Depends(get_generation_repository)
 ]
+TemplateRepositoryDep = Annotated[TemplateRepository, Depends(get_template_repository)]
+DataDirDep = Annotated[str, Depends(get_data_dir)]
+TemplatesDirDep = Annotated[str, Depends(get_templates_dir)]
 KeyStoreDep = Annotated[KeyStore, Depends(get_key_store)]
 ModelClientDep = Annotated[ModelClient, Depends(get_model_client)]
 ModelClientFactoryDep = Annotated[ProviderModelClientFactory, Depends(get_model_client_factory)]

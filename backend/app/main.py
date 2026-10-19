@@ -38,13 +38,25 @@ def _resolve_db_path(db_path: str | Path | None) -> str:
     return str(config.DEFAULT_DB_PATH)
 
 
-def create_app(db_path: str | Path | None = None, *, mount_frontend: bool = True) -> FastAPI:
+def create_app(
+    db_path: str | Path | None = None,
+    *,
+    mount_frontend: bool = True,
+    data_dir: str | Path | None = None,
+    templates_dir: str | Path | None = None,
+) -> FastAPI:
     """构建 FastAPI 应用。
 
     `mount_frontend=False` 供测试跳过静态托管：`frontend/dist` 是否已构建不应
     影响测试（挂载在 "/" 会遮蔽测试期追加的路由）。
+    `data_dir` / `templates_dir` 供测试指向临时目录，使成品与模板不写进仓库
+    `data/`、`templates/`；生产留空即用 `app.config` 的默认白名单目录。
     """
     resolved_db_path = _resolve_db_path(db_path)
+    resolved_data_dir = str(data_dir) if data_dir is not None else str(config.DATA_DIR)
+    resolved_templates_dir = (
+        str(templates_dir) if templates_dir is not None else str(config.TEMPLATES_DIR)
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -64,6 +76,8 @@ def create_app(db_path: str | Path | None = None, *, mount_frontend: bool = True
     )
 
     app.state.db_path = resolved_db_path
+    app.state.data_dir = resolved_data_dir
+    app.state.templates_dir = resolved_templates_dir
     app.state.model_client_factory = HttpModelClientFactory()
     app.state.key_store = KeyringKeyStore()
     # 生产默认模型客户端按「当前默认 provider + 凭据管理器 + 工厂」解析真实客户端，

@@ -219,7 +219,7 @@ def test_revision_of_confirmed_plan_reopens_the_gate(
     task_id = _start_with_plan(grilling_client, scripted_model_client)
     confirmed = grilling_client.post(f"/api/grilling/tasks/{task_id}/plan/confirm").json()
     assert confirmed["status"] == "confirmed"
-    assert grilling_client.post(f"/api/tasks/{task_id}/generations").status_code == 501
+    assert grilling_client.post(f"/api/tasks/{task_id}/generations").status_code == 201
     scripted_model_client.set_result(REVISED_MD)
 
     revised = grilling_client.post(

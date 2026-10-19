@@ -12,6 +12,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = REPO_ROOT / "data"
 FRONTEND_DIST_DIR = REPO_ROOT / "frontend" / "dist"
+# 模板目录（用户模板 + 内置默认模板）；文件访问白名单之一，见「安全边界」。
+TEMPLATES_DIR = REPO_ROOT / "templates"
+# 成品产物目录（Word / 单文件 HTML）；文件访问白名单之一。
+DELIVERABLES_SUBDIR = "deliverables"
 
 DEFAULT_DB_PATH = DATA_DIR / "thinkforge.db"
 DB_PATH_ENV_VAR = "THINKFORGE_DB_PATH"

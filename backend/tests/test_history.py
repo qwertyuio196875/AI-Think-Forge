@@ -323,7 +323,7 @@ def test_deletion_impact_reports_dialogue_plan_and_deliverable_files(
     assert impact["plans"] == 1
     assert impact["plan_revisions"] == 1
     assert impact["open_items"] == 1
-    # 成品文件数弱依赖 TB-5/TB-6：生成管线尚未落地，如实为 0（不伪造）
+    # 该任务尚未生成成品：如实为 0（不伪造影响范围）
     assert impact["deliverable_files"] == 0
     assert "对话 4 条" in impact["summary"]
     assert "方案 1 份" in impact["summary"]
@@ -419,32 +419,26 @@ def test_delete_is_idempotent_and_keeps_first_deletion_time(
 def test_deletion_impact_counts_existing_deliverable_files(
     client: TestClient, db_path: Path
 ) -> None:
-    """成品文件数是**弱依赖**：`generations` 表尚未落地时为 0；表存在时如实计数。
+    """成品文件数按任务如实计数（`generations` 表由 TB-5 落地）。
 
-    表由 TB-5 / TB-6 落地，本单不造它的结构，只在测试里按下游形态建表后验证计数口径。
+    删除影响范围只是读 `generations` 的行数；本测试直接写入两行成品记录验证计数口径，
+    不经过生成管线（生成真的会落盘文件，属于 TB-5 自己的接缝测试）。
     """
     task_id = client.post("/api/tasks", json={"kind": "creation", "title": "A"}).json()["id"]
 
-    # 管线未落地：如实返回 0
+    # 尚未生成任何成品：如实返回 0
     assert client.get(f"/api/tasks/{task_id}/deletion-impact").json()["deliverable_files"] == 0
 
     with sqlite3.connect(str(db_path)) as connection:
-        connection.execute(
-            """
-            CREATE TABLE generations (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                task_id INTEGER NOT NULL,
-                format TEXT NOT NULL,
-                file_path TEXT,
-                created_at TEXT NOT NULL
-            )
-            """
-        )
         connection.executemany(
-            "INSERT INTO generations (task_id, format, file_path, created_at) "
-            "VALUES (?, ?, ?, ?)",
-            [(task_id, "docx", "data/out/a.docx", "2026-10-19T00:00:00+00:00"),
-             (task_id, "html", "data/out/a.html", "2026-10-19T00:00:00+00:00")],
+            "INSERT INTO generations (task_id, plan_id, format, file_path, template_used, "
+            "created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (task_id, 1, "docx", "data/deliverables/a.docx", "corp.docx",
+                 "2026-10-19T00:00:00+00:00"),
+                (task_id, 1, "html", "data/deliverables/a.html", "odeck",
+                 "2026-10-19T00:00:00+00:00"),
+            ],
         )
         connection.commit()
 

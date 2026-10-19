@@ -323,8 +323,8 @@ def test_open_items_block_plan_confirmation_until_they_are_resolved(
 
     assert confirmed.status_code == 200
     assert confirmed.json()["status"] == "confirmed"
-    # 处置完毕 → 生成闸门放行（走到生成管线，TB-5/TB-6 待落地）
-    assert grilling_client.post(f"/api/tasks/{task_id}/generations").status_code == 501
+    # 处置完毕 → 生成闸门放行（交 TB-5 的 Word 成品管线）
+    assert grilling_client.post(f"/api/tasks/{task_id}/generations").status_code == 201
 
 
 def test_dismissed_open_item_also_unblocks_plan_confirmation(
@@ -373,7 +373,7 @@ def test_resolved_open_item_does_not_block_generation(
     grilling_client.post(f"/api/grilling/tasks/{task_id}/advance")
     grilling_client.post(f"/api/grilling/tasks/{task_id}/plan/confirm")
 
-    assert grilling_client.post(f"/api/tasks/{task_id}/generations").status_code == 501
+    assert grilling_client.post(f"/api/tasks/{task_id}/generations").status_code == 201
 
 
 # --- 重启续作 -------------------------------------------------------------------

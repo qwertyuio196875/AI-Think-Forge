@@ -33,7 +33,7 @@ class ResumeNext(str, Enum):
     advance = "advance"
     # 已有方案草稿 → 待方案确认。
     plan_confirm = "plan_confirm"
-    # 方案已确认 → 可请求生成成品（管线归 TB-5/TB-6）。
+    # 方案已确认 → 可请求生成成品（Word 一轨见 TB-5；单文件 HTML 见 TB-6）。
     generation = "generation"
     # 任务已完成 / 已删除（软删除留痕）。
     completed = "completed"
