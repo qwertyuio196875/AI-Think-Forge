@@ -4,7 +4,16 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.api.routes import generations, grilling, health, history, providers, tasks, templates
+from app.api.routes import (
+    deck,
+    generations,
+    grilling,
+    health,
+    history,
+    providers,
+    tasks,
+    templates,
+)
 
 api_router = APIRouter()
 api_router.include_router(health.router)
@@ -14,3 +23,4 @@ api_router.include_router(history.router)
 api_router.include_router(grilling.router)
 api_router.include_router(generations.router)
 api_router.include_router(templates.router)
+api_router.include_router(deck.router)

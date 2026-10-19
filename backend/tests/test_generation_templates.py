@@ -426,17 +426,26 @@ def test_broken_artifact_is_discarded_and_not_recorded(
     assert _deliverable_files(data_dir) == []
 
 
-# --- 另一轨：单文件 HTML 演示由 TB-6 落地 ---------------------------------------
+# --- 另一轨：单文件 HTML 演示（TB-6 已落地） -------------------------------------
 
 
-def test_html_format_is_not_implemented_yet(
+def test_html_track_is_served_by_the_builtin_theme_family(
     grilling_client: TestClient, scripted_model_client: ScriptedModelClient
 ) -> None:
-    """ADR-0003 的另一轨（单文件 HTML 演示）显式 501，不假装已实现。"""
+    """ADR-0003 的另一轨由 TB-6 落地：`format=html` 返回 201 与 `.html` 单文件产物。
+
+    该轨的细节（内联字体 / 无外部引用 / 结构完整性 / 主题族）由 `test_generation_html.py`
+    覆盖；此处只钉住「双轨都在同一入口上」这一事实，防止回退成未实现占位。
+    """
     task_id = _confirmed_task(grilling_client, scripted_model_client)
 
     response = grilling_client.post(
-        f"/api/tasks/{task_id}/generations", json={"format": "html"}
+        f"/api/tasks/{task_id}/generations", json={"format": "html", "theme": "mono"}
     )
 
-    assert response.status_code == 501
+    assert response.status_code == 201
+    body = response.json()
+    assert body["format"] == "html"
+    assert body["template_used"] == "deck-theme:mono"
+    assert Path(body["file_path"]).suffix == ".html"
+    assert body["integrity_ok"] is True

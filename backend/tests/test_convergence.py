@@ -172,16 +172,30 @@ def test_next_round_is_recomputed_from_prior_answers(
     assert [q["title"] for q in dialogue["rounds"][1]["frontier"]] == ["案例来源", "练习形式"]
 
 
-def test_advance_before_any_answer_is_rejected(
+def test_advance_without_any_round_generates_the_first_round(
     grilling_client: TestClient, scripted_model_client: ScriptedModelClient
 ) -> None:
-    """尚无任何轮次问答时推进 → 422（没有可据以重算的上一轮）。"""
+    """尚无任何轮次时推进 → **生成第一轮**，而不是 422（TB-10 遗留 a 的修正）。
+
+    旧行为对 0 轮次任务返回 422，而 `derive_resume` 对其给 `awaiting="advance"`，于是
+    「继续」这条按钮必吃 422。现在推进等价于「发起第一轮」，故 awaiting 是真话。
+    没有任何种子输入的任务仍为 422（见 `test_history.py`）。
+    """
+    # 发起创作时首轮未提出任何问题 → 库里 0 轮次（与「首轮 502」同一形态）
     started = grilling_client.post("/api/grilling/tasks", json={"idea": IDEA})
     task_id = started.json()["task"]["id"]
+    assert grilling_client.get(f"/api/grilling/tasks/{task_id}/dialogue").json()["rounds"] == []
 
+    scripted_model_client.set_sequence(_frontier_json(("目标读者", "写给谁？", "新员工")))
     response = grilling_client.post(f"/api/grilling/tasks/{task_id}/advance")
 
-    assert response.status_code == 422
+    assert response.status_code == 200
+    body = response.json()
+    assert body["converged"] is False
+    assert body["next_round"]["round_no"] == 1
+
+    rounds = grilling_client.get(f"/api/grilling/tasks/{task_id}/dialogue").json()["rounds"]
+    assert [round_["round_no"] for round_ in rounds] == [1]
 
 
 # --- 方案确认：draft → confirmed 的状态迁移 ------------------------------------

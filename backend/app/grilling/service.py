@@ -179,18 +179,33 @@ def advance_round(
     """按上一轮回答重算下一轮前沿；前沿为空即收敛，并生成结构化方案草稿。
 
     方案由**触发收敛的那一轮**（最后一轮问答）产生，故 `round_no` 记最后一轮。
+
+    **该任务尚无任何轮次时**（典型：首轮提问因模型不可用而 502，任务与种子输入留在库里）
+    不返回 422，而是走**等价于发起第一轮**的路径：让 `derive_resume` 给出的
+    `awaiting="advance"` 成为真话，首轮失败的任务因此自动可恢复（TB-10 遗留 a）。
+    若此时模型也未提出任何问题（前沿为空），则按「前沿为空即收敛」产出草稿方案，
+    方案记由种子输入（第 0 轮）产生——绝不让用户停在一个没有出路的「继续」上。
     """
     messages = message_repository.list_for_task(task_id)
     rounds = rounds_from_messages(messages)
-    if not rounds:
-        raise AdvanceError("尚无已作答的轮次，无法推进")
-
     known_input = _seed_input(messages)
+    open_items = open_item_repository.open_texts(task_id)
+    graph = build_grilling_graph(model_client, message_repository, model_name=model_name)
+
+    if not rounds:
+        return _advance_without_rounds(
+            task_id=task_id,
+            known_input=known_input,
+            open_items=open_items,
+            graph=graph,
+            model_client=model_client,
+            plan_repository=plan_repository,
+            model_name=model_name,
+        )
+
     last_round_no = rounds[-1]["round_no"]
     next_round_no = last_round_no + 1
-    open_items = open_item_repository.open_texts(task_id)
 
-    graph = build_grilling_graph(model_client, message_repository, model_name=model_name)
     state = graph.invoke(
         {
             "task_id": task_id,
@@ -217,6 +232,53 @@ def advance_round(
         model_name=model_name,
     )
     record = plan_repository.create(task_id, content_md, round_no=last_round_no)
+    return AdvanceOutcome(next_round=None, plan=Plan(**record))
+
+
+def _advance_without_rounds(
+    *,
+    task_id: int,
+    known_input: str,
+    open_items: list[str],
+    graph,
+    model_client: ModelClient,
+    plan_repository: PlanRepository,
+    model_name: str | None,
+) -> AdvanceOutcome:
+    """尚无任何轮次时的推进：等价于「发起第一轮」。
+
+    种子输入（用户最初给的一句话 / 一段描述）已落库，故这里只跑状态机、不重复落种子。
+    没有任何输入的任务（例如直接建的空任务）仍抛 `AdvanceError`（422）：没有可据以提问的内容。
+    """
+    if not known_input.strip():
+        raise AdvanceError("尚无已作答的轮次，也没有种子输入可据以提问")
+
+    state = graph.invoke(
+        {
+            "task_id": task_id,
+            "known_input": known_input,
+            "round_no": FIRST_ROUND_NO,
+            "rounds": [],
+            "open_items": open_items,
+        }
+    )
+
+    if state.get("frontier"):
+        frontier = [FrontierQuestion(**item) for item in state["frontier"]]
+        return AdvanceOutcome(
+            next_round=FrontierRound(round_no=FIRST_ROUND_NO, frontier=frontier, answers=[]),
+            plan=None,
+        )
+
+    content_md = generate_plan(
+        known_input,
+        [],
+        model_client=model_client,
+        determined=state.get("determined", []),
+        open_items=open_items,
+        model_name=model_name,
+    )
+    record = plan_repository.create(task_id, content_md, round_no=SEED_ROUND_NO)
     return AdvanceOutcome(next_round=None, plan=Plan(**record))
 
 

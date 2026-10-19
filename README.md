@@ -29,7 +29,7 @@
 
 ## 当前状态
 
-领域文档与规格已就位，**后端已落地 TB-0（行走骨架）、TB-1（模型配置与连接测试）、TB-2（拷问第一轮）、TB-3（收敛 → 方案 → 确认闸门）、TB-4（方案修订与待确认事项）与 TB-5（Word 成品与模板机制）并带自动化测试**；其余功能与前端仍在按曳光弹工单推进。除下表标 ✅ 者外，请以规格为准，勿当作已实现能力。
+领域文档与规格已就位，**后端已落地 TB-0（行走骨架）、TB-1（模型配置与连接测试）、TB-2（拷问第一轮）、TB-3（收敛 → 方案 → 确认闸门）、TB-4（方案修订与待确认事项）、TB-5（Word 成品与模板机制）与 TB-6（单文件 HTML 演示）并带自动化测试**；其余功能与前端仍在按曳光弹工单推进。除下表标 ✅ 者外，请以规格为准，勿当作已实现能力。
 
 | 部分 | 现状 |
 | --- | --- |
@@ -43,8 +43,9 @@
 | 收敛 → 方案 → 确认闸门 | ✅ TB-3：`plans` 表（内容 / 状态 draft\|confirmed / 确认时间 / 关联轮次）、每轮按上轮回答重算前沿、前沿为空即收敛并生成结构灵活的结构化方案草稿、显式确认动作、生成入口在方案未确认时服务端拒绝（409）、版本化方案提示词资产 |
 | 方案修订与待确认事项 | ✅ TB-4：`plan_revisions`（修订前 / 修订后 / 时间 / 差异提示，旧版本不丢）、`open_items`（来源轮次 / 条目 / 状态）、对话式修订（`POST …/plan/revisions`）与差异提示、前沿问题新增 `why`（为什么现在问）/ `alternatives`（备选方向）（资产升 `grilling-v2`）、「暂时跳过」入待确认事项、未处置条目拦截生成（409） |
 | Word 成品与模板机制 | ✅ TB-5：`generations`（任务 / 方案 / 格式 / 产物位置 / **本次实际所用模板** / 时间）、`templates`（模板登记：名称 / 格式 / 是否默认）、确认方案后经 `python-docx` 生成 .docx（标题 / 正文 / 列表 / 表格按模板样式映射）、内置最小默认模板按需幂等生成、全局默认模板与任务级**临时覆盖**分离、产物**回读**完整性检查（US 22）、模板缺失 / 损坏 / 非 `.docx` 明确报错不静默空白生成 |
+| 单文件 HTML 演示 | ✅ TB-6：同一张 `generations` 表（`format=html`、`template_used=deck-theme:<id>`）、三套内建主题（`slate` / `ember` / `mono`，调色板以原型 `DECKT` 为准）、方案确定性排成幻灯片、样式 / 翻页脚本 / **西文字体（latin 子集 woff2）全部内联**、中文走系统字体回退、产物**扫描断言 0 条外部网络引用**、`file://` 直开可用（键盘翻页 + 页码 + 页内演讲者模式）、`THIRD-PARTY-LICENSES` 与产物署名齐备 |
 | 运行时目录 | ✅ `data/`（运行时 SQLite 落此处，gitignored）、`启动.bat`、根 `.gitignore`（覆盖 `/data/`、`/templates/`、`.slim/`） |
-| 自动化测试 | ✅ `backend/tests`（pytest，进程内 HTTP 接缝，不联网；180 项通过） |
+| 自动化测试 | ✅ `backend/tests`（pytest，进程内 HTTP 接缝，不联网；194 项通过） |
 
 ---
 
@@ -150,8 +151,9 @@ cd backend
 | GET | `/api/grilling/tasks/{id}/plan/revisions` | 方案的修订历史（逐条含修订前 / 修订后内容与时间）`{"items":[...],"total":n}` |
 | GET | `/api/grilling/tasks/{id}/open-items` | **待确认事项**清单 `{"items":[{id,task_id,round_no,text,status,created_at,resolved_at}],"total":n}` |
 | POST | `/api/grilling/tasks/{id}/open-items/{item_id}/resolve` | 处置一条待确认事项：body `{"status":"confirmed"\|"dismissed"}`（用户确认动作） |
-| POST | `/api/tasks/{id}/generations` | **成品生成入口（硬闸门）**：方案未确认 / 无方案 → 409；**仍有未处置的待确认事项 → 409**；已确认且无未定条目 → 生成 Word 成品 → 201，返回成品记录 + 产物元数据（`template_style_applied` / `missing_styles` / `headings` / `integrity_ok`）。可选 body `{"format":"docx"\|"html","template":string?}`：`template` 为**任务级临时覆盖**（不改变全局默认）；`html` 一轨由 TB-6 落地，现返回 501。模板缺失 / 损坏 / 非 `.docx` → 400（明确报错，不产出成品） |
-| GET | `/api/tasks/{id}/generations` | 某任务已生成的成品记录 `{"items":[{id,task_id,plan_id,format,file_path,template_used,created_at}],"total":n}` |
+| POST | `/api/tasks/{id}/generations` | **成品生成入口（硬闸门）**：方案未确认 / 无方案 → 409；**仍有未处置的待确认事项 → 409**；已确认且无未定条目 → 按 `format` 生成成品 → 201。可选 body `{"format":"docx"\|"html","template":string?,"theme":"slate"\|"ember"\|"mono"}`：`template` 为 Word 的**任务级临时覆盖**（不改变全局默认）；`theme` 为**单文件 HTML 演示**的主题（未知主题 → 400，不静默退回默认）。Word 返回 `template_style_applied` / `missing_styles` / `headings`；HTML 返回 `theme_used` / `inlined_fonts` / `cjk_fallback` / `slides` / `external_resources` / `network_resources_declared` / `presenter_mode`。模板缺失 / 损坏 / 非 `.docx` → 400（明确报错，不产出成品）；完整性检查未通过（含产物含外部网络引用）→ 500 且产物已丢弃、不落库 |
+| GET | `/api/tasks/{id}/generations` | 某任务已生成的成品记录 `{"items":[{id,task_id,plan_id,format,file_path,template_used,created_at}],"total":n}`（HTML 一轨的 `template_used` 为 `deck-theme:<主题 id>`） |
+| GET | `/api/deck-themes` | **演示主题族清单**：三套内建主题的 `id` / `name` / `palette`（以原型 `DECKT` 为准）/ 内联字体 / 来源署名 / 许可 / 需保留的网络资源；与生成入口读同一份事实 |
 | GET | `/api/templates` | **模板清单**：模板目录里可被选用的模板（含内置 `_builtin/minimal-default.docx`）+ 是否全局默认 / 是否内置 / 是否可用 / 是否已登记 / 是否文件已缺失 |
 | POST | `/api/templates` | **模板登记**：body `{"name":string,"is_default":bool?}`，登记已放入 `templates/` 的模板 → 201；只接受 `.docx`，`.dotx` / `.dotm` / `.docm`（含改名成 `.docx` 的模板类型文件）→ 400 并提示「请另存为 .docx」；文件不存在 → 404 |
 | PUT | `/api/templates/{name}/default` | 设为该格式的**全局默认模板**（同格式至多一个） |
@@ -166,6 +168,17 @@ cd backend
 - **每次生成记录实际所用模板**（`generations.template_used`，取 `templates/` 下的相对路径）。
 - **明确报错而非静默降级**：模板缺失 / 损坏 / 是 `.dotx`、`.dotm`、`.docm` → 400 并提示「请另存为 .docx」；模板未定义某样式 → 该段回退为「直接设字号 / 加粗」并在产物元数据标 `template_style_applied: false`；产物回读完整性检查（US 22）未通过 → 丢弃产物、不落库、返回 5xx。
 - **可复现演示记录**：`backend\scripts\demo_word_deliverable.py`（进程内 HTTP 接缝 + 脚本化模型替身，不联网）会真的生成 .docx 并回读打印章节与样式映射，含换模板、缺模板、非 `.docx`、样式回退四种情形。
+
+### 单文件 HTML 演示（主题族、资源内联与署名）
+
+- **成品形态**（术语「单文件 HTML」）：自包含 `.html`，双击经 `file://` 离线打开；不依赖服务器、Node 或外网。
+- **主题族**：内建三套本地主题，**id 与调色板以页面原型的 `DECKT` 为准**——`slate`（Slate 极简）/ `ember`（Ember 暖调）/ `mono`（Mono 等宽）。未知主题 → 400 明确报错，**绝不静默退回默认主题**。
+- **资源内联（硬要求）**：样式、翻页脚本、**西文字体**全部内联；西文只打包**实际用到的 latin 子集 woff2**（base64，约 1.33x 膨胀），**中文用系统字体回退**（调研结论：中文单字重全量子集约 2.3 MB，base64 约 3.1 MB，是西文的 10~30 倍，且全量内联会丧失 CJK 按 `unicode-range` 的按需分片加载）。产物元数据记 `inlined_fonts` 与 `cjk_fallback: true`。
+- **无外部网络引用**：生成后扫描产物文本（`http(s)://`、指向网络的 `src=`/`href=`、`<link>`、CDN、非 `data:` 的 `url()`），要求 **0 条**；未过则视为结构损坏 → 丢弃产物、不落库、返回 5xx（US 22）。若将来有主题必须保留网络资源，必须在产物与生成记录里**明确声明**，不得静默（当前三套主题均为 `[]`）。
+- **演示能力**：键盘翻页（← / → / PageUp / PageDown / 空格，另支持 Home / End）、页码与进度条、触屏滑动、**页内演讲者模式**（`S` 切换：当前 / 下一页标题、计时器、讲者备注）。参照的 OpenDesign 主题示例**没有**演讲者模式，故这部分为本项目自写（`presenter_mode: "in-page-overlay"`）。
+- **方案映射是确定性的**：把 `plans.content_md` 解析为块序列再排成幻灯片（标题页 → 各章节页 → 结束页），不调用模型；识别不了的整行按正文处理，绝不丢内容。
+- **可复现演示记录**：`backend\scripts\demo_html_deck.py` 会真的生成三套主题的 `.html`，打印体积、内联字体体积、外部引用扫描结果、页数与离线可用证据。
+- **许可与署名**：版式骨架与翻页运行时改编自 OpenDesign 的 MIT 主题（`html-ppt-zhangzara-{blue-professional,coral,studio}`，`Copyright (c) 2026 Zara Zhang`）；调色板、CSS 与演讲者模式为本地原创；字体为 OFL-1.1（Inter / Source Serif 4 / JetBrains Mono）。许可全文与版权行随包分发在 `backend/app/generation/assets/THIRD-PARTY-LICENSES.md` 与 `assets/licenses/`，署名同时保留在每份产物的注释块里。**白名单只放 MIT 族，`guizang-ppt` 一律排除**（上游实测 AGPL-3.0，冲突未解决）。
 
 ### 真实连接测试操作手册（配好 `DEEPSEEK_API_KEY` 后自证真连）
 
@@ -246,4 +259,6 @@ v1.1 队列（顺序即优先级）：RAG 最小版 → PPTX 填用户模板 →
 ## 许可与署名
 
 - 拷问机制基于 Matt Pocock 的 `grilling` 技能规则移植（MIT），保留署名；本项目**不声称**直接调用原始技能。
-- HTML 演示主题取自 [nexu-io/open-design](https://github.com/nexu-io/open-design)（Apache-2.0，附属资源各自许可），使用时保留相应署名。
+- HTML 演示主题的**版式骨架与翻页运行时**改编自 [nexu-io/open-design](https://github.com/nexu-io/open-design) 的 MIT 主题目录（`html-ppt-zhangzara-blue-professional` / `-coral` / `-studio`，`Copyright (c) 2026 Zara Zhang`；仓库主体为 Apache-2.0）；调色板、CSS、方案→幻灯片映射与页内演讲者模式为本项目**本地原创**，不做像素级复刻。
+- 内联字体为 SIL OFL-1.1（Inter / Source Serif 4 / JetBrains Mono），不单独售卖字体。
+- 许可全文、版权行与「OpenDesign 派生 / 本地原创」的逐项区分见 [`backend/app/generation/assets/THIRD-PARTY-LICENSES.md`](backend/app/generation/assets/THIRD-PARTY-LICENSES.md)；每份生成的 `.html` 里也保留署名注释。

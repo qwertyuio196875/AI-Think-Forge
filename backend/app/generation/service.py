@@ -5,6 +5,10 @@
 
 本模块不做模型调用：成品是把**已确认的结构化方案**确定性渲染成文件，方案内容早已由
 拷问流程定稿（这是「未经确认的推测绝不变成成品」的另一面）。
+
+两轨（ADR-0003）：
+- Word：模板机制（`app.generation.word` / `templates`）；
+- 单文件 HTML 演示：主题族（`app.generation.deck` / `themes`），资源全内联、无网络引用。
 """
 
 from __future__ import annotations
@@ -15,11 +19,23 @@ from pathlib import Path
 from app import config
 from app.db.generation_repository import GenerationRepository
 from app.db.template_repository import TemplateRepository
+from app.generation.deck import build_html_deck, verify_html_deliverable
 from app.generation.templates import resolve_template
+from app.generation.themes import DeckTheme
 from app.generation.word import build_word_deliverable, verify_word_deliverable
 
 FORMAT_DOCX = "docx"
 FORMAT_HTML = "html"
+
+# 单文件 HTML 演示所用「主题模板」在生成记录里的标识前缀（`generations.template_used`）。
+# 术语（GLOSSARY）**模板**：样式文件；HTML 一轨的样式载体就是主题，故沿用同一列记录，
+# 加前缀与模板目录里的 `.docx` 相对路径区分开（语义不混淆，且不改表结构）。
+DECK_TEMPLATE_PREFIX = "deck-theme:"
+
+
+def deck_template_name(theme_id: str) -> str:
+    """生成记录里「本次实际所用主题」的取值。"""
+    return f"{DECK_TEMPLATE_PREFIX}{theme_id}"
 
 
 def generate_word_deliverable(
@@ -45,7 +61,7 @@ def generate_word_deliverable(
     )
 
     output_dir = Path(data_dir) / config.DELIVERABLES_SUBDIR / str(task_id)
-    output_path = _unique_output_path(output_dir, plan["id"])
+    output_path = _unique_output_path(output_dir, plan["id"], suffix=".docx")
 
     build = build_word_deliverable(plan["content_md"], resolved.path, output_path)
     try:
@@ -72,12 +88,63 @@ def generate_word_deliverable(
     }
 
 
-def _unique_output_path(output_dir: Path, plan_id: int) -> Path:
+def generate_html_deliverable(
+    *,
+    task_id: int,
+    plan: dict,
+    task_title: str,
+    theme: DeckTheme,
+    data_dir: str | Path,
+    generation_repository: GenerationRepository,
+) -> dict:
+    """生成一份**单文件 HTML 演示**并记录；返回记录 + 产物元数据。
+
+    与 Word 一轨同一条纪律：渲染 → 完整性检查（无外部网络引用 + 结构可解析）→ 通过才落库。
+    未通过则丢弃产物、不写记录（规格 US 22），绝不交付半成品。
+    """
+    output_dir = Path(data_dir) / config.DELIVERABLES_SUBDIR / str(task_id)
+    output_path = _unique_output_path(output_dir, plan["id"], suffix=".html")
+
+    build = build_html_deck(
+        plan_md=plan["content_md"],
+        task_title=task_title,
+        theme=theme,
+        output_path=output_path,
+    )
+    try:
+        verify_html_deliverable(build)
+    except Exception:
+        # 含外部引用 / 结构损坏：丢弃产物，绝不交付、绝不落库。
+        output_path.unlink(missing_ok=True)
+        raise
+
+    record = generation_repository.create(
+        task_id=task_id,
+        plan_id=plan["id"],
+        format=FORMAT_HTML,
+        file_path=str(output_path),
+        template_used=deck_template_name(theme.id),
+    )
+
+    return {
+        **record,
+        "integrity_ok": True,
+        "theme_used": theme.id,
+        "inlined_fonts": list(build.inlined_fonts),
+        "cjk_fallback": True,
+        "slides": build.slide_count,
+        "external_resources": list(build.external_resources),
+        "network_resources_declared": list(theme.network_resources),
+        "presenter_mode": "in-page-overlay",
+    }
+
+
+def _unique_output_path(output_dir: Path, plan_id: int, *, suffix: str) -> Path:
     """成品文件名：方案号 + 时间戳；同一秒内重复生成时追加序号，不覆盖已有成品。"""
     stamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
-    candidate = output_dir / f"plan-{plan_id}-{stamp}.docx"
-    suffix = 1
+    candidate = output_dir / f"plan-{plan_id}-{stamp}{suffix}"
+    order = 1
     while candidate.exists():
-        suffix += 1
-        candidate = output_dir / f"plan-{plan_id}-{stamp}-{suffix}.docx"
+        order += 1
+        candidate = output_dir / f"plan-{plan_id}-{stamp}-{order}{suffix}"
     return candidate

@@ -589,6 +589,106 @@ def test_failed_first_round_keeps_task_and_seed_input(
     assert detail["dialogue"]["rounds"] == []
 
 
+def test_failed_first_round_is_recovered_by_advance_exactly_once(
+    grilling_app,
+    grilling_client: TestClient,
+    scripted_model_client: ScriptedModelClient,
+) -> None:
+    """首轮失败（502、0 轮次）→ 历史页「继续」不再是空话：advance 生成第一轮。
+
+    这是 TB-10 遗留 a 的回归测试：`derive_resume` 对 0 轮次任务给 `awaiting="advance"`，
+    而旧实现下 `advance` 返回 422——前端显示「继续」、点进去必吃 422。
+    可达路径：用户未配 Key 时发起创作 → 首轮 502 → 任务留在库里 0 轮次 → 点「继续」。
+
+    修复后：**恰好产出一轮**（不重复、不叠加），`awaiting` 随之变成真话。
+    """
+    failing = ScriptedModelClient(error=httpx.ConnectError("connection refused"))
+    grilling_app.dependency_overrides[get_model_client] = lambda: failing
+
+    assert grilling_client.post("/api/grilling/tasks", json={"idea": IDEA}).status_code == 502
+    task_id = grilling_client.get("/api/tasks").json()["items"][0]["id"]
+
+    # 停在「该任务尚无任何轮次」：awaiting=advance，pending_round 为空
+    stalled = grilling_client.get(f"/api/history/{task_id}").json()
+    assert stalled["awaiting"] == "advance"
+    assert stalled["pending_round"] is None
+    assert stalled["dialogue"]["rounds"] == []
+
+    # 模型恢复后点「继续」：生成第一轮（而不是 422）
+    grilling_app.dependency_overrides[get_model_client] = lambda: scripted_model_client
+    scripted_model_client.set_result(_frontier_json(("目标读者", "写给谁？", "新员工")))
+
+    advanced = grilling_client.post(f"/api/grilling/tasks/{task_id}/advance")
+
+    assert advanced.status_code == 200
+    body = advanced.json()
+    assert body["converged"] is False
+    assert body["next_round"]["round_no"] == 1
+    assert [question["title"] for question in body["next_round"]["frontier"]] == ["目标读者"]
+
+    # 恰好一轮：不重复、不叠加
+    rounds = grilling_client.get(f"/api/grilling/tasks/{task_id}/dialogue").json()["rounds"]
+    assert [round_["round_no"] for round_ in rounds] == [1]
+    assert len(rounds[0]["frontier"]) == 1
+
+    # awaiting 变成真话：现在停在「第 1 轮待作答」
+    resumed = grilling_client.get(f"/api/history/{task_id}").json()
+    assert resumed["awaiting"] == "answers"
+    assert resumed["pending_round"]["round_no"] == 1
+
+    # 作答 → 推进收敛：轮次仍为 1（收敛不追加轮次），方案恰好一份
+    grilling_client.post(
+        f"/api/grilling/tasks/{task_id}/answers", json={"round_no": 1, "answers": ["新员工"]}
+    )
+    scripted_model_client.set_sequence(_empty_frontier_json(), PLAN_MD)
+    converged = grilling_client.post(f"/api/grilling/tasks/{task_id}/advance")
+
+    assert converged.status_code == 200
+    assert converged.json()["converged"] is True
+    assert converged.json()["plan"]["content_md"] == PLAN_MD
+    assert len(grilling_client.get(f"/api/grilling/tasks/{task_id}/dialogue").json()["rounds"]) == 1
+    assert grilling_client.get(f"/api/tasks/{task_id}/deletion-impact").json()["plans"] == 1
+
+
+def test_advance_without_rounds_and_empty_frontier_converges_into_draft_plan(
+    grilling_client: TestClient, scripted_model_client: ScriptedModelClient
+) -> None:
+    """0 轮次时推进：前沿为空即收敛，产出草稿方案（由种子输入产生，round_no 记 0）。
+
+    与「前沿为空即收敛」的既有语义一致：绝不空转，也绝不让用户卡在一个没有出路的
+    「继续」上（简单任务少问，极端情况可以 0 问直接收敛——规格 US 6）。
+    """
+    scripted_model_client.set_sequence(
+        _empty_frontier_json(),  # 发起创作：首轮即前沿为空（0 轮次）
+        _empty_frontier_json(),  # 推进：等价于发起第一轮，仍无问题 → 收敛
+        PLAN_MD,
+    )
+    started = grilling_client.post("/api/grilling/tasks", json={"idea": IDEA})
+    task_id = started.json()["task"]["id"]
+    assert started.json()["round"]["frontier"] == []
+
+    response = grilling_client.post(f"/api/grilling/tasks/{task_id}/advance")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["converged"] is True
+    assert body["next_round"] is None
+    assert body["plan"]["content_md"] == PLAN_MD
+    assert body["plan"]["status"] == "draft"
+    assert body["plan"]["round_no"] == 0  # 方案由种子输入（第 0 轮）产生
+    assert grilling_client.get(f"/api/grilling/tasks/{task_id}/dialogue").json()["rounds"] == []
+
+
+def test_advance_on_task_without_any_input_still_rejected(client: TestClient) -> None:
+    """没有任何输入的任务（直接建任务、无种子输入）推进仍为 422：没有可据以提问的内容。"""
+    task_id = client.post("/api/tasks", json={"kind": "creation", "title": "空任务"}).json()["id"]
+
+    response = client.post(f"/api/grilling/tasks/{task_id}/advance")
+
+    assert response.status_code == 422
+    assert "尚无" in response.json()["detail"]
+
+
 # --- schema 迁移：历史版本的库补列后照常可用 ------------------------------------
 
 
