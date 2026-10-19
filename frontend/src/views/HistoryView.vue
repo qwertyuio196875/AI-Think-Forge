@@ -66,6 +66,9 @@
             <p>{{ emptyText }}</p>
             <el-button v-if="search.trim()" size="small" @click="search = ''">清除搜索</el-button>
             <el-button v-else-if="tab === 'trash'" size="small" @click="switchTab('all')">查看全部任务</el-button>
+            <el-button v-else-if="total === 0 && tab === 'analysis'" type="primary" size="small" @click="goAnalyze">
+              去上传资料分析
+            </el-button>
             <el-button v-else-if="total === 0" type="primary" size="small" @click="goCreate">去发起主题创作</el-button>
           </div>
 
@@ -265,7 +268,7 @@ const emptyText = computed(() => {
   if (tab.value === 'trash')
     return '删除的任务在这里留痕；对话与方案仍保留，可随时回看。'
   if (search.value.trim()) return '换个关键词试试，或清除搜索查看全部任务。'
-  if (tab.value === 'analysis') return '资料分析功能将在 TB-7 接入。'
+  if (tab.value === 'analysis') return '在「资料分析」页上传资料即可发起；任务与总结会记录在这里。'
   return '到「主题创作」用一句话发起，拷问进度会自动保存。'
 })
 
@@ -325,7 +328,7 @@ async function open(row: HistoryItem): Promise<void> {
     router.push(`/creation?task=${row.id}`)
   } else {
     router.push('/analysis')
-    ElMessage.info('资料分析的打开与续作将在 TB-7 接入；该任务已记录在历史')
+    ElMessage.info('该分析任务已记录在历史、总结已保存；按任务打开历史分析的视图将随后端来源清单能力接入')
   }
 }
 
@@ -371,6 +374,10 @@ async function confirmDelete(): Promise<void> {
 
 function goCreate(): void {
   router.push('/creation')
+}
+
+function goAnalyze(): void {
+  router.push('/analysis')
 }
 
 function exportUnavailable(): void {
