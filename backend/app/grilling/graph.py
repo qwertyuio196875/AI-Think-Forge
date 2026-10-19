@@ -24,7 +24,7 @@ from app.db.message_repository import MessageRepository
 from app.grilling.frontier import parse_frontier
 from app.grilling.open_items import is_skip_answer
 from app.grilling.prompts import render_frontier_messages
-from app.providers.model_client import ModelClient
+from app.providers.model_client import ModelClient, complete_text
 
 
 class GrillingState(TypedDict, total=False):
@@ -96,7 +96,7 @@ def build_grilling_graph(
             state.get("determined", []),
             state.get("open_items", []),
         )
-        raw = model_client.complete(messages, model=model_name)
+        raw = complete_text(model_client, messages, model=model_name)
         questions = parse_frontier(raw)
         return {
             "frontier": [question.model_dump() for question in questions],

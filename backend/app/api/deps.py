@@ -10,6 +10,7 @@ from typing import Annotated
 
 from fastapi import Depends, Request
 
+from app.db.generation_repository import GenerationRepository
 from app.db.message_repository import MessageRepository
 from app.db.open_item_repository import OpenItemRepository
 from app.db.plan_repository import PlanRepository
@@ -56,6 +57,11 @@ def get_plan_revision_repository(db_path: str = Depends(get_db_path)) -> PlanRev
     return PlanRevisionRepository(db_path)
 
 
+def get_generation_repository(db_path: str = Depends(get_db_path)) -> GenerationRepository:
+    """成品（成品文件）只读计数依赖（弱依赖 TB-5/TB-6，表未落地时计 0）。"""
+    return GenerationRepository(db_path)
+
+
 def get_key_store(request: Request) -> KeyStore:
     """密钥库依赖（默认写 Windows 凭据管理器；测试注入内存替身）。"""
     return request.app.state.key_store
@@ -84,6 +90,9 @@ PlanRepositoryDep = Annotated[PlanRepository, Depends(get_plan_repository)]
 OpenItemRepositoryDep = Annotated[OpenItemRepository, Depends(get_open_item_repository)]
 PlanRevisionRepositoryDep = Annotated[
     PlanRevisionRepository, Depends(get_plan_revision_repository)
+]
+GenerationRepositoryDep = Annotated[
+    GenerationRepository, Depends(get_generation_repository)
 ]
 KeyStoreDep = Annotated[KeyStore, Depends(get_key_store)]
 ModelClientDep = Annotated[ModelClient, Depends(get_model_client)]

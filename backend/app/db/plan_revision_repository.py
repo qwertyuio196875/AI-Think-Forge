@@ -61,6 +61,14 @@ class PlanRevisionRepository:
             ).fetchall()
         return [self._decode(dict(row)) for row in rows]
 
+    def count_for_task(self, task_id: int) -> int:
+        """某任务的方案修订记录条数（删除影响范围用）。"""
+        with connect(self._db_path) as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS total FROM plan_revisions WHERE task_id = ?", (task_id,)
+            ).fetchone()
+        return int(row["total"])
+
     @staticmethod
     def _decode(record: dict) -> dict:
         """把 `change_summary` 从 JSON 文本还原为结构。"""

@@ -14,6 +14,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+import httpx
+
+from app.providers.errors import classify_exception
+
 
 @runtime_checkable
 class ModelClient(Protocol):
@@ -22,6 +26,31 @@ class ModelClient(Protocol):
     def complete(self, messages: list[dict], *, model: str | None = None) -> str:
         """对一组对话消息求补全文本。"""
         ...
+
+
+class ModelCallError(RuntimeError):
+    """模型调用失败（网络 / 鉴权 / 服务端 / 未配置）：消息可读且不含密钥。"""
+
+
+def complete_text(
+    client: ModelClient, messages: list[dict], *, model: str | None = None
+) -> str:
+    """调用模型并统一把「调用失败」收敛为 `ModelCallError`。
+
+    真实实现是 httpx 直连（`app.providers.openai_client`），失败形态为 `httpx.HTTPError`
+    ——调用点（拷问 / 方案 / 修订）据此给出可读的 502 而不是把堆栈抛给用户，
+    数据仍照 §4 留在库里，用户可安全重试。
+
+    只包「调用侧失败」：网络与 HTTP 异常、以及未配置的占位客户端；
+    其它异常照旧抛出，避免把程序缺陷伪装成模型故障。
+    """
+    try:
+        return client.complete(messages, model=model)
+    except (httpx.HTTPError, OSError) as exc:
+        _, message = classify_exception(exc)
+        raise ModelCallError(message) from exc
+    except NotImplementedError as exc:
+        raise ModelCallError("尚未配置可用的模型客户端") from exc
 
 
 @dataclass(frozen=True)

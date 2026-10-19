@@ -55,11 +55,14 @@ from app.models.plan import (
     PlanRevisionResponse,
 )
 from app.models.task import Task
+from app.providers.model_client import ModelCallError
 
 router = APIRouter(prefix="/grilling", tags=["grilling"])
 
 # 任务标题取种子输入首行、截断，供历史列表显示可读标签。
 TITLE_MAX_LENGTH = 60
+# 拒绝确认方案时，最多列出几项未处置的待确认事项（其余以省略号收束）。
+MAX_LISTED_OPEN_ITEMS = 3
 
 
 def _derive_title(idea: str) -> str:
@@ -109,8 +112,14 @@ def start_grilling_task(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"模型输出无法解析为前沿问题：{exc}",
         ) from exc
+    except ModelCallError as exc:
+        # 调用失败：任务与种子输入已落库，用户可在模型恢复后重试（不丢任何数据）。
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"模型调用失败：{exc}",
+        ) from exc
 
-    return GrillingStartResponse(task=Task(**task_record), round=frontier_round)
+    return GrillingStartResponse(task=Task.from_record(task_record), round=frontier_round)
 
 
 @router.post("/tasks/{task_id}/answers", response_model=Dialogue)
@@ -189,6 +198,12 @@ def advance(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=f"方案生成失败：{exc}"
         ) from exc
+    except ModelCallError as exc:
+        # 调用失败：已存对话与方案不受影响，可在模型恢复后重试。
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"模型调用失败：{exc}",
+        ) from exc
 
     return AdvanceResponse(
         task_id=task_id,
@@ -220,9 +235,28 @@ def confirm_plan(
     task_id: int,
     task_repository: TaskRepositoryDep,
     plan_repository: PlanRepositoryDep,
+    open_item_repository: OpenItemRepositoryDep,
 ) -> Plan:
-    """方案确认：draft → confirmed 并记录 `confirmed_at`（进入生成阶段的唯一闸门）。"""
+    """方案确认：draft → confirmed 并记录 `confirmed_at`（进入生成阶段的唯一闸门）。
+
+    仍有未处置的待确认事项时拒绝确认（409）：原型语义是「待确认事项已全部定下，可以确认
+    方案」，规格 US 9 也要求未经确认的推测不得当作已定需求；若在此放行，就会造出
+    「方案已确认、却因仍有 open 条目而无法生成」的尴尬中间态。
+    """
     _require_task(task_repository, task_id)
+
+    unresolved = open_item_repository.open_texts(task_id)
+    if unresolved:
+        preview = "、".join(unresolved[:MAX_LISTED_OPEN_ITEMS])
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"仍有 {len(unresolved)} 项待确认事项未处置，无法确认方案"
+                f"（未确认的推测不得当作已定需求）：{preview}"
+                + ("…" if len(unresolved) > MAX_LISTED_OPEN_ITEMS else "")
+                + "。请先在待确认事项里确认或搁置这些条目。"
+            ),
+        )
 
     current = plan_repository.get_current(task_id)
     if current is None:
@@ -279,6 +313,12 @@ def revise(
     except PlanGenerationError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=f"方案修订失败：{exc}"
+        ) from exc
+    except ModelCallError as exc:
+        # 调用失败：方案正文与版本记录未被改动，可在模型恢复后重试。
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"模型调用失败：{exc}",
         ) from exc
 
     return PlanRevisionResponse(plan=outcome.plan, revision=outcome.revision)

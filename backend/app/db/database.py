@@ -3,7 +3,8 @@
 TB-0 落地 `tasks` 表最小集；TB-1 追加 `providers`（模型配置非敏感字段）与
 `settings`（应用设置项）；TB-2 追加 `messages`（对话轮次）；TB-3 追加 `plans`
 （结构化方案，draft/confirmed）；TB-4 追加 `open_items`（待确认事项）与
-`plan_revisions`（方案版本记录）。密钥字段刻意不存在于任何表——凭据只进系统凭据管理器。
+`plan_revisions`（方案版本记录）；TB-10 给 `tasks` 补 `deleted_at`（删除留痕）与
+历史查询索引。密钥字段刻意不存在于任何表——凭据只进系统凭据管理器。
 资料登记 / 文本分块 / 嵌入版本等字段由后续工单（含 v1.1 RAG 预留）追加。
 """
 
@@ -17,6 +18,9 @@ from pathlib import Path
 
 # 建表幂等：应用启动时执行，重复运行不改变已有表。
 SCHEMA = """
+-- 任务（规格 §4 + 术语「任务」）。状态机：in_progress（进行中）/ completed（已完成）
+-- / deleted（已删除）。删除是**软删除**（规格 US 27：一次误操作不毁掉本地数据）：
+-- 只把状态置为 deleted 并记录 deleted_at 留痕，**不物理清库**，对话 / 方案 / 待确认事项照旧留存。
 CREATE TABLE IF NOT EXISTS tasks (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     kind       TEXT NOT NULL CHECK (kind IN ('creation', 'analysis')),
@@ -24,8 +28,12 @@ CREATE TABLE IF NOT EXISTS tasks (
     status     TEXT NOT NULL DEFAULT 'in_progress'
                CHECK (status IN ('in_progress', 'completed', 'deleted')),
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    deleted_at TEXT
 );
+
+-- 历史查询用索引：分类 / 状态过滤 + 按 id 倒序（最近任务在前）分页。
+CREATE INDEX IF NOT EXISTS idx_tasks_kind_status_id ON tasks (kind, status, id);
 
 -- 模型配置（服务商）非敏感字段。`kind` 仅为角色标签（turbo/plus/max，可空）。
 -- 注意：本表不含任何密钥列；密钥只进 Windows 凭据管理器。
@@ -136,4 +144,24 @@ def init_db(db_path: str | Path) -> None:
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     with connect(db_path) as connection:
         connection.executescript(SCHEMA)
+        _migrate(connection)
         connection.commit()
+
+
+# 已存在的库补齐新增列：`CREATE TABLE IF NOT EXISTS` 不会改已建好的表，
+# 故历史版本建的库需按列名探测后 `ALTER TABLE` 补列（幂等，不影响新库）。
+MIGRATION_COLUMNS: dict[str, dict[str, str]] = {
+    "tasks": {"deleted_at": "TEXT"},
+}
+
+
+def _migrate(connection: sqlite3.Connection) -> None:
+    """对已有表补齐缺失列；已存在的列不动（重复运行无副作用）。"""
+    for table, columns in MIGRATION_COLUMNS.items():
+        existing = {
+            row["name"]
+            for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        for name, column_type in columns.items():
+            if name not in existing:
+                connection.execute(f"ALTER TABLE {table} ADD COLUMN {name} {column_type}")

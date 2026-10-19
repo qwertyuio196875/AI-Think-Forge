@@ -54,6 +54,14 @@ class PlanRepository:
             ).fetchone()
         return dict(row) if row is not None else None
 
+    def count_for_task(self, task_id: int) -> int:
+        """某任务的方案份数（删除影响范围用）。"""
+        with connect(self._db_path) as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS total FROM plans WHERE task_id = ?", (task_id,)
+            ).fetchone()
+        return int(row["total"])
+
     def confirm(self, plan_id: int) -> dict | None:
         """把方案置为已确认并记录 `confirmed_at`；不存在返回 None。
 

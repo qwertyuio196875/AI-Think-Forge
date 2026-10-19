@@ -277,13 +277,16 @@ def test_skipped_question_does_not_enter_next_round_determined(
     assert "篇幅" in determined
 
 
-def test_open_item_blocks_generation_until_user_confirms_it(
+def test_open_items_block_plan_confirmation_until_they_are_resolved(
     grilling_client: TestClient, scripted_model_client: ScriptedModelClient
 ) -> None:
-    """下游边界 ②「生成闸门的判定」：确认动作之前，未定的待确认事项令闸门保持关闭。
+    """下游边界 ②「生成闸门的判定」：未处置的待确认事项在**确认方案这一步**就被拦下。
 
-    方案本身已确认，但只要还有 open 的待确认事项，生成仍被拒（409）——
-    未经确认的推测绝不直接变成成品（规格 US 9）。用户处置该条目后闸门才放行。
+    修正约定笔记登记的 TB-4 已知缺陷：确认入口原先不检查未处置条目，会造出
+    「方案已 confirmed、却因仍有 open 条目而无法生成（409）」的尴尬中间态。
+    原型语义是「待确认事项已全部定下，可以确认方案」，规格 US 9 也要求未经确认的推测
+    不得当作已定需求——故确认时即返回 409 并说明还有几项未定、如何处置；
+    用户处置后确认通过，闸门随之放行（生成管线归 TB-5/TB-6，故以 501 收尾）。
     """
     task_id = _start(
         grilling_client,
@@ -297,12 +300,16 @@ def test_open_item_blocks_generation_until_user_confirms_it(
         json={"round_no": 1, "answers": [None, "10 页以内"]},
     )
     grilling_client.post(f"/api/grilling/tasks/{task_id}/advance")
-    confirmed = grilling_client.post(f"/api/grilling/tasks/{task_id}/plan/confirm")
-    assert confirmed.status_code == 200
 
-    blocked = grilling_client.post(f"/api/tasks/{task_id}/generations")
-    assert blocked.status_code == 409
-    assert "待确认事项" in blocked.json()["detail"]
+    refused = grilling_client.post(f"/api/grilling/tasks/{task_id}/plan/confirm")
+
+    assert refused.status_code == 409
+    detail = refused.json()["detail"]
+    assert "1 项待确认事项" in detail  # 还有几项未定
+    assert "目标读者" in detail  # 具体是哪几项
+    assert "确认或搁置" in detail  # 如何处置
+    # 方案仍是草稿：没有进入「已确认但无法生成」的中间态
+    assert grilling_client.get(f"/api/grilling/tasks/{task_id}/plan").json()["status"] == "draft"
 
     item_id = grilling_client.get(f"/api/grilling/tasks/{task_id}/open-items").json()["items"][0][
         "id"
@@ -312,8 +319,41 @@ def test_open_item_blocks_generation_until_user_confirms_it(
         json={"status": "confirmed"},
     )
 
-    # 闸门放行 → 走到生成管线（TB-5/TB-6 待落地，故 501）
+    confirmed = grilling_client.post(f"/api/grilling/tasks/{task_id}/plan/confirm")
+
+    assert confirmed.status_code == 200
+    assert confirmed.json()["status"] == "confirmed"
+    # 处置完毕 → 生成闸门放行（走到生成管线，TB-5/TB-6 待落地）
     assert grilling_client.post(f"/api/tasks/{task_id}/generations").status_code == 501
+
+
+def test_dismissed_open_item_also_unblocks_plan_confirmation(
+    grilling_client: TestClient, scripted_model_client: ScriptedModelClient
+) -> None:
+    """「搁置」（认定不需要）与「确认」一样解除未定状态，可确认方案。"""
+    task_id = _start(
+        grilling_client,
+        scripted_model_client,
+        _frontier_json(("目标读者", "写给谁？", "新员工")),
+        _empty_frontier_json(),
+        PLAN_MD,
+    )
+    grilling_client.post(
+        f"/api/grilling/tasks/{task_id}/answers", json={"round_no": 1, "answers": [None]}
+    )
+    grilling_client.post(f"/api/grilling/tasks/{task_id}/advance")
+    item_id = grilling_client.get(f"/api/grilling/tasks/{task_id}/open-items").json()["items"][0][
+        "id"
+    ]
+    grilling_client.post(
+        f"/api/grilling/tasks/{task_id}/open-items/{item_id}/resolve",
+        json={"status": "dismissed"},
+    )
+
+    confirmed = grilling_client.post(f"/api/grilling/tasks/{task_id}/plan/confirm")
+
+    assert confirmed.status_code == 200
+    assert confirmed.json()["status"] == "confirmed"
 
 
 def test_resolved_open_item_does_not_block_generation(

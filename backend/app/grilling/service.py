@@ -21,7 +21,7 @@ from app.grilling.prompts import render_plan_messages, render_revision_messages
 from app.grilling.revision import compute_changes
 from app.models.grilling import Dialogue, DialogueMessage, FrontierQuestion, FrontierRound
 from app.models.plan import Plan, PlanRevision
-from app.providers.model_client import ModelClient
+from app.providers.model_client import ModelClient, complete_text
 
 # 种子输入（用户最初的一句话 / 一段描述）记为第 0 轮，使对话流可从头复原。
 SEED_ROUND_NO = 0
@@ -134,7 +134,7 @@ def generate_plan(
     未定的推测只能落在方案「待确认事项」一节，绝不写成已定需求。
     """
     messages = render_plan_messages(known_input, rounds, determined, open_items)
-    content = model_client.complete(messages, model=model_name).strip()
+    content = complete_text(model_client, messages, model=model_name).strip()
     if not content:
         raise PlanGenerationError("模型未返回方案内容")
     return content
@@ -259,7 +259,7 @@ def revise_plan(
         derive_determined(rounds),
         open_item_repository.open_texts(task_id),
     )
-    content_md = model_client.complete(prompt, model=model_name).strip()
+    content_md = complete_text(model_client, prompt, model=model_name).strip()
     if not content_md:
         raise PlanGenerationError("模型未返回修订后的方案内容")
 

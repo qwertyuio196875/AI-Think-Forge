@@ -74,6 +74,14 @@ class OpenItemRepository:
             ).fetchone()
         return row is not None
 
+    def count_for_task(self, task_id: int) -> int:
+        """某任务的待确认事项条数（含已处置的；删除影响范围用）。"""
+        with connect(self._db_path) as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS total FROM open_items WHERE task_id = ?", (task_id,)
+            ).fetchone()
+        return int(row["total"])
+
     def resolve(self, item_id: int, status: str) -> dict | None:
         """处置一条待确认事项（confirmed / dismissed）并记录 `resolved_at`；不存在返回 None。
 

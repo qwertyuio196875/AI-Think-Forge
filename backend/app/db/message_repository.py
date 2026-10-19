@@ -16,6 +16,10 @@ from pathlib import Path
 
 from app.db.database import connect, utcnow_iso
 
+# 种子输入（用户最初的一句话 / 一段描述）记为第 0 轮，见 `app.grilling.service`；
+# 轮次计数从第 1 轮起算，故种子输入不计入「轮次数」。
+FIRST_ROUND_NO = 1
+
 
 class MessageRepository:
     """`messages` 表的读写入口。"""
@@ -47,3 +51,20 @@ class MessageRepository:
                 "SELECT * FROM messages WHERE task_id = ? ORDER BY id ASC", (task_id,)
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def counts_for_task(self, task_id: int) -> dict[str, int]:
+        """某任务的对话条数与轮次数（删除影响范围用；一轮 = 一个 round_no）。
+
+        轮次从第 1 轮起算（种子输入记为第 0 轮，见 `app.grilling.service`）。
+        """
+        with connect(self._db_path) as connection:
+            row = connection.execute(
+                f"""
+                SELECT COUNT(*) AS messages,
+                       COUNT(DISTINCT CASE WHEN round_no >= {FIRST_ROUND_NO}
+                                           THEN round_no END) AS rounds
+                FROM messages WHERE task_id = ?
+                """,
+                (task_id,),
+            ).fetchone()
+        return {"messages": int(row["messages"]), "rounds": int(row["rounds"])}
