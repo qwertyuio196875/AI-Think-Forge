@@ -221,11 +221,11 @@
                 上传文件入口属 TB-7；此处仅登记「已放入 templates/ 目录」的文件名。非 .docx 会被拒绝（400），不会静默接受。
               </p>
 
-              <!-- HTML 默认主题（TB-6） -->
               <div class="sub-label spaced">单文件 HTML 演示 · 默认主题</div>
-              <div class="theme-grid">
+              <div v-if="!deckThemes.length" class="pend-empty">读不到主题族清单（GET /api/deck-themes）。</div>
+              <div v-else class="theme-grid">
                 <label
-                  v-for="th in HTML_THEMES"
+                  v-for="th in deckThemes"
                   :key="th.id"
                   class="theme-opt"
                   :class="{ sel: htmlTheme === th.id }"
@@ -233,17 +233,21 @@
                   <input v-model="htmlTheme" type="radio" name="htmltheme" :value="th.id" />
                   <span>
                     <b>{{ th.name }}</b>
-                    <span class="td">{{ th.desc }}</span>
+                    <span class="td">{{ th.derived_from }}</span>
                     <span class="theme-chips">
-                      <i :style="{ background: th.colors[0] }"></i>
-                      <i :style="{ background: th.colors[1] }"></i>
-                      <i :style="{ background: th.colors[2] }"></i>
+                      <i :style="{ background: th.palette.bg }"></i>
+                      <i :style="{ background: th.palette.fg }"></i>
+                      <i :style="{ background: th.palette.accent }"></i>
+                      <i :style="{ background: th.palette.line }"></i>
                     </span>
+                    <span class="td fonts">{{ th.fonts.join(' · ') || '—' }}{{ th.cjk_fallback ? ' · 中文系统字体回退' : '' }}</span>
+                    <span class="td lic">{{ th.license }}<template v-if="th.network_resources.length"> · 网络资源：{{ th.network_resources.join('、') }}</template><template v-else> · 无网络资源</template></span>
                   </span>
                 </label>
               </div>
               <p class="hint">
-                主题取自 OpenDesign（Apache-2.0）本地资产。单文件 HTML 成品与主题落地属 TB-6；此处选择<strong>不写入后端</strong>（暂无默认主题接口），仅为本页预览。色卡为该主题的示意配色。
+                主题与色卡取自 <span class="mono">GET /api/deck-themes</span>（与生成入口同一份事实），不硬编码。单文件 HTML 成品属 TB-6；
+                此处选择<strong>不写入后端</strong>（暂无「默认主题」接口），仅为本页预览 —— 未指定主题时生成默认用 slate。
               </p>
 
               <!-- pptx 计划项（不可用） -->
@@ -394,6 +398,7 @@ import {
   BackendUnavailableError,
   createProvider,
   deleteProvider,
+  getDeckThemes,
   getTemplates,
   listProviders,
   registerTemplate,
@@ -401,6 +406,7 @@ import {
   setDefaultTemplate,
   testProvider,
   updateProvider,
+  type DeckTheme,
   type Provider,
   type ProviderKind,
   type Template
@@ -419,14 +425,10 @@ const tplError = ref('')
 const settingTpl = ref<string | null>(null)
 const regName = ref('')
 const regBusy = ref(false)
-const htmlTheme = ref('slate')
+const htmlTheme = ref('')
 
-// HTML 主题仅为 TB-6 的本地预览（无后端默认主题接口，选择不写库）；色卡是该主题的示意配色。
-const HTML_THEMES: Array<{ id: string; name: string; desc: string; colors: [string, string, string] }> = [
-  { id: 'slate', name: 'Slate 极简', desc: '无衬线 · 浅色 · 适合技术分享', colors: ['#1c2027', '#f5f7fa', '#2f6bdf'] },
-  { id: 'ember', name: 'Ember 暖调', desc: '衬线标题 · 适合观点类讲述', colors: ['#2a2018', '#fbf6ef', '#c4712a'] },
-  { id: 'mono', name: 'Mono 等宽', desc: '代码感 · 深色 · 适合工具类教程', colors: ['#0f1115', '#e8edf5', '#3f9d70'] }
-]
+// 演示主题族：色卡 / 字体 / 署名取自 GET /api/deck-themes（不硬编码）。
+const deckThemes = ref<DeckTheme[]>([])
 
 const docxTemplates = computed(() => templates.value.filter((t) => t.format === 'docx'))
 
@@ -634,6 +636,16 @@ async function loadTemplates(): Promise<void> {
   }
 }
 
+async function loadDeckThemes(): Promise<void> {
+  try {
+    const res = await getDeckThemes()
+    deckThemes.value = res.items
+    if (!htmlTheme.value) htmlTheme.value = res.items[0]?.id ?? ''
+  } catch {
+    deckThemes.value = []
+  }
+}
+
 async function doSetDefaultTpl(name: string): Promise<void> {
   if (settingTpl.value) return
   settingTpl.value = name
@@ -681,6 +693,7 @@ function tailDetail(msg: string): string {
 onMounted(() => {
   loadProviders()
   loadTemplates()
+  loadDeckThemes()
 })
 </script>
 
@@ -961,6 +974,17 @@ onMounted(() => {
   display: block;
   font-size: var(--fs-xs);
   color: var(--text-3);
+}
+.theme-opt .td.fonts {
+  font-family: var(--font-mono);
+  color: var(--text-4);
+  font-size: 10px;
+  margin-top: 2px;
+}
+.theme-opt .td.lic {
+  color: var(--text-4);
+  font-size: 10px;
+  margin-top: 2px;
 }
 .theme-opt.sel {
   border-color: var(--brand-500);

@@ -692,7 +692,7 @@ const generationHint = computed(() => {
       ? `仍有 ${openItemCount.value} 项待确认事项未处置；处置并确认后才会进入生成`
       : '确认前不会生成任何成品；方案的修改通过上方「继续对话修订方案」进行'
   if (openItemCount.value > 0) return `仍有 ${openItemCount.value} 项待确认事项未处置 · 生成闸门关闭`
-  return '方案已确认 · 可在下方「生成面板」产出 Word 成品（单文件 HTML 属 TB-6，暂不可用）'
+  return '方案已确认 · 可在下方「生成面板」产出 Word 或单文件 HTML 演示成品'
 })
 
 const panelLocked = computed(
@@ -754,7 +754,7 @@ const steps = computed(() => {
       no: 4,
       label: '生成成品',
       state: plan.value?.status === 'confirmed' ? 'now' : 'todo',
-      note: plan.value?.status === 'confirmed' ? 'Word 可生成 · HTML 属 TB-6' : '未开始'
+      note: plan.value?.status === 'confirmed' ? 'Word / 单文件 HTML 均可' : '未开始'
     }
   ]
 })

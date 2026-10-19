@@ -344,8 +344,9 @@ export function confirmPlan(taskId: number): Promise<Plan> {
 
 /**
  * 请求生成成品：POST /api/tasks/{id}/generations。
- * 服务端硬闸门：无方案 / 未确认 / 有未处置待确认事项 → 409；单文件 HTML（format=html）→ 501（TB-6）；
- * 模板缺失 / 非 .docx → 400；完整性检查未过 → 500。通过后产出 .docx 并返回生成记录 + 产物元数据。
+ * 服务端硬闸门：无方案 / 未确认 / 有未处置待确认事项 → 409；
+ * Word：模板缺失 / 非 .docx → 400；HTML：未知主题 → 400（不静默退回默认）；
+ * 完整性检查未过（HTML 含外部网络引用亦 500）→ 500 且产物已丢弃。通过后 201 + 记录 + 产物元数据。
  */
 export function generateDeliverable(
   taskId: number,
@@ -355,18 +356,19 @@ export function generateDeliverable(
     method: 'POST',
     body: JSON.stringify({
       format: req.format ?? 'docx',
-      template: req.template && req.template.length > 0 ? req.template : null
+      template: req.template && req.template.length > 0 ? req.template : null,
+      theme: req.theme && req.theme.length > 0 ? req.theme : null
     })
   })
 }
 
 /* ============================================================
-   成品（generation）与模板（template）—— TB-5
-   权威来源：backend/app/models/generation.py、routes/{generations,templates}.py
-   术语：成品 / 模板 / 默认模板 / 临时覆盖（临时选择不改变全局默认）。
+   成品（generation）/ 模板（template）TB-5 · 单文件 HTML 演示 TB-6
+   权威来源：backend/app/models/generation.py、routes/{generations,templates,deck,deliverables}.py
+   术语：成品 / 单文件 HTML / 模板 / 默认模板 / 临时覆盖（临时选择不改变全局默认）。
    ============================================================ */
 
-/** 成品格式（ADR-0003 首版双轨；pptx 不在后端枚举 = v1.1 计划，前端只作不可用展示）。 */
+/** 成品格式（ADR-0003 双轨：Word 与单文件 HTML；pptx 不在枚举 = v1.1 计划）。 */
 export type GenerationFormat = 'docx' | 'html'
 
 /** 生成记录（GET 列表项的字段集）。 */
@@ -380,12 +382,21 @@ export interface Generation {
   created_at: string
 }
 
-/** 生成结果：记录 + 产物元数据（样式是否贴合模板、完整性检查结论）。 */
+/** 生成结果：记录 + 产物元数据（Word 与 HTML 两轨共用，另一轨取默认值）。 */
 export interface GenerationResponse extends Generation {
+  // Word 轨
   template_style_applied: boolean
   missing_styles: string[]
   headings: number
   integrity_ok: boolean
+  // HTML 轨（TB-6）
+  theme_used: string | null
+  inlined_fonts: string[]
+  cjk_fallback: boolean
+  slides: number
+  external_resources: string[]
+  network_resources_declared: string[]
+  presenter_mode: string | null
 }
 
 /** 某任务的成品列表。 */
@@ -394,10 +405,11 @@ export interface GenerationListResponse {
   total: number
 }
 
-/** 生成请求：格式 + 可选的任务级临时覆盖模板（不改变全局默认）。 */
+/** 生成请求：格式 + Word 任务级临时覆盖模板 + HTML 演示主题（后两者都不改全局默认）。 */
 export interface GenerationRequest {
   format?: GenerationFormat
   template?: string | null
+  theme?: string | null
 }
 
 /** 模板条目：名称 / 格式 / 是否全局默认 / 是否内置 / 可用 / 已登记 / 文件已缺失。 */
@@ -450,6 +462,105 @@ export function setDefaultTemplate(name: string): Promise<TemplateRegisterRespon
     `/templates/${encodeURIComponent(name)}/default`,
     { method: 'PUT' }
   )
+}
+
+/** 演示主题调色板（键与后端 `theme_catalog()` 一致：bg / fg / accent / line / muted）。 */
+export interface DeckPalette {
+  bg: string
+  fg: string
+  accent: string
+  line: string
+  muted: string
+  [key: string]: string
+}
+
+/** 演示主题条目（GET /api/deck-themes，与生成入口同一份事实；前端不硬编码色板）。 */
+export interface DeckTheme {
+  id: string
+  name: string
+  palette: DeckPalette
+  fonts: string[]
+  cjk_fallback: boolean
+  derived_from: string
+  license: string
+  network_resources: string[]
+}
+
+/** 主题族清单。 */
+export interface DeckThemeListResponse {
+  items: DeckTheme[]
+  total: number
+  cjk_fallback: boolean
+}
+
+/** 演示主题族清单：GET /api/deck-themes。 */
+export function getDeckThemes(): Promise<DeckThemeListResponse> {
+  return request<DeckThemeListResponse>('/deck-themes')
+}
+
+/* ---------- 成品投递（GET /api/deliverables/{id}）----------
+   浏览器 http 页无法加载 file://，产物由后端按 generation id 投递：
+   HTML=inline（可应用内预览），Word=attachment（下载）。缺失 / 越界一律 404。 */
+
+/** 按 id 取产物原始响应（用于下载）；非 2xx 不解析 JSON，交由调用方按 status 处理。 */
+export async function fetchDeliverable(generationId: number): Promise<Response> {
+  let response: Response
+  try {
+    response = await fetch(`${API_BASE_URL}/deliverables/${generationId}`)
+  } catch {
+    throw new BackendUnavailableError()
+  }
+  return response
+}
+
+/** 按 id 取产物文本（HTML 预览用）；404 / 不可用 → DeliverableUnavailableError。 */
+export async function fetchDeliverableHtml(generationId: number): Promise<string> {
+  const response = await fetchDeliverable(generationId)
+  if (response.status === 404) throw new DeliverableUnavailableError()
+  if (!response.ok) throw new Error(`读取产物失败：${response.status}`)
+  return await response.text()
+}
+
+/** 产物投递端点不可用 / 文件缺失（404）时抛出，供前端如实降级。 */
+export class DeliverableUnavailableError extends Error {
+  constructor(message = '产物暂不可用') {
+    super(message)
+    this.name = 'DeliverableUnavailableError'
+  }
+}
+
+/** 触发浏览器下载某成品（Word 等）：先取回再存盘，借 Content-Disposition 文件名。 */
+export async function downloadDeliverable(
+  generationId: number,
+  fallbackName: string
+): Promise<void> {
+  const response = await fetchDeliverable(generationId)
+  if (response.status === 404) throw new DeliverableUnavailableError()
+  if (!response.ok) throw new Error(`打开失败：${response.status}`)
+  const blob = await response.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filenameFromDisposition(response.headers.get('Content-Disposition')) || fallbackName
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
+/** 从 Content-Disposition 头解析文件名（优先 RFC 5987 的 filename*=UTF-8''…）。 */
+function filenameFromDisposition(header: string | null): string {
+  if (!header) return ''
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(header)
+  if (star) {
+    try {
+      return decodeURIComponent(star[1])
+    } catch {
+      /* 回退到 filename= */
+    }
+  }
+  const plain = /filename="([^"]*)"/i.exec(header)
+  return plain ? plain[1] : ''
 }
 
 /* ============================================================
@@ -691,6 +802,10 @@ export default {
   getTemplates,
   registerTemplate,
   setDefaultTemplate,
+  getDeckThemes,
+  fetchDeliverable,
+  fetchDeliverableHtml,
+  downloadDeliverable,
   revisePlan,
   listRevisions,
   listOpenItems,
