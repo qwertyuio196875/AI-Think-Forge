@@ -1,166 +1,378 @@
 <template>
-  <el-container class="workbench">
-    <!-- 左侧栏：导航 + 任务历史列表占位 -->
-    <el-aside width="260px" class="sidebar">
-      <div class="brand">
-        <el-icon class="brand-icon"><Compass /></el-icon>
-        <span class="brand-text">ThinkForge</span>
+  <div class="shell" :class="{ rail: collapsed }">
+    <!-- ============ 左侧栏 ============ -->
+    <aside class="sidebar">
+      <!-- A2：全站唯一折叠控件位于 .side-head 右端 -->
+      <div class="side-head">
+        <!-- A1：折叠态下品牌标记即展开控件（button 语义 / aria-label / 焦点环 / 键盘可触发） -->
+        <button
+          class="mark"
+          type="button"
+          aria-label="展开侧栏"
+          :aria-expanded="!collapsed"
+          :aria-hidden="collapsed ? undefined : 'true'"
+          :tabindex="collapsed ? 0 : -1"
+          @click="expandRail"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.9"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M3.5 8.5 12 4l8.5 4.5v7L12 20l-8.5-4.5z" />
+            <path d="M3.5 8.5 12 13l8.5-4.5M12 13v7" />
+          </svg>
+        </button>
+
+        <div class="wordmark">
+          <b>ThinkForge</b>
+          <span>阅读与创作工作台</span>
+        </div>
+
+        <button
+          class="rail-toggle"
+          type="button"
+          title="折叠 / 展开侧栏"
+          aria-label="折叠或展开侧栏"
+          :aria-expanded="!collapsed"
+          @click="toggleRail"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.7"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M15 5 9 12l6 7" />
+          </svg>
+        </button>
       </div>
 
-      <el-menu :default-active="activeRoute" router class="nav-menu">
+      <el-menu
+        class="nav-menu"
+        :default-active="activeRoute"
+        :collapse="collapsed"
+        :collapse-transition="false"
+        router
+      >
         <el-menu-item index="/creation">
           <el-icon><EditPen /></el-icon>
-          <span>主题创作</span>
+          <template #title>主题创作</template>
         </el-menu-item>
         <el-menu-item index="/analysis">
           <el-icon><Document /></el-icon>
-          <span>资料分析</span>
+          <template #title>资料分析</template>
         </el-menu-item>
         <el-menu-item index="/history">
           <el-icon><Clock /></el-icon>
-          <span>任务历史</span>
+          <template #title>任务历史</template>
         </el-menu-item>
         <el-menu-item index="/settings">
           <el-icon><Setting /></el-icon>
-          <span>设置</span>
+          <template #title>设置</template>
         </el-menu-item>
       </el-menu>
 
-      <div class="sidebar-section">
-        <div class="sidebar-section-title">最近任务</div>
-        <div class="sidebar-placeholder">
-          任务历史列表占位<br />
-          （工单 05：任务历史与续作）
+      <!-- 最近任务：结构骨架，真实列表属后续工单（TB-7 / TB-10） -->
+      <div class="side-block">
+        <div class="side-block-head">
+          <h2>最近任务</h2>
+        </div>
+        <p class="side-empty">
+          任务历史列表（工单 TB-10）。可先在「主题创作」页新建任务。
+        </p>
+      </div>
+
+      <!-- 侧栏脚部：真实运行环境信息（地址 / 隐私边界），额度等属后续工单 -->
+      <div class="side-foot">
+        <div class="env-row">
+          <i
+            class="tf-dot"
+            :class="{
+              'tf-dot--ok': backend === 'ok',
+              'tf-dot--err': backend === 'down'
+            }"
+          ></i>
+          <span>本地服务</span>
+          <span class="mono">127.0.0.1:8720</span>
+          <span class="env-state">{{ backendLabel }}</span>
+        </div>
+        <div class="env-row">
+          <el-icon class="env-ico"><Lock /></el-icon>
+          <span>仅监听本机回环 · 数据不出机（除调用云端模型）</span>
         </div>
       </div>
-    </el-aside>
+    </aside>
 
-    <!-- 中部内容区 + 底部输入胶囊区 -->
-    <el-container class="main-column">
-      <el-main class="content-area">
+    <!-- ============ 主列 ============ -->
+    <main class="main">
+      <div class="content-area">
         <router-view />
-      </el-main>
-
-      <div class="composer-area">
-        <div class="composer">
-          <el-input
-            v-model="composerText"
-            class="composer-input"
-            placeholder="输入消息，与工作台对话（占位，尚未接入后端）"
-            :disabled="true"
-            @keyup.enter="onSend"
-          >
-            <template #suffix>
-              <el-button type="primary" circle :icon="Promotion" @click="onSend" />
-            </template>
-          </el-input>
-        </div>
       </div>
-    </el-container>
-  </el-container>
+    </main>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { Promotion } from '@element-plus/icons-vue'
+import { Clock, Document, EditPen, Lock, Setting } from '@element-plus/icons-vue'
+import { checkHealth } from '../api/client'
 
 const route = useRoute()
 
 // 侧栏高亮跟随当前路由（/creation、/analysis、/history、/settings）。
 const activeRoute = computed(() => route.path)
 
-const composerText = ref('')
+// A1/A2：折叠态。全站仅此处一份状态，驱动 .side-head 折叠控件与品牌标记同步。
+const collapsed = ref(false)
 
-// 输入区为骨架占位，交互逻辑在后续工单接入。
-function onSend(): void {
-  // TODO(工单 04)：对接拷问闭环后端。
-  composerText.value = ''
+function toggleRail(): void {
+  collapsed.value = !collapsed.value
 }
+
+function expandRail(): void {
+  if (collapsed.value) collapsed.value = false
+}
+
+// 后端健康状态：检查中 / 正常 / 未启动。复用 client 的 BackendUnavailableError 归类。
+type BackendState = 'checking' | 'ok' | 'down'
+const backend = ref<BackendState>('checking')
+const backendLabel = computed(
+  () =>
+    ({ checking: '检测中…', ok: '正常', down: '未启动' })[backend.value]
+)
+
+// 窄屏自动收为图标栏，保证内容区不被挤压；
+// 真正的离屏抽屉（遮罩 + 浮层）成本高，留待后续工单实现（见报告遗留点）。
+function applyResponsive(): void {
+  if (window.innerWidth <= 760) collapsed.value = true
+}
+
+onMounted(() => {
+  applyResponsive()
+  window.addEventListener('resize', applyResponsive)
+  checkHealth()
+    .then(() => {
+      backend.value = 'ok'
+    })
+    .catch(() => {
+      backend.value = 'down'
+    })
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', applyResponsive)
+})
 </script>
 
 <style scoped>
-.workbench {
+/* 三栏壳（对齐原型 .shell）：左栏宽走 --side-w，rail 态收为图标栏 */
+.shell {
+  display: grid;
+  grid-template-columns: var(--side-w) minmax(0, 1fr);
   height: 100vh;
+}
+.shell.rail {
+  --side-w: 64px;
 }
 
 /* 左侧栏 */
 .sidebar {
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--el-border-color-light);
-  background-color: var(--el-bg-color-page);
+  min-height: 0;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--line-1);
   overflow: hidden;
 }
 
-.brand {
+.side-head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 18px 20px;
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--el-color-primary);
+  gap: var(--sp-2);
+  padding: var(--sp-4) var(--sp-4) var(--sp-3);
 }
 
-.brand-icon {
-  font-size: 22px;
+/* 品牌标记：折叠态即展开控件 */
+.mark {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border: 0;
+  padding: 0;
+  border-radius: var(--r-sm);
+  background: var(--brand-500);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  cursor: default;
+}
+.mark svg {
+  width: 16px;
+  height: 16px;
+}
+.shell.rail .mark {
+  cursor: pointer;
+}
+.shell.rail .mark:hover {
+  box-shadow: 0 0 0 3px var(--brand-50);
+}
+.shell.rail .mark:focus-visible {
+  outline: 2px solid var(--brand-500);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
 }
 
+.wordmark {
+  min-width: 0;
+}
+.wordmark b {
+  display: block;
+  font-size: var(--fs-lg);
+  letter-spacing: 0.2px;
+}
+.wordmark span {
+  display: block;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+/* 折叠控件（A2）：右端对齐，唯一一处 */
+.rail-toggle {
+  margin-left: auto;
+  border: 1px solid var(--line-1);
+  background: var(--bg-surface);
+  color: var(--text-3);
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-sm);
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+.rail-toggle svg {
+  width: 14px;
+  height: 14px;
+}
+.rail-toggle:hover {
+  color: var(--brand-500);
+  border-color: var(--brand-200);
+  background: var(--brand-50);
+}
+
+/* 导航：Element Plus 标准组件，主题由 token 继承 */
 .nav-menu {
   border-right: none;
-  background-color: transparent;
+  background: transparent;
 }
 
-.sidebar-section {
+/* 最近任务骨架 */
+.side-block {
   flex: 1;
-  padding: 12px 16px;
-  overflow: auto;
-}
-
-.sidebar-section-title {
-  margin-bottom: 8px;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-}
-
-.sidebar-placeholder {
-  padding: 12px;
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--el-text-color-placeholder);
-  background-color: var(--el-fill-color-light);
-  border-radius: 6px;
-}
-
-/* 右侧主列 */
-.main-column {
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  padding: var(--sp-4) var(--sp-3) 0;
+  border-top: 1px solid var(--line-1);
+  margin-top: var(--sp-4);
+}
+.side-block-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-1) var(--sp-2);
+}
+.side-block-head h2 {
+  margin: 0;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text-3);
+  letter-spacing: 0.6px;
+}
+.side-empty {
+  margin: 0;
+  padding: var(--sp-3);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  color: var(--text-4);
+  background: var(--bg-sunken);
+  border-radius: var(--r-sm);
+}
+
+/* 侧栏脚部：真实环境信息 */
+.side-foot {
+  border-top: 1px solid var(--line-1);
+  padding: var(--sp-3) var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.env-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+.env-row .mono {
+  font-family: var(--font-mono);
+  color: var(--text-2);
+}
+.env-state {
+  margin-left: auto;
+  color: var(--text-4);
+}
+.env-ico {
+  font-size: 14px;
+  color: var(--text-3);
+}
+
+/* 主列 */
+.main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.content-area {
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
 }
 
-.content-area {
-  flex: 1;
-  overflow: auto;
-  padding: 24px;
+/* 折叠态：隐藏文字，仅留图标（导航由 el-menu :collapse 接管） */
+.shell.rail .side-head {
+  padding: var(--sp-3) var(--sp-2);
+  justify-content: center;
+}
+.shell.rail .wordmark,
+.shell.rail .rail-toggle,
+.shell.rail .side-block {
+  display: none;
+}
+.shell.rail .side-foot {
+  padding: var(--sp-3) 0;
+  align-items: center;
+}
+.shell.rail .env-row {
+  justify-content: center;
+}
+.shell.rail .env-row span {
+  display: none;
+}
+.shell.rail .env-state {
+  display: none;
 }
 
-/* 底部输入胶囊区 */
-.composer-area {
-  padding: 12px 24px 20px;
-  border-top: 1px solid var(--el-border-color-light);
-  background-color: var(--el-bg-color);
-}
-
-.composer {
-  max-width: 860px;
-  margin: 0 auto;
-}
-
-.composer :deep(.el-input__wrapper) {
-  border-radius: 999px;
-  padding-left: 18px;
-}
+/*
+ * 响应式（≤760px）：本单以「窄屏自动收成图标栏」保证内容可用为先。
+ * 原型在窄屏改为遮罩式离屏抽屉（浮层 + 遮罩 + 滚动锁定），实现成本高，
+ * 由 JS 在挂载时自动 collapsed=true 兜底；离屏抽屉留待后续工单（见报告遗留点）。
+ */
 </style>
