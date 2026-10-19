@@ -779,11 +779,11 @@ export function setTaskStatus(taskId: number, status: 'in_progress' | 'completed
 }
 
 /* ============================================================
-   资料分析（来源 → 文档 → 分块 → 总结）—— TB-7
+   资料分析（来源 → 文档 → 分块 → 总结）—— TB-7 / TB-8 / TB-9
    权威来源：backend/app/models/analysis.py、routes/analysis.py。
    术语：资料分析 / 总结 / 未识别 / 来源 / 分块 / 一键送入主题创作。
    命名纪律：这是「分块 → 逐块分析 → 综合」分析管线，不是 RAG（ADR-0002）。
-   扩展位：TB-8（PDF / PPTX）与 TB-9（URL）沿用同一组端点，kind 字段区分来源类型。
+   来源类型：file（TXT/MD/DOCX/PDF/PPTX 上传）与 url（公开网页抓取），共用后续端点。
    ============================================================ */
 
 /** 未识别内容统一契约（一级输出字段，绝不以空字符串冒充成功）。 */
@@ -812,6 +812,8 @@ export interface AnalysisDocumentInfo {
   parse_status: string
   parse_message: string | null
   heading_source: string | null
+  /** 解析器标识（plain-text / python-docx / pypdf / python-pptx）；解析失败或 URL 来源为 null。 */
+  parser: string | null
   encoding: string | null
   headings: number
   images: number
@@ -819,7 +821,7 @@ export interface AnalysisDocumentInfo {
   created_at: string
 }
 
-/** 上传 + 解析的结果（解析失败仍是 201 + failed + 可读 message，不丢已存数据）。 */
+/** 上传 / URL 抓取 + 解析的结果（两种来源同一形状；失败仍是 201 + failed + 可读 message）。 */
 export interface AnalysisSourceResponse {
   source: AnalysisSourceInfo
   document: AnalysisDocumentInfo
@@ -873,6 +875,7 @@ export interface SendToCreationResponse {
 
 /**
  * 上传资料（multipart，字段 file）：走 XHR 以便回报真实上传进度（fetch 无上传进度事件）。
+ * 支持 TXT / MD / DOCX / PDF / PPTX（TB-8 起含版式类）。
  * 错误语义与 request() 一致：网络失败 → BackendUnavailableError；非 2xx → Error（附 detail）。
  * onProgress 收 0–100 百分比（按字节计，50MB 文件也有意义）。
  */
@@ -915,6 +918,19 @@ export function uploadAnalysisSource(
       reject(new Error(detail ? `${base} · ${detail}` : base))
     }
     xhr.send(body)
+  })
+}
+
+/**
+ * 提交 URL 来源：POST /api/analysis/sources/url（TB-9）。
+ * 后端先做不联网的安全前置校验（仅 http/https、拒绝环回 / 私网 / 链路本地 / 云元数据等），
+ * 不合格 → 400 且不落库；抓取失败 / 需登录 / 超时 / 超限 → 201 + parse_status="failed"。
+ * 错误语义沿用 request()：非 2xx 抛 Error（detail 为后端可读中文原因，原样展示）。
+ */
+export function createAnalysisUrlSource(url: string): Promise<AnalysisSourceResponse> {
+  return request<AnalysisSourceResponse>('/analysis/sources/url', {
+    method: 'POST',
+    body: JSON.stringify({ url })
   })
 }
 
@@ -987,6 +1003,7 @@ export default {
   deleteTask,
   setTaskStatus,
   uploadAnalysisSource,
+  createAnalysisUrlSource,
   getAnalysisSource,
   analyzeSource,
   getAnalysisSummary,
