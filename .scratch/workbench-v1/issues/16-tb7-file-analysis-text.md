@@ -1,6 +1,6 @@
 # TB-7 · 资料分析：文本类文件 → 总结
 
-Status: closed — 已实现（待编排者提交）
+Status: closed — 已实现并合入 integration/workbench-v1
 规格：08-v1-unified-spec.md
 阻塞边：TB-0（09）、TB-1（10，需真实模型）
 
@@ -76,6 +76,30 @@ Status: closed — 已实现（待编排者提交）
 
 **遗留**
 
-- UI 触点（上传区、进度、总结展示、送入创作入口）属前端范围，本工单后端已就绪，待前端接入。
 - 图片型 DOCX 仅识别并明示 `needs_ocr`，OCR 本身不在本工单范围。
 - `embeddings` 表按 ADR-0002 预留，未参与本管线。
+
+### 2026-10-19 · 前端补齐并合入集成分支
+
+**提交**：后端 `3184e4e`；前端 `d37bd6e`；合并 `5db1cdc`（merge commit）。
+
+**UI 触点（`frontend/src/views/AnalysisView.vue`）**
+
+- 上传：拖拽 / 点击选择，前端先校验 TXT / MD / DOCX 与 50MB，XHR 真实上传进度；失败可读提示。
+- 解析三态：`parsed` / `failed` / `unrecognized` 用不同色调与文案严格区分；回显文件名、分块数、编码、`heading_source`、图片数与未识别契约（`reason` / `locator` / `needs_ocr`），失败 / 未识别绝不显示成成功。
+- 分析：进行中状态（逐块 N 次 + 综合 1 次如实文案，不伪造进度）；成功展示 ≤500 汉字总结、汉字数、`truncated`、引用来源（块号 + 位置 + 摘录）与实际档位（`provider_used` / `model_used` / `provider_fallback` / `provider_note`）。
+- 操作：复制总结（clipboard + `execCommand` 回退）；一键送入主题创作后跳转 `/creation?task=`，任务在历史与侧栏可见。
+- 扩展位：扩展名白名单单点（TB-8 扩展）、URL 输入保持禁用（TB-9）、来源行按 `source.kind` 渲染。
+
+**验证**
+
+- `npm run test:unit`：19 项通过（`analysisMeta` 纯函数）。
+- `npm run build`：通过（element-plus 体积警告为既有问题）。
+- 后端 `pytest`：217 项通过；`ruff check`：All checks passed。
+- 合并后已在集成分支重跑上述前后端验证，全部通过。
+
+**遗留**
+
+- 真实模型总结卡 / 引用 / 档位回退渲染需持有效 Key 人工走查一次。
+- 文件选择器触发的上传 → 分析全链路留人工验收。
+- 历史页暂无来源反查端点，分析任务只能进任务详情，不能直达对应来源；已以如实文案降级。

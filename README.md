@@ -29,7 +29,7 @@
 
 ## 当前状态
 
-领域文档与规格已就位，**后端已落地 TB-0（行走骨架）、TB-1（模型配置与连接测试）、TB-2（拷问第一轮）、TB-3（收敛 → 方案 → 确认闸门）、TB-4（方案修订与待确认事项）、TB-5（Word 成品与模板机制）、TB-6（单文件 HTML 演示）与 TB-7（资料分析：文本类文件 → 总结）并带自动化测试**；其余功能与前端仍在按曳光弹工单推进。除下表标 ✅ 者外，请以规格为准，勿当作已实现能力。
+领域文档与规格已就位，**TB-0 ~ TB-10 的后端与前端均已落地并带自动化测试**：行走骨架、模型配置与连接测试、拷问闭环（第一轮 / 收敛 / 方案确认 / 修订与待确认事项）、资料分析（TXT / MD / DOCX / PDF / PPTX / URL）、历史与续作、Word 与单文件 HTML 演示。除下表标 ✅ 者外，请以规格为准，勿当作已实现能力。
 
 | 部分 | 现状 |
 | --- | --- |
@@ -45,8 +45,10 @@
 | Word 成品与模板机制 | ✅ TB-5：`generations`（任务 / 方案 / 格式 / 产物位置 / **本次实际所用模板** / 时间）、`templates`（模板登记：名称 / 格式 / 是否默认）、确认方案后经 `python-docx` 生成 .docx（标题 / 正文 / 列表 / 表格按模板样式映射）、内置最小默认模板按需幂等生成、全局默认模板与任务级**临时覆盖**分离、产物**回读**完整性检查（US 22）、模板缺失 / 损坏 / 非 `.docx` 明确报错不静默空白生成 |
 | 单文件 HTML 演示 | ✅ TB-6：同一张 `generations` 表（`format=html`、`template_used=deck-theme:<id>`）、三套内建主题（`slate` / `ember` / `mono`，调色板以原型 `DECKT` 为准）、方案确定性排成幻灯片、样式 / 翻页脚本 / **西文字体（latin 子集 woff2）全部内联**、中文走系统字体回退、产物**扫描断言 0 条外部网络引用**、`file://` 直开可用（键盘翻页 + 页码 + 页内演讲者模式）、`THIRD-PARTY-LICENSES` 与产物署名齐备 |
 | 资料分析（文本类） | ✅ TB-7：`sources` / `documents` / `document_chunks`（含 locator）/ `summaries`（含引用与档位证据）；`embeddings` 仅按 ADR-0002 预留不填；上传校验（TXT / MD / DOCX + 50MB）→ 解析（TXT 编码顺序 `utf-8-sig → gb18030 → charset-normalizer`；MD 走 `markdown-it-py` token 流；DOCX 标题按 `paragraph.style.name` + 启发式回退并标 `heading_source`）→ 分块 → **逐块分析 + 综合（map-reduce，不称 RAG）** → ≤500 汉字总结；未识别是一级输出字段（无文本层短路、不冒充成功）；模型失败可读 502 且不丢已存数据；总结走 **turbo 档**、缺失时回退默认并如实记录；一键送入主题创作只预填、不调用模型；模板 multipart 上传（仅 `.docx`） |
+| 资料分析（版式类） | ✅ TB-8：`pypdf` 解析 PDF 正文与字号启发式标题、`python-pptx` 解析每页标题 / 正文 / 表格；`documents.parser` 记录解析器；页 / 幻灯片级 locator 进入分块与引用；扫描件 / 纯图片文件 → `no_text_layer` + `needs_ocr=true` 短路；图片 / 图表 / 组合形状逐项进 `unrecognized_parts`；加密或损坏 PDF 明确失败，不绕过 |
+| 资料分析（URL） | ✅ TB-9：`POST /api/analysis/sources/url` 抓取公开网页后进入同一分析管线；纯函数 SSRF 校验（仅 http/https、拒绝内嵌凭据 / 环回 / 私网 / 链路本地 / 云元数据、解析前后双检）；重定向最多 3 跳且逐跳复检、超时 15s、下载上限 5MB；`trafilatura` 提取正文并过滤导航 / 广告；需登录 / 超时 / 超限如实提示且不绕过；无正文 → `no_main_text` / `empty_page` 明示 |
 | 运行时目录 | ✅ `data/`（运行时 SQLite 落此处，gitignored）、`启动.bat`、根 `.gitignore`（覆盖 `/data/`、`/templates/`、`.slim/`） |
-| 自动化测试 | ✅ `backend/tests`（pytest，进程内 HTTP 接缝，不联网；217 项通过） |
+| 自动化测试 | ✅ `backend/tests`（pytest，进程内 HTTP 接缝，不联网；336 项通过）+ `frontend/tests`（`node --test` 纯函数测试） |
 
 ---
 
@@ -68,7 +70,7 @@
 
 ```
 backend/          # FastAPI 应用包 app/（api、db、models、providers、grilling、analysis、generation、security）+ tests/ + scripts/（演示脚本）
-frontend/         # Vue3 + TS + Vite + Element Plus；src/{api,layouts,router}（views 待落地）
+frontend/         # Vue3 + TS + Vite + Element Plus；src/{api,layouts,router,views,utils,components}
 data/             # 运行时数据（SQLite、上传件、生成产物 data/deliverables/）—— gitignore
 templates/        # 用户 Word / PPT 模板 + 内置默认模板 templates/_builtin/ —— gitignore
 docs/
@@ -160,8 +162,9 @@ cd backend
 | POST | `/api/templates` | **模板登记**：body `{"name":string,"is_default":bool?}`，登记已放入 `templates/` 的模板 → 201；只接受 `.docx`，`.dotx` / `.dotm` / `.docm`（含改名成 `.docx` 的模板类型文件）→ 400 并提示「请另存为 .docx」；文件不存在 → 404 |
 | POST | `/api/templates/upload` | **模板文件上传**（multipart，字段 `file`）：直接落进 `templates/` 并登记 → 201；只接受 `.docx`，复用同一套扩展名 + 50MB 校验；同名已存在 → 409（不静默覆盖）；模板类型 / 损坏文件 → 400 且不留下半成品 |
 | PUT | `/api/templates/{name}/default` | 设为该格式的**全局默认模板**（同格式至多一个） |
-| POST | `/api/analysis/sources` | **资料分析上传 + 解析**（multipart，字段 `file`）：只收 TXT / MD / DOCX，扩展名 + 50MB 校验，文件落 `data/uploads/`；建来源 / 文档 / 分块（长文按约 1200 字切块）。解析失败仍 201 且 `document.parse_status="failed"` + 可读 `message`（来源与文件保留，不丢已存数据）；无文本层 → `parse_status="unrecognized"` + 一级 `unrecognized` 契约（`reason` / `locator` / `needs_ocr`），不返回空总结冒充成功 |
-| GET | `/api/analysis/sources/{id}` | 来源 + 文档解析结果（`parse_status` / `heading_source` / `encoding` / `headings` / `chunks` / `unrecognized` / `unrecognized_parts`），供分析页展示与重试 |
+| POST | `/api/analysis/sources` | **资料分析上传 + 解析**（multipart，字段 `file`）：收 TXT / MD / DOCX / PDF / PPTX，扩展名 + 50MB 校验，文件落 `data/uploads/`；建来源 / 文档 / 分块（长文按约 1200 字切块），`document.parser` 记录实际解析器。解析失败仍 201 且 `document.parse_status="failed"` + 可读 `message`（来源与文件保留，不丢已存数据）；无文本层 → `parse_status="unrecognized"` + 一级 `unrecognized` 契约（`reason` / `locator` / `needs_ocr`），不返回空总结冒充成功 |
+| POST | `/api/analysis/sources/url` | **URL 来源 + 抓取解析**：body `{"url":string}` → 安全校验 → 抓取 → 正文提取 → 建来源 / 文档 / 分块（201）。安全拒绝（非法协议 / 内嵌凭据 / 环回 / 私网 / 链路本地 / 云元数据等）→ 400 + 可读原因，**不落库、不抓取**；抓取失败 / 需登录 / 超时 / 超限 → 201 + `parse_status="failed"` + 可读 `message`（与上传失败同口径）；无正文 → `unrecognized`（`no_main_text` / `empty_page`）。`source.meta` 记 `url` / `final_url` / `fetched_at` / `status` / `content_type` / `size` / `redirects` |
+| GET | `/api/analysis/sources/{id}` | 来源 + 文档解析结果（`parser` / `parse_status` / `heading_source` / `encoding` / `headings` / `chunks` / `unrecognized` / `unrecognized_parts`），供分析页展示与重试 |
 | POST | `/api/analysis/sources/{id}/analyze` | **分析**：分块 → 逐块分析 → 综合（N 块 = N 次逐块 + 1 次综合，**分析管线不是 RAG**）→ 保存 ≤500 汉字总结并返回引用位置与实际档位（`provider_kind` / `provider_used` / `model_used` / `provider_fallback` / `provider_note`）。总结走 **turbo** 档；该档缺失 → 回退默认 provider 并如实记录。未识别 → 200 + `summary:null` + 显式契约、**不调用模型**；解析失败 → 409；模型失败 → 502（已存来源 / 文档 / 分块保留） |
 | GET | `/api/analysis/sources/{id}/summary` | 读取该来源最新总结（保存即落库，可查看 / 复制）；尚无总结 → 404 |
 | POST | `/api/analysis/sources/{id}/send-to-creation` | **一键送入主题创作**：新建 `creation` 任务，把该来源的总结预填为第 0 轮种子输入（已知信息）→ 201；**不调用模型**（首轮问题等用户下次推进时才需要模型）；可选 body `{"title":string?}` |
@@ -271,17 +274,21 @@ v1.1 队列（顺序即优先级）：RAG 最小版 → PPTX 填用户模板 →
 - 内联字体为 SIL OFL-1.1（Inter / Source Serif 4 / JetBrains Mono），不单独售卖字体。
 - 许可全文、版权行与「OpenDesign 派生 / 本地原创」的逐项区分见 [`backend/app/generation/assets/THIRD-PARTY-LICENSES.md`](backend/app/generation/assets/THIRD-PARTY-LICENSES.md)；每份生成的 `.html` 里也保留署名注释。
 
-### 资料分析（文本类文件 → 总结）
+### 资料分析（文件与 URL → 总结）
 
 - **命名纪律**：这是「分块 → 逐块分析 → 综合」的**分析管线**，**不是 RAG**（ADR-0002）。只处理刚上传的单份资料，不建索引、不做跨文档检索；`embeddings` 表仅按 ADR-0002 预留、本版不填充。
-- **入口与校验**：`POST /api/analysis/sources` 收 TXT / MD / DOCX（PDF / PPTX 归 TB-8，URL 归 TB-9），扩展名白名单 + 50MB 上限；上传件落在 `data/uploads/`，路径不越出 `data/` 白名单。
+- **入口与校验**：`POST /api/analysis/sources` 收 TXT / MD / DOCX / PDF / PPTX，扩展名白名单 + 50MB 上限；`POST /api/analysis/sources/url` 收公开网页 URL。上传件落在 `data/uploads/`，路径不越出 `data/` 白名单。
 - **解析规则**（调研 A1 / A5）：
   - TXT 编码顺序 `utf-8-sig` → `gb18030` → `charset-normalizer`，并把实际编码回传（`document.encoding`）；
   - MD 走 `markdown-it-py` 的 token 流，**不用正则**——代码围栏里的 `#` 不会被误判为标题；
-  - DOCX 用 `paragraph.style.name` 判标题（`Title` / `Heading N`），作者手写加粗放大时退回字号 / 加粗启发式，并以 `heading_source: style | heuristic | none` 如实标注；图片、SmartArt、图表内文字、文本框浮动内容读不到 → 归入未识别。
+  - DOCX 用 `paragraph.style.name` 判标题（`Title` / `Heading N`），作者手写加粗放大时退回字号 / 加粗启发式，并以 `heading_source: style | heuristic | none` 如实标注；图片、SmartArt、图表内文字、文本框浮动内容读不到 → 归入未识别；
+  - PDF 用 `pypdf` 逐页提取文本，按字号相对全文众数字号的比例识别标题（`heading_source: heuristic | none`）；locator 为 `{page, line}`，分块引用可回溯到页 / 行；页内图片计入未识别，扫描件（无文本层）→ `no_text_layer` + `needs_ocr=true`；
+  - PPTX 用 `python-pptx` 读每页标题占位符、正文、表格逐行；locator 为 `{slide, shape, paragraph}` / `{slide, table, row}`；图片 / 图表 / 组合形状 / 嵌入对象逐项明示未识别，组合形状不递归展开；
+  - 所有解析器都在 `documents.parser` 记录实际实现（`pypdf` / `python-pptx` / `python-docx` / `markdown-it-py` / `plain-text`），不把不同格式混为一个不可区分的“已解析”。
+- **URL 安全边界**：仅 http/https；拒绝内嵌用户名 / 密码、环回、私网、链路本地、云元数据、未指定 / 组播 / 保留地址；解析前与解析后双检，重定向最多 3 跳且每跳复检；超时 15s、下载上限 5MB；需登录 / 受访问控制 / 超时 / 超限如实提示，**不绕过**。正文由 `trafilatura` 精确抽取，导航 / 广告不进正文；抽不出正文 → `no_main_text` / `empty_page` 明示。
 - **分析**：按约 1200 字切块（超长单块按句读二次切分），逐块分析后再综合成 **≤500 汉字**的总结，提炼主题 / 核心观点 / 关键内容 / 重要数据 / 结论；模型给长了按句读收敛并记 `truncated`。
-- **未识别是一级输出字段**：统一契约 `{unrecognized, reason, locator, needs_ocr}`。无文本层（典型：扫描件 / 图片型 DOCX）→ `reason="no_text_layer"`、`needs_ocr=true`，**短路不调用模型**、不返回空总结；有正文但含图片时用 `unrecognized_parts` 逐项明示，不伪装成完整分析。
+- **未识别是一级输出字段**：统一契约 `{unrecognized, reason, locator, needs_ocr}`。无文本层（典型：扫描件 / 图片型文件）→ `reason="no_text_layer"`、`needs_ocr=true`，**短路不调用模型**、不返回空总结；有正文但含图片 / 图表 / 组合形状时用 `unrecognized_parts` 逐项明示，不伪装成完整分析。
 - **失败不丢数据**：解析失败 → 文档 `parse_status="failed"` + 可读提示，来源 / 文件仍在；模型失败 → 502 可读错误，已入库的来源 / 文档 / 分块保留，可安全重试。
 - **档位**：总结固定走 **turbo** 档（规格：主流程 plus、总结流程 turbo），由 `TieredModelClient` 按档位解析 provider；该档不存在时回退当前默认 provider，并在总结记录与 API 结果里写明 `provider_fallback` / `provider_used` / `provider_note`（不静默）。主流程（拷问 / 方案 / 修订）仍走原默认 provider 客户端，行为不变。
 - **一键送入主题创作**：`POST /api/analysis/sources/{id}/send-to-creation` 新建 `creation` 任务，把总结作为第 0 轮种子输入预填；**不调用模型**，首轮问题等用户下次推进 / 发起时才产生。
-- **可复现演示记录**：`backend\scripts\demo_analysis_long_docx.py` 会自己造一份 320 段的长 DOCX，经进程内 HTTP 真实上传 → 打印分块数、逐块 + 综合调用次数、总结汉字数、引用位置、turbo 档证据，以及图片型 DOCX 的未识别提示。
+- **可复现演示记录**：`backend\scripts\demo_analysis_long_docx.py`（320 段长 DOCX：分块数、调用次数、总结汉字数、引用位置、档位证据、未识别提示）；`backend\scripts\demo_analysis_layout.py`（PDF / PPTX 页与幻灯片 locator、扫描件与损坏文件路径）。两者都走进程内 HTTP + 脚本化模型，不联网、零花费。

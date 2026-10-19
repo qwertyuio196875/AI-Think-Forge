@@ -324,6 +324,7 @@ def create_url_source(
             source["id"],
             page.final_url,
             parse_status="unrecognized",
+            parser=parsed.parser,
             heading_source=parsed.heading_source,
             unrecognized=contract,
         )
@@ -343,6 +344,7 @@ def create_url_source(
         source["id"],
         page.final_url,
         parse_status="parsed",
+        parser=parsed.parser,
         heading_source=parsed.heading_source,
         encoding=parsed.encoding,
         headings=headings,

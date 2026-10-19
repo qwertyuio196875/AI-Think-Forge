@@ -84,6 +84,7 @@ def test_url_source_creates_source_document_and_chunks_with_metadata(
     assert meta["redirects"] == 0
 
     assert body["document"]["parse_status"] == "parsed"
+    assert body["document"]["parser"] == "trafilatura"
     assert body["document"]["chunks"] >= 1
     assert body["unrecognized"] is None
 
@@ -241,6 +242,7 @@ def test_page_without_main_text_is_unrecognized_and_short_circuits(
     assert response.status_code == 201
     body = response.json()
     assert body["document"]["parse_status"] == "unrecognized"
+    assert body["document"]["parser"] == "trafilatura"
     assert body["document"]["chunks"] == 0
     assert body["unrecognized"]["unrecognized"] is True
     assert body["unrecognized"]["reason"] == "no_main_text"

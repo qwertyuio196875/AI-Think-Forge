@@ -1,6 +1,6 @@
 # TB-9 · URL 分析 + SSRF 防护
 
-Status: closed — 已实现（后端侧；待编排者验收 / 提交）
+Status: closed — 已实现并合入 integration/workbench-v1
 规格：08-v1-unified-spec.md
 阻塞边：TB-7（16，复用同一总结管线）
 
@@ -72,3 +72,31 @@ Status: closed — 已实现（后端侧；待编排者验收 / 提交）
 - **公开网页真机演示**（工单「演示证据」）需要真实联网抓取，本单按要求全程离线验证，故未执行；请编排者 / 用户在验收阶段跑一次真实页面（如公开技术文章）并记录，同时用 `http://127.0.0.1/`、`http://169.254.169.254/…` 演示拒绝。
 - **残留 TOCTOU**：校验用的 DNS 结果与 httpx 实际连接时的解析之间存在时间窗（DNS rebinding 的理论残余风险）；已用「逐跳复核 + 解析后复核」把窗口压到最小，彻底消除需按 IP 直连并自设 Host。现行折中记于此，未做 IP 钉连。
 - 前端未接（URL 输入与拒绝原因展示属 UI 触点）；README 由编排者统一更新。
+
+### 2026-10-19 · UI 补齐、真机演示与合入集成分支
+
+**提交**：后端 `e004df8`；合并 `6235a17`；共享分析页 UI `dca5596`。
+
+**UI（`frontend/src/views/AnalysisView.vue`）**
+
+- URL 输入启用：Enter / 按钮提交，抓取中状态；前端只做格式校验，内网 / 元数据等安全判定以后端为唯一权威。
+- 400 安全拒绝原样展示后端可读原因，并明示「未发起抓取，未保存任何数据」；201 + `parse_status="failed"` 走抓取失败态。
+- URL 来源显示页面标题、域名、抓取时间、重定向次数与最终地址；引用 locator 显示域名 + 行号，不展开超长 URL。
+
+**真机演示（2026-10-19，经本机 7890 代理）**
+
+- `https://example.com/` → **201 `parsed`**，正文 1 个分块，`original_name="Example Domain"`；随后 `analyze` → 502 可读 `detail`（本机无有效模型 Key，属预期）。
+- `http://127.0.0.1:8720/` → **400**「拒绝访问本机环回地址」。
+- `http://169.254.169.254/latest/meta-data/` → **400**「拒绝访问云元数据地址」。
+- 拒绝路径均未落库、未发起抓取；演示库 `data/demo/tb9-real-demo.db`（gitignored）。
+
+**最终验证**
+
+- 后端 `pytest`：**336 passed**；`ruff check`：All checks passed。
+- 前端 `node --test`：38 项通过；`npm run build` 通过。
+- URL 来源的 `documents.parser` 固定为 `trafilatura`（补充契约一致性断言）。
+
+**遗留**
+
+- DNS 校验与 httpx 实际连接之间仍有理论 TOCTOU 窗口；已用逐跳 + 解析后复核压到最小，未做 IP 钉连。
+- 真实网页的总结语义质量需持有效 Key 人工走查一次。

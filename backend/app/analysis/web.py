@@ -45,7 +45,9 @@ def decode_html(body: bytes, content_type: str | None = None) -> str:
 def parse_web_document(html: str, *, url: str) -> ParsedDocument:
     """HTML → 正文块（含标题），locator 记录来源 URL；抽不出正文时返回空块。"""
     if not (html or "").strip():
-        return ParsedDocument(format="url", blocks=[], heading_source="none")
+        return ParsedDocument(
+            format="url", blocks=[], heading_source="none", parser="trafilatura"
+        )
 
     markdown = trafilatura.extract(
         html,
@@ -57,7 +59,9 @@ def parse_web_document(html: str, *, url: str) -> ParsedDocument:
         favor_precision=True,
     )
     if not markdown or not markdown.strip():
-        return ParsedDocument(format="url", blocks=[], heading_source="none")
+        return ParsedDocument(
+            format="url", blocks=[], heading_source="none", parser="trafilatura"
+        )
 
     blocks, headings = parse_markdown_blocks(
         markdown, format_name="url", locator_extra={"url": url}
@@ -67,6 +71,7 @@ def parse_web_document(html: str, *, url: str) -> ParsedDocument:
         blocks=blocks,
         heading_source="style" if headings else "none",
         encoding="utf-8",
+        parser="trafilatura",
     )
 
 
