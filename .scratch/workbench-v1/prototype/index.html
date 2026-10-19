@@ -584,6 +584,128 @@ html.rail .env-row{justify-content:center}
 @media (prefers-reduced-motion:reduce){
   *{animation-duration:.01ms !important;transition-duration:.01ms !important;scroll-behavior:auto}
 }
+
+/* ============================================================ 新增：生成面板（格式 / 模板 / 生成 / 产物） */
+.gpanel .card-head .tag .i{vertical-align:-2px}
+.gp-lock{display:flex;gap:var(--sp-3);align-items:flex-start;padding:var(--sp-4) var(--sp-5);
+  background:var(--bg-sunken);border-top:1px solid var(--line-1)}
+.gp-lock>.i{width:18px;height:18px;color:var(--text-4);margin-top:2px;flex:none}
+.gp-lock b{display:block;font-size:var(--fs-sm);color:var(--text-1)}
+.gp-lock p{font-size:var(--fs-sm);color:var(--text-3);margin-top:4px;max-width:66ch;line-height:1.6}
+.gpanel.is-locked .card-body.gp-live{display:none}
+.gpanel:not(.is-locked) .gp-lock{display:none}
+
+.fmt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:var(--sp-3)}
+.fmt{display:flex;gap:var(--sp-3);align-items:flex-start;text-align:left;border:1px solid var(--line-2);
+  border-radius:var(--r-md);padding:var(--sp-3);background:var(--bg-surface);cursor:pointer}
+.fmt:hover:not(.is-plan){border-color:var(--brand-200);background:var(--brand-50)}
+.fmt input{margin-top:3px;accent-color:var(--brand-500);flex:none}
+.fmt>span{min-width:0}
+.fmt b{display:block;font-size:var(--fs-sm);color:var(--text-1)}
+.fmt .d{display:block;font-size:var(--fs-xs);color:var(--text-3);margin-top:2px;line-height:1.55}
+.fmt.sel{border-color:var(--brand-500);background:var(--brand-50);box-shadow:0 0 0 2px var(--brand-50)}
+.fmt .tag{margin-left:4px;font-weight:400;vertical-align:1px}
+.fmt.is-plan{background:var(--bg-sunken);border-style:dashed;cursor:not-allowed}
+.fmt.is-plan b{color:var(--text-3)}
+.fmt.is-plan .d{color:var(--text-4)}
+.fmt.is-plan .tag{background:var(--bg-surface)}
+
+.gp-actions{display:flex;align-items:center;gap:var(--sp-3);flex-wrap:wrap;margin-top:var(--sp-4);
+  padding-top:var(--sp-4);border-top:1px solid var(--line-1)}
+.gp-actions .spacer{margin-left:auto}
+.gp-actions #gpTarget{min-width:0;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gp-bar{margin-top:var(--sp-3)}
+.gp-step{display:flex;align-items:center;gap:6px;margin-top:var(--sp-2);font-size:var(--fs-xs);color:var(--text-3)}
+.gp-hide{display:none}
+.note code.mono{font-size:12px;background:rgba(255,255,255,.72);border:1px solid var(--line-1);
+  border-radius:var(--r-xs);padding:0 5px;word-break:break-all}
+#gpErrMeta{margin-top:5px;opacity:.88}
+
+/* 产物卡 */
+.art-list{display:flex;flex-direction:column;gap:var(--sp-3);margin-top:var(--sp-4)}
+.art{border:1px solid var(--line-1);border-radius:var(--r-md);padding:var(--sp-3) var(--sp-4);
+  background:var(--bg-surface);animation:rise .22s ease-out}
+.art-head{display:flex;align-items:center;gap:var(--sp-2);flex-wrap:wrap}
+.art-head>.i{color:var(--brand-600)}
+.art-name{font-family:var(--font-mono);font-size:var(--fs-sm);font-weight:600;word-break:break-all}
+.art-head .sp{margin-left:auto}
+.art-body{display:flex;gap:var(--sp-4);align-items:flex-start;flex-wrap:wrap;margin-top:var(--sp-3)}
+.art-main{flex:1;min-width:240px}
+.art-kv{display:grid;grid-template-columns:76px minmax(0,1fr);gap:5px var(--sp-3);font-size:var(--fs-xs);margin:0}
+.art-kv dt{color:var(--text-3)}
+.art-kv dd{margin:0;color:var(--text-2);line-height:1.65;word-break:break-all}
+.art-kv .tag{vertical-align:1px}
+.art-acts{display:flex;gap:var(--sp-2);flex-wrap:wrap;margin-top:var(--sp-3)}
+
+/* 演示缩略（产物卡内） */
+.deck-thumb{flex:none;width:198px;padding:0;border:1px solid var(--line-2);border-radius:var(--r-sm);
+  overflow:hidden;background:none;display:block;cursor:pointer;text-align:left}
+.deck-thumb:hover{border-color:var(--brand-200);box-shadow:0 0 0 3px var(--brand-50)}
+.deck-thumb .dt{display:flex;flex-direction:column;aspect-ratio:16/9;padding:10px 12px;
+  background:var(--dk-bg);color:var(--dk-fg);font-family:var(--dk-head)}
+.deck-thumb .dt-bar{display:block;width:22px;height:3px;border-radius:2px;background:var(--dk-acc);margin-bottom:8px}
+.deck-thumb .dt-t{display:block;font-size:13px;line-height:1.25;font-weight:600}
+.deck-thumb .dt-s{display:block;font-size:10px;opacity:.68;margin-top:4px}
+.deck-thumb .dt-f{display:block;font-size:9px;opacity:.5;margin-top:auto;font-family:var(--font-mono)}
+.deck-thumb-cap{display:flex;align-items:center;justify-content:center;gap:5px;padding:5px 0;
+  font-size:var(--fs-xs);color:var(--text-2);background:var(--bg-sunken);border-top:1px solid var(--line-1)}
+.deck-thumb:hover .deck-thumb-cap{color:var(--brand-600);background:var(--brand-50)}
+
+/* 演示态（单文件 HTML 成品的效果预览） */
+.deck{position:fixed;inset:0;z-index:70;display:none;flex-direction:column;background:#12151b;color:#e8edf5}
+.deck.is-open{display:flex}
+.deck-bar{display:flex;align-items:center;gap:var(--sp-3);flex-wrap:wrap;padding:var(--sp-3) var(--sp-5);
+  border-bottom:1px solid rgba(255,255,255,.09)}
+.deck-bar b{font-size:var(--fs-sm);font-family:var(--font-mono)}
+.deck-bar .sp,.deck-foot-bar .sp{margin-left:auto}
+.deck-bar .xs,.deck-foot-bar .xs{color:rgba(232,237,245,.62)}
+.deck-bar .tag{background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.2);color:#e8edf5}
+.deck-stage{flex:1;min-height:0;display:grid;place-items:center;padding:var(--sp-5)}
+.deck-page{width:min(100%,880px);aspect-ratio:16/9;max-height:100%;display:flex;flex-direction:column;
+  overflow:hidden;border-radius:var(--r-md);background:var(--dk-bg);color:var(--dk-fg);
+  font-family:var(--dk-font);padding:clamp(18px,4.2vw,54px);box-shadow:0 24px 60px rgba(0,0,0,.45)}
+.deck-page.dp-center{align-items:center;text-align:center;justify-content:center}
+.dp-top{display:block}
+.dp-kicker{display:block;font-size:clamp(9px,1vw,11px);letter-spacing:1.4px;text-transform:uppercase;
+  color:var(--dk-acc);font-family:var(--dk-mono);margin-bottom:8px}
+.deck-page.dp-center .dp-kicker,.deck-page.dp-center .dp-bar{margin-left:auto;margin-right:auto}
+.deck-page.dp-center .dp-top{margin-top:auto}
+.dp-bar{display:block;width:34px;height:4px;border-radius:2px;background:var(--dk-acc);margin-bottom:clamp(12px,2.4vw,24px)}
+.dp-title{font-size:clamp(19px,3.3vw,38px);line-height:1.14;font-weight:600;font-family:var(--dk-head);letter-spacing:.2px}
+.dp-title.dp-h{font-size:clamp(16px,2.3vw,26px);font-family:var(--dk-font)}
+.dp-sub{font-size:clamp(11px,1.4vw,16px);opacity:.72;margin-top:clamp(8px,1.4vw,14px);max-width:48ch}
+.dp-sub.dp-meta{font-size:clamp(9px,1vw,12px);opacity:.55;font-family:var(--dk-mono)}
+.dp-list{display:flex;flex-direction:column;gap:clamp(8px,1.5vw,14px);margin:auto 0;padding-top:clamp(14px,3vw,28px)}
+.dp-list li{display:flex;gap:10px;font-size:clamp(11px,1.55vw,17px);line-height:1.45}
+.dp-list li::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--dk-acc);flex:none;margin-top:.5em}
+.deck-page.dp-center .dp-list{text-align:left}
+.dp-quote{font-size:clamp(14px,2.2vw,24px);line-height:1.5;font-family:var(--dk-head);max-width:30ch;
+  margin:auto 0;padding-top:clamp(14px,3vw,28px);padding-left:clamp(12px,2vw,20px);border-left:3px solid var(--dk-acc)}
+.deck-page.dp-center .dp-quote{text-align:left}
+.dp-foot{display:flex;align-items:center;gap:var(--sp-3);margin-top:auto;padding-top:clamp(10px,1.6vw,18px);
+  border-top:1px solid var(--dk-line);font-size:clamp(9px,1vw,11px);opacity:.6;font-family:var(--dk-mono)}
+.dp-no{margin-left:auto}
+.deck-foot-bar{display:flex;align-items:center;gap:var(--sp-3);flex-wrap:wrap;padding:var(--sp-3) var(--sp-5);
+  border-top:1px solid rgba(255,255,255,.09)}
+.dk-btn{height:30px;padding:0 var(--sp-3);border-radius:var(--r-sm);border:1px solid rgba(255,255,255,.24);
+  background:rgba(255,255,255,.07);color:#e8edf5;font-size:var(--fs-sm);display:inline-flex;align-items:center;gap:6px}
+.dk-btn:hover:not(:disabled){background:rgba(255,255,255,.16)}
+.dk-btn:disabled{opacity:.38;cursor:not-allowed}
+.dk-btn:focus-visible{outline:2px solid #fff;outline-offset:2px}
+.dk-dots{display:flex;gap:5px;align-items:center}
+.dk-dots i{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.26)}
+.dk-dots i.on{background:#fff}
+
+/* 历史页 · 产物入口 */
+.art-chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.art-chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line-2);background:var(--bg-surface);
+  border-radius:var(--r-xs);padding:2px 8px;font-size:var(--fs-xs);color:var(--text-2)}
+.art-chip:hover{border-color:var(--brand-200);color:var(--brand-600);background:var(--brand-50)}
+
+/* 设置 · 模板管理（内置默认 / 计划中的格式） */
+.cfg.is-plan{background:var(--bg-sunken);border-style:dashed}
+.cfg.is-plan b{color:var(--text-3)}
+.cfg.is-plan .meta1{color:var(--text-3)}
 </style>
 </head>
 <body>
@@ -996,6 +1118,102 @@ html.rail .env-row{justify-content:center}
               </div>
             </div>
           </div>
+
+          <!-- ============ 新增：生成面板（格式 / 模板 / 生成 / 产物） ============ -->
+          <div class="card gpanel is-locked" id="gpanel">
+            <div class="card-head">
+              <h3>生成面板</h3>
+              <span class="sub">选格式 · 选模板 · 拿产物</span>
+              <span class="tag tag-warn" id="gpChip"><svg class="i i-14"><use href="#i-lock"/></svg><span>未解锁 · 方案还没确认</span></span>
+              <span class="right small muted">换格式或换模板，在这里再生成一份</span>
+            </div>
+
+            <!-- 方案未确认：锁定态 + 原因 -->
+            <div class="gp-lock">
+              <svg class="i"><use href="#i-lock"/></svg>
+              <div>
+                <b>确认方案后才能生成</b>
+                <p>方案确认是进入生成阶段的唯一闸门。上方结构化方案还没有得到你的显式批准，所以格式选择、模板选择与生成按钮全部保持锁定；未经确认的推测不会被写进任何文件。</p>
+                <p class="xs">解锁后这里可以做四件事：切换成品格式（Word / 单文件 HTML 演示）、本任务临时选一个模板或主题、发起一次带进度与完整性检查的生成、拿到可点开的产物卡片。</p>
+              </div>
+            </div>
+
+            <!-- 方案已确认：可操作区 -->
+            <div class="card-body gp-live">
+              <div class="field" style="margin-top:0">
+                <label id="gpFmtLabel">成品格式</label>
+                <div class="fmt-grid" id="gpFmt" role="radiogroup" aria-labelledby="gpFmtLabel">
+                  <label class="fmt sel">
+                    <input type="radio" name="gpfmt" value="word" checked>
+                    <span><b>Word 文档</b><span class="d">python-docx 按模板写入：标题层级、正文、列表、表格映射到模板自带样式</span></span>
+                  </label>
+                  <label class="fmt">
+                    <input type="radio" name="gpfmt" value="deck">
+                    <span><b>单文件 HTML 演示</b><span class="d">主题族本地资产 · 样式 / 脚本 / 西文字体全部内联 · 中文系统字体回退 · 双击 file:// 打开</span></span>
+                  </label>
+                  <label class="fmt is-plan" aria-disabled="true" title="v1 不生成 .pptx">
+                    <input type="radio" name="gpfmt" value="pptx" disabled>
+                    <span><b>PowerPoint .pptx<span class="tag">v1.1 计划</span></b><span class="d">v1 不生成 .pptx，也不会把 HTML 或截图假装成 PPT。v1.1 走“你自备 .pptx 模板 + python-pptx 填充”，与单文件 HTML 分轨、互不转换。</span></span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="field" id="gpTplWord">
+                <label for="gpWordTpl">Word 模板 · 本任务临时选择</label>
+                <div class="input-row">
+                  <select class="input" id="gpWordTpl">
+                    <option value="builtin" selected>内置最小默认模板（系统内置 · 出厂默认）</option>
+                    <option value="company">公司模板.docx（你提供 · 校验通过）</option>
+                    <option value="tech">技术文档模板.docx（你提供 · 校验通过）</option>
+                    <option value="missing">读书会讲稿模板.docx（你提供 · 文件已缺失）</option>
+                  </select>
+                  <button class="btn" type="button" id="gpManageTpl"><svg class="i i-14"><use href="#i-gear"/></svg>管理默认模板</button>
+                </div>
+                <p class="hint">这里改的只对<b>本任务这一次生成</b>生效，不改变设置里的全局默认；每次生成都会记录实际所用的模板。Word 模板由你提供，系统只负责管理与应用，从不联网搜模板：你还没放入自己的 .docx 时用内置最小默认模板，放入后即成为默认候选。</p>
+              </div>
+
+              <div class="field gp-hide" id="gpTplDeck">
+                <label id="gpThemeLabel">演示主题 · 本任务临时选择</label>
+                <div class="grid3" id="gpDeckTheme" role="radiogroup" aria-labelledby="gpThemeLabel">
+                  <label class="theme-opt sel"><input type="radio" name="gptheme" value="slate" checked><span><b>Slate 极简</b><span>无衬线 · 浅色 · 适合技术分享</span>
+                    <span class="theme-chips"><i style="background:#1c2027"></i><i style="background:#f5f7fa"></i><i style="background:#2f6bdf"></i></span></span></label>
+                  <label class="theme-opt"><input type="radio" name="gptheme" value="ember"><span><b>Ember 暖调</b><span>衬线标题 · 适合观点类讲述</span>
+                    <span class="theme-chips"><i style="background:#2a2018"></i><i style="background:#fbf6ef"></i><i style="background:#c4712a"></i></span></span></label>
+                  <label class="theme-opt"><input type="radio" name="gptheme" value="mono"><span><b>Mono 等宽</b><span>代码感 · 深色 · 适合工具类教程</span>
+                    <span class="theme-chips"><i style="background:#0f1115"></i><i style="background:#e8edf5"></i><i style="background:#3f9d70"></i></span></span></label>
+                </div>
+                <p class="hint">主题取自 OpenDesign 主题族适配后的本地资产（Apache-2.0，附属资源保留各自许可与署名清单）。同样是本任务临时选择，不改全局默认；v1 内置这 3 套，不做几十套主题的市场。</p>
+              </div>
+
+              <div class="gp-actions">
+                <button class="btn btn-primary btn-lg" type="button" id="gpGen" disabled>
+                  <svg class="i i-14"><use href="#i-box"/></svg><span id="gpGenLabel">生成 Word 成品</span></button>
+                <label class="switch"><input type="checkbox" id="gpMissing">模拟：所选模板资产缺失（原型演示开关，用来看错误态）</label>
+                <span class="spacer"></span>
+                <span class="xs muted mono" id="gpTarget">E:\AI-ThinkForge\outputs\AI 编程工具使用指南\</span>
+              </div>
+
+              <div class="gp-hide" id="gpRun">
+                <div class="bar gp-bar"><i></i></div>
+                <div class="gp-step"><i class="spin" style="width:12px;height:12px;border-width:1.5px"></i><span id="gpStep">正在准备…</span></div>
+              </div>
+
+              <div class="note err gp-hide" id="gpErr">
+                <svg class="i"><use href="#i-warn"/></svg>
+                <div><b id="gpErrTitle">生成已中止：模板文件缺失</b>
+                  <span id="gpErrBody"></span>
+                  <p class="xs" id="gpErrMeta"></p>
+                  <div class="art-acts">
+                    <button class="btn btn-sm" type="button" id="gpErrSettings"><svg class="i i-14"><use href="#i-gear"/></svg>去设置指定模板</button>
+                    <button class="btn btn-sm" type="button" id="gpErrFix">改用内置最小默认模板重试</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="art-list" id="gpArts" aria-live="polite"></div>
+              <p class="hint" id="gpEmptyHint">还没有产物。生成一次之后，这里会出现可点开的成品卡片：文件名、实际所用模板与来源、生成时间、打开入口。</p>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -1203,7 +1421,11 @@ html.rail .env-row{justify-content:center}
               </tr>
               <tr data-kind="creation">
                 <td><div class="t-name"><button type="button" data-open="creation">LLM 缓存层设计说明</button></div>
-                  <div class="t-sub">已确认 10 月 15 日 · 用模板“技术文档模板.docx”</div></td>
+                  <div class="t-sub">已确认 10 月 15 日 · 用模板“技术文档模板.docx”</div>
+                  <div class="art-chips">
+                    <button class="art-chip" type="button" data-art="cacheWord"><svg class="i i-14"><use href="#i-doc"/></svg>Word 成品 · 技术文档模板.docx</button>
+                    <button class="art-chip" type="button" data-art="cacheDeck"><svg class="i i-14"><use href="#i-play"/></svg>单文件 HTML 演示 · Slate 极简</button>
+                  </div></td>
                 <td><span class="tag tag-sunken">主题创作</span></td>
                 <td><span class="st"><i class="dot dot-ok"></i>成品已生成</span></td>
                 <td class="col-hide"><div class="bar ok"><i style="width:100%"></i></div><span class="xs muted">Word + 单文件 HTML</span></td>
@@ -1414,6 +1636,33 @@ html.rail .env-row{justify-content:center}
                 <div><b>模板缺失或损坏时不会静默降级</b><span>生成会明确报错并保留对话与方案，你需要先修好或替换模板再生成。</span></div>
               </div>
 
+              <div class="cfg">
+                <div><b>内置最小默认模板（Word 出厂默认）</b>
+                  <div class="meta1 mono">随应用安装 · templates\_builtin\minimal-default.docx</div>
+                  <div class="meta1">来源：系统内置，不来自任何用户文件。只保证标题层级、正文、列表与表格的基本映射；你放入自己的 .docx 后，它就是新的默认候选，内置这份自动退为保底选项。</div></div>
+                <span class="tag tag-sunken">内置</span>
+                <div class="acts">
+                  <button class="btn btn-sm" type="button" data-toast="内置最小默认模板只含 6 个样式：H1–H3 / 正文 / 列表 / 表格（原型演示）">查看映射范围</button>
+                </div>
+              </div>
+
+              <div class="cfg">
+                <div><b>单文件 HTML 演示 · 默认主题</b>
+                  <div class="meta1">当前值：Slate 极简（无衬线 · 浅色）· 内置备选 Ember 暖调 / Mono 等宽</div>
+                  <div class="meta1">来源：OpenDesign 主题族适配后的本地资产（Apache-2.0，附属资源保留各自许可与署名）· 样式 / 脚本 / 西文字体内联，中文用系统字体回退，成品不含网络引用</div></div>
+                <span class="tag tag-ok">离线可用</span>
+                <div class="acts">
+                  <button class="btn btn-sm" type="button" id="btnThemeJump">更换主题</button>
+                </div>
+              </div>
+
+              <div class="cfg is-plan">
+                <div><b>PowerPoint .pptx</b>
+                  <div class="meta1">v1.1 计划：用你自备的 .pptx 模板填充（python-pptx 路线）。不承诺复杂版式无损保真，映射不了的结构会明示降级。</div>
+                  <div class="meta1">v1 不生成 .pptx：汇报演示由单文件 HTML 承担，两条路互不转换。这里只是告知，不提供可用入口。</div></div>
+                <span class="tag">v1.1 计划</span>
+              </div>
+
               <div class="field" style="margin-top:0"><label>单文件 HTML 演示主题</label>
                 <div class="grid3" id="themeList">
                   <label class="theme-opt sel"><input type="radio" name="theme" checked><span><b>Slate 极简</b><span>无衬线 · 浅色 · 适合技术分享</span>
@@ -1564,6 +1813,43 @@ html.rail .env-row{justify-content:center}
     </div>
     <footer><button class="btn" type="button" data-close>取消</button>
       <button class="btn btn-primary" type="button" id="btnDoSend">创建任务并进入拷问</button></footer>
+  </div>
+</div>
+
+<!-- ============ 新增：产物详情弹层 ============ -->
+<div class="mask" id="artifactModal" role="dialog" aria-modal="true" aria-labelledby="amTitle">
+  <div class="dialog">
+    <header><h3 id="amTitle">成品详情</h3>
+      <button class="icon-btn x" type="button" data-close aria-label="关闭"><svg class="i"><use href="#i-x"/></svg></button></header>
+    <div class="dbody">
+      <p id="amFrom" class="hint" style="margin-bottom:12px"></p>
+      <div id="amBody"></div>
+    </div>
+    <footer><span class="xs muted" id="amNote" style="margin-right:auto"></span>
+      <button class="btn" type="button" data-close>关闭</button></footer>
+  </div>
+</div>
+
+<!-- ============ 新增：单文件 HTML 演示的演示态 ============ -->
+<div class="deck" id="deck" role="dialog" aria-modal="true" aria-label="单文件 HTML 演示预览">
+  <div class="deck-bar">
+    <svg class="i i-18"><use href="#i-play"/></svg>
+    <b id="dkFile">演示.html</b>
+    <span class="tag" id="dkTheme">Slate 极简</span>
+    <span class="xs">单文件 · 双击即可打开 · 样式 / 脚本 / 西文字体内联 · 无外部依赖</span>
+    <span class="sp"></span>
+    <button class="dk-btn" type="button" id="dkExit">退出演示<span class="xs">Esc</span></button>
+  </div>
+  <div class="deck-stage">
+    <div class="deck-page" id="dkPage" aria-live="polite"></div>
+  </div>
+  <div class="deck-foot-bar">
+    <button class="dk-btn" type="button" id="dkPrev">← 上一页</button>
+    <button class="dk-btn" type="button" id="dkNext">下一页 →</button>
+    <span class="dk-dots" id="dkDots"></span>
+    <span class="xs" id="dkCount">1 / 7</span>
+    <span class="sp"></span>
+    <span class="xs" id="dkNote">原型内嵌演示：真实成品是磁盘上的一个 .html 文件，双击即以 file:// 打开；这里按同一主题渲染页面骨架，未调用后端。</span>
   </div>
 </div>
 
@@ -2199,6 +2485,343 @@ html.rail .env-row{justify-content:center}
       l.querySelector('input').checked=true;
       toast('HTML 演示默认主题已设为 '+l.querySelector('b').textContent+'（任务级仍可临时覆盖）','ok');
     });
+  });
+
+  /* ================================================================
+     新增：生成面板（格式 / 模板 / 生成 / 产物） · 产物详情 · 演示态
+     ================================================================ */
+  var gpPanel=document.getElementById('gpanel'),
+      gpChip=document.getElementById('gpChip'),
+      gpFmtBox=document.getElementById('gpFmt'),
+      gpWordField=document.getElementById('gpTplWord'),
+      gpDeckField=document.getElementById('gpTplDeck'),
+      gpWordSel=document.getElementById('gpWordTpl'),
+      gpThemeBox=document.getElementById('gpDeckTheme'),
+      gpGenBtn=document.getElementById('gpGen'),
+      gpGenLabel=document.getElementById('gpGenLabel'),
+      gpMissing=document.getElementById('gpMissing'),
+      gpRun=document.getElementById('gpRun'),
+      gpBarI=gpRun.querySelector('.bar > i'),
+      gpStep=document.getElementById('gpStep'),
+      gpErr=document.getElementById('gpErr'),
+      gpErrTitle=document.getElementById('gpErrTitle'),
+      gpErrBody=document.getElementById('gpErrBody'),
+      gpErrFix=document.getElementById('gpErrFix'),
+      gpArts=document.getElementById('gpArts'),
+      gpEmptyHint=document.getElementById('gpEmptyHint');
+  var gpUnlocked=false, gpRunning=false, gpSeq={word:0,deck:0}, gpLastKind='word';
+  var OUTDIR='E:\\AI-ThinkForge\\outputs\\AI 编程工具使用指南\\';
+
+  /* 主题：OpenDesign 主题族适配后的本地资产（v1 内置 3 套，不做几十套市场） */
+  var DECKT={
+    slate:{name:'Slate 极简',bg:'#f6f7f9',fg:'#1c2027',acc:'#2f6bdf',line:'#dfe4ec',font:'var(--font-sans)',head:'var(--font-sans)'},
+    ember:{name:'Ember 暖调',bg:'#fbf6ef',fg:'#2a2018',acc:'#c4712a',line:'#e9dcc8',font:'var(--font-sans)',head:'Georgia,serif'},
+    mono:{name:'Mono 等宽',bg:'#101319',fg:'#e8edf5',acc:'#3f9d70',line:'#232b36',font:'var(--font-mono)',head:'var(--font-mono)'}
+  };
+  /* 演示页骨架：真实成品 18 / 12 页，原型内嵌其中几页示例 */
+  var DECKS={
+    main:{title:'AI 编程工具使用指南',file:'指南-演示.html',pages:18,shown:[
+      {k:'title',t:'AI 编程工具使用指南',sub:'从装环境到能自己改一个小工具',meta:'组内分享 · 20 分钟 · 由确认后的结构化方案生成'},
+      {k:'list',t:'卡住人的从来不是模型',items:['环境：命令能跑通，报错对得上表','提示词：一次只让工具做一件小事','会复制粘贴就算入门，能改提示词才算上手']},
+      {k:'list',t:'先跑通一次',items:['装什么、点哪里、第一句提示词怎么说','看到第一条结果之前，不要改任何设置','把输出原文贴回群里，让别人能复核']},
+      {k:'quote',t:'两个真正的门槛',quote:'常见报错只有 4 类，对照表能解决八成；剩下的八成是提示词写得太贪心。'},
+      {k:'list',t:'把工具改成自用的小东西',items:['从一个现成脚本改成批量重命名工具','只改提示词，不改源码','失败就退回上一步，不留残骸']},
+      {k:'list',t:'什么时候别用它',items:['需要精确复现的计算','公司代码与内部数据','跨系统事务','没人复核就直接上线']},
+      {k:'end',t:'附录：6 条可复制提示词',sub:'完整版在 Word 成品里 · 现场只讲其中 3 条',meta:'谢谢 · 提问环节'}
+    ]},
+    cache:{title:'LLM 缓存层设计说明',file:'LLM缓存层设计说明-演示.html',pages:12,shown:[
+      {k:'title',t:'LLM 缓存层设计说明',sub:'命中、失效与成本三条线',meta:'10 月 15 日 · 由确认后的结构化方案生成'},
+      {k:'list',t:'为什么要加一层缓存',items:['相同请求重复率高，上游按 token 计费','上游延迟抖动，命中即返回','预算有限：先省确定的那部分']},
+      {k:'list',t:'命中条件',items:['key = 模型 + 提示词哈希 + 温度','只缓存确定性输出','命中直接返回，不重新计算']},
+      {k:'quote',t:'失效策略',quote:'TTL 与主动清除并用：模板一改，整批失效；不可缓存清单写在配置里，不靠临时判断。'},
+      {k:'end',t:'落地顺序',sub:'先记录命中率，再决定要不要真的写入',meta:'谢谢'}
+    ]}
+  };
+  var WORD_TPL={
+    builtin:{key:'builtin',name:'内置最小默认模板',tag:'系统内置',src:'系统内置 · <span class="mono">templates\\_builtin\\minimal-default.docx</span>（随应用安装）',file:'templates\\_builtin\\minimal-default.docx',missing:false},
+    company:{key:'company',name:'公司模板.docx',tag:'你提供的模板',src:'你提供 · <span class="mono">E:\\AI-ThinkForge\\templates\\公司模板.docx</span>（校验通过）',file:'E:\\AI-ThinkForge\\templates\\公司模板.docx',missing:false},
+    tech:{key:'tech',name:'技术文档模板.docx',tag:'你提供的模板',src:'你提供 · <span class="mono">E:\\AI-ThinkForge\\templates\\技术文档模板.docx</span>（校验通过）',file:'E:\\AI-ThinkForge\\templates\\技术文档模板.docx',missing:false},
+    missing:{key:'missing',name:'读书会讲稿模板.docx',tag:'你提供的模板',src:'你提供 · <span class="mono">E:\\AI-ThinkForge\\templates\\读书会讲稿模板.docx</span>',file:'E:\\AI-ThinkForge\\templates\\读书会讲稿模板.docx',missing:true}
+  };
+
+  function gpFmtVal(){ var c=gpFmtBox.querySelector('input:checked'); return c?c.value:'word'; }
+  function gpThemeVal(){ var c=gpThemeBox.querySelector('input:checked'); return c?c.value:'slate'; }
+  function gpTplInfo(){ return WORD_TPL[gpWordSel.value]||WORD_TPL.builtin; }
+  function dkVars(el,t){
+    if(!el) return;
+    el.style.setProperty('--dk-bg',t.bg); el.style.setProperty('--dk-fg',t.fg);
+    el.style.setProperty('--dk-acc',t.acc); el.style.setProperty('--dk-line',t.line);
+    el.style.setProperty('--dk-font',t.font); el.style.setProperty('--dk-head',t.head);
+  }
+  function gpGotoTpl(){
+    setView('settings');
+    var list=document.getElementById('themeList');
+    var sec=list&&list.closest?list.closest('.sec'):null;
+    if(sec) setTimeout(function(){ sec.scrollIntoView({block:'start'}); },80);
+  }
+
+  /* ---------------- 产物卡片 ---------------- */
+  function deckThumbHTML(a){
+    var t=DECKT[a.theme]||DECKT.slate, d=DECKS[a.deckKey]||DECKS.main, s=d.shown[0];
+    return '<button class="deck-thumb" type="button" data-demo="'+a.deckKey+'" data-theme="'+a.theme+'"'+
+      ' aria-label="打开演示：'+t.name+' 的标题页">'+
+      '<span class="dt"><span class="dt-bar"></span><span class="dt-t">'+s.t+'</span>'+
+      '<span class="dt-s">'+s.sub+'</span><span class="dt-f">1 / '+d.pages+' 页</span></span>'+
+      '<span class="deck-thumb-cap"><svg class="i i-14"><use href="#i-play"/></svg>打开演示</span></button>';
+  }
+  function gpArtEl(a){
+    var el=document.createElement('div'); el.className='art';
+    var ico=a.kind==='word'?'#i-doc':'#i-play';
+    var badge=a.kind==='word'
+      ? '<span class="tag tag-ok">完整性检查通过</span>'
+      : '<span class="tag tag-brand">单文件 · 双击即可打开 · 无外部依赖</span>';
+    var acts='<button class="btn btn-sm" type="button" data-toast="已用系统默认程序打开 '+a.file+'（原型演示，不读写磁盘）">打开文件</button>'+
+      '<button class="btn btn-sm" type="button" data-toast="已在资源管理器中定位 '+a.file+'（原型演示）">所在位置</button>';
+    if(a.kind==='deck'){
+      acts='<button class="btn btn-sm btn-primary" type="button" data-demo="'+a.deckKey+'" data-theme="'+a.theme+'">'+
+        '<svg class="i i-14"><use href="#i-play"/></svg>打开演示</button>'+acts;
+    }
+    var rows='';
+    (a.rows||[]).forEach(function(r){ rows+='<dt>'+r[0]+'</dt><dd>'+r[1]+'</dd>'; });
+    el.innerHTML='<div class="art-head"><svg class="i i-18"><use href="'+ico+'"/></svg>'+
+        '<b class="art-name">'+a.file+'</b>'+badge+
+        '<span class="sp"></span><span class="xs muted">'+a.time+' 生成</span></div>'+
+      '<div class="art-body"><div class="art-main"><dl class="art-kv">'+
+        '<dt>所用模板</dt><dd>'+a.tpl.name+' <span class="tag tag-sunken">'+a.tpl.tag+'</span></dd>'+
+        '<dt>模板来源</dt><dd>'+a.tpl.src+'</dd>'+rows+
+      '</dl><div class="art-acts">'+acts+'</div></div>'+
+      (a.kind==='deck'?deckThumbHTML(a):'')+'</div>';
+    if(a.kind==='deck') dkVars(el.querySelector('.dt'),DECKT[a.theme]||DECKT.slate);
+    return el;
+  }
+
+  /* ---------------- 生成流程（纯前端演示，不写盘、不调模型） ---------------- */
+  function gpStart(){
+    if(!gpUnlocked||gpRunning) return;
+    var kind=gpFmtVal(); gpLastKind=kind;
+    var isWord=kind==='word', tpl=gpTplInfo(), t=DECKT[gpThemeVal()];
+    var fail=gpMissing.checked||(isWord&&tpl.missing);
+    gpRunning=true; gpGenBtn.disabled=true;
+    gpErr.classList.add('gp-hide');
+    gpRun.classList.remove('gp-hide');
+    gpBarI.style.width='12%';
+    var steps=isWord?[
+      '读取已确认的结构化方案（6 节骨架 · 约 3 200 字预算）',
+      '打开模板：'+tpl.name,
+      '映射标题层级 / 正文 / 列表 / 表格到模板样式',
+      '写入 docx，并检查它能否正常打开'
+    ]:[
+      '读取已确认的结构化方案（18 页骨架）',
+      '套用主题：'+t.name,
+      '内联 CSS / 翻页脚本 / 西文字体，中文交给系统字体',
+      '扫描外部网络引用（要求 0 条）'
+    ];
+    gpStep.textContent=steps[0];
+    var i=0;
+    var timer=setInterval(function(){
+      i++;
+      if(i<steps.length){
+        gpStep.textContent=steps[i];
+        gpBarI.style.width=Math.min(100,Math.round((i+1)/steps.length*100))+'%';
+      }else{
+        clearInterval(timer);
+        gpBarI.style.width='100%';
+        setTimeout(function(){
+          gpRunning=false; gpRun.classList.add('gp-hide');
+          if(!gpUnlocked) return;
+          gpGenBtn.disabled=false;
+          if(fail) gpFail(isWord,tpl,t); else gpDone(isWord,tpl,t);
+        },420);
+      }
+    },620);
+  }
+  function gpFail(isWord,tpl,t){
+    gpErrTitle.textContent=isWord?'生成已中止：Word 模板文件缺失':'生成已中止：主题资产不完整';
+    gpErrBody.innerHTML=(isWord
+      ? '找不到 '+tpl.name+'（<code class="mono">'+tpl.file+'</code>）。系统不会退回空白模板静默生成——那会无声改掉你的版式，正是这一步要防住的失败。'
+      : '主题 '+t.name+' 的内联资产包不完整（缺少翻页脚本）。不会退回到无样式页面，也不会偷偷换一套主题蒙混过去。');
+    document.getElementById('gpErrMeta').textContent=nowHM()+' · 失败记录已写入任务历史；本任务对话与结构化方案均已保留，成品未写入磁盘，修好后可直接重试。';
+    gpErrFix.textContent=isWord?'改用内置最小默认模板重试':'清除模拟开关后重试';
+    gpErr.classList.remove('gp-hide');
+    toast(isWord?'生成失败：模板文件缺失，已明确报错而不是退回空白生成':'生成失败：主题资产不完整，未降级生成','warn');
+    gpErr.scrollIntoView({block:'nearest'});
+  }
+  function gpDone(isWord,tpl,t){
+    var kind=isWord?'word':'deck', time=nowHM();
+    gpSeq[kind]++;
+    var suffix=gpSeq[kind]>1?('-'+gpSeq[kind]):'';
+    var a;
+    if(isWord){
+      a={kind:'word',file:'指南-AI编程工具'+suffix+'.docx',time:time,tpl:tpl,rows:[
+        ['生成时间',time+' · 本任务第 '+gpSeq.word+' 次 Word 生成，同名不覆盖'],
+        ['样式映射','标题 3 级 / 正文 / 列表 / 表格 · 复杂版式不承诺无损，映射不了的结构已在文末列出'],
+        ['完整性检查','可用 Word 打开 · 章节 6 / 6 · 正文 3 208 字 · 无空段落块'],
+        ['位置','<span class="mono">'+OUTDIR+'指南-AI编程工具'+suffix+'.docx</span> · 34 KB']
+      ]};
+    }else{
+      a={kind:'deck',file:'指南-演示'+suffix+'.html',time:time,theme:gpThemeVal(),deckKey:'main',
+        tpl:{name:t.name,tag:'OpenDesign 主题族 · 本地适配',
+             src:'内置资产 · <span class="mono">themes\\'+gpThemeVal()+'</span>（样式 / 脚本 / 西文字体内联）'},
+        rows:[
+        ['生成时间',time+' · 本任务第 '+gpSeq.deck+' 次演示生成，同名不覆盖'],
+        ['内联内容','全部 CSS · 翻页与演讲者脚本 · 西文字体子集；中文使用系统字体，不保留任何网络资源'],
+        ['外部依赖','0 条网络引用 · 不需要服务器、Node 或联网'],
+        ['页数','18 页（卡片里可预览其中 '+DECKS.main.shown.length+' 页）'],
+        ['完整性检查','无外链 · 结构可解析 · 键盘翻页可用'],
+        ['位置','<span class="mono">'+OUTDIR+'指南-演示'+suffix+'.html</span> · 1.4 MB']
+      ]};
+    }
+    gpArts.appendChild(gpArtEl(a));
+    gpEmptyHint.textContent='以上卡片记录的是每一次生成实际所用的模板；把设置里的默认换掉，不会影响这里已经生成的成品。';
+    toast(isWord?('Word 成品已生成：'+a.file+'（模板 '+tpl.name+'）')
+               :('单文件 HTML 演示已生成：'+a.file+'（主题 '+t.name+' · 无外部依赖）'),'ok');
+  }
+  gpGenBtn.addEventListener('click',function(){ gpStart(); });
+  Array.prototype.forEach.call(gpFmtBox.querySelectorAll('input[type=radio]'),function(r){
+    r.addEventListener('change',function(){
+      Array.prototype.forEach.call(gpFmtBox.querySelectorAll('.fmt'),function(l){
+        var inp=l.querySelector('input'); l.classList.toggle('sel',!!(inp&&inp.checked));
+      });
+      var isWord=gpFmtVal()==='word';
+      gpWordField.classList.toggle('gp-hide',!isWord);
+      gpDeckField.classList.toggle('gp-hide',isWord);
+      gpGenLabel.textContent=isWord?'生成 Word 成品':'生成单文件 HTML 演示';
+      gpLastKind=isWord?'word':'deck';
+    });
+  });
+  Array.prototype.forEach.call(gpThemeBox.querySelectorAll('.theme-opt'),function(l){
+    l.addEventListener('click',function(){
+      Array.prototype.forEach.call(gpThemeBox.querySelectorAll('.theme-opt'),function(x){ x.classList.remove('sel'); });
+      l.classList.add('sel'); l.querySelector('input').checked=true;
+      toast('本任务临时使用 '+l.querySelector('b').textContent+' 主题（不改变设置里的全局默认）','ok');
+    });
+  });
+  gpWordSel.addEventListener('change',function(){
+    var tpl=gpTplInfo();
+    if(tpl.missing) toast('所选模板文件已缺失：'+tpl.name+' · 生成会明确报错，不会退回空白生成','warn');
+  });
+  gpErrFix.addEventListener('click',function(){
+    gpMissing.checked=false;
+    if(gpLastKind==='word') gpWordSel.value='builtin';
+    gpStart();
+  });
+  document.getElementById('gpManageTpl').addEventListener('click',gpGotoTpl);
+  document.getElementById('gpErrSettings').addEventListener('click',gpGotoTpl);
+  document.getElementById('btnThemeJump').addEventListener('click',function(){
+    var list=document.getElementById('themeList');
+    if(list) list.scrollIntoView({block:'center'});
+    var first=list?list.querySelector('input'):null; if(first) first.focus();
+    toast('下面这 3 套就是 v1 内置主题；选中即成为全局默认，任务级仍可临时覆盖','ok');
+  });
+
+  /* ---------------- 方案确认后解锁生成面板 ---------------- */
+  document.getElementById('btnDoConfirm').addEventListener('click',function(){
+    gpUnlocked=true;
+    gpPanel.classList.remove('is-locked');
+    gpChip.className='tag tag-ok';
+    gpChip.innerHTML='<svg class="i i-14"><use href="#i-check"/></svg><span>已解锁 · 方案已确认</span>';
+    gpGenBtn.disabled=false;
+  });
+
+  /* ---------------- 演示态（单文件 HTML 成品的效果预览） ---------------- */
+  var dk={key:'main',theme:'slate',idx:0,ret:null};
+  var deckEl=document.getElementById('deck'), dkPage=document.getElementById('dkPage');
+  function dkSlideHTML(s,deck,t,idx){
+    var html='<span class="dp-top"><span class="dp-kicker">ThinkForge · '+deck.title+'</span><span class="dp-bar"></span></span>';
+    if(s.k==='title'||s.k==='end'){
+      html+='<h2 class="dp-title">'+s.t+'</h2>';
+      if(s.sub) html+='<p class="dp-sub">'+s.sub+'</p>';
+      if(s.meta) html+='<p class="dp-sub dp-meta">'+s.meta+'</p>';
+    }else if(s.k==='quote'){
+      html+='<h2 class="dp-title dp-h">'+s.t+'</h2><p class="dp-quote">'+s.quote+'</p>';
+    }else{
+      html+='<h2 class="dp-title dp-h">'+s.t+'</h2><ul class="dp-list">'+
+        s.items.map(function(x){ return '<li>'+x+'</li>'; }).join('')+'</ul>';
+    }
+    html+='<span class="dp-foot"><span>'+t.name+' · 单文件 HTML</span>'+
+          '<span class="dp-no">'+(idx+1)+' / '+deck.shown.length+' 示例（成品 '+deck.pages+' 页）</span></span>';
+    return html;
+  }
+  function dkPaint(){
+    var deck=DECKS[dk.key], t=DECKT[dk.theme], s=deck.shown[dk.idx];
+    dkPage.className='deck-page'+((s.k==='title'||s.k==='end')?' dp-center':'');
+    dkVars(dkPage,t);
+    dkPage.innerHTML=dkSlideHTML(s,deck,t,dk.idx);
+    var dots='';
+    for(var i=0;i<deck.shown.length;i++) dots+='<i'+(i===dk.idx?' class="on"':'')+'></i>';
+    document.getElementById('dkDots').innerHTML=dots;
+    document.getElementById('dkCount').textContent='示例第 '+(dk.idx+1)+' / '+deck.shown.length+' 页';
+    document.getElementById('dkPrev').disabled=dk.idx===0;
+    document.getElementById('dkNext').disabled=dk.idx===deck.shown.length-1;
+  }
+  function dkGo(step){
+    var n=DECKS[dk.key].shown.length, i=Math.min(n-1,Math.max(0,dk.idx+step));
+    if(i===dk.idx) return; dk.idx=i; dkPaint();
+  }
+  function openDeck(key,theme){
+    var deck=DECKS[key]||DECKS.main, t=DECKT[theme]||DECKT.slate;
+    dk.key=key; dk.theme=theme; dk.idx=0;
+    dk.ret=document.activeElement;
+    var am=document.getElementById('artifactModal');
+    if(am.classList.contains('is-open')) closeModal(am);
+    document.getElementById('dkFile').textContent=deck.file;
+    document.getElementById('dkTheme').textContent=t.name;
+    document.getElementById('dkNote').textContent='原型内嵌演示：真实成品是磁盘上的单个 .html（约 1.4 MB），双击即以 file:// 打开；这里按 '+
+      t.name+' 渲染其中 '+deck.shown.length+' / '+deck.pages+' 页骨架，未调用后端。';
+    deckEl.classList.add('is-open');
+    dkPaint();
+    document.getElementById('dkExit').focus();
+  }
+  function closeDeck(){
+    deckEl.classList.remove('is-open');
+    if(dk.ret&&dk.ret.focus) dk.ret.focus();
+  }
+  document.getElementById('dkExit').addEventListener('click',closeDeck);
+  document.getElementById('dkPrev').addEventListener('click',function(){ dkGo(-1); });
+  document.getElementById('dkNext').addEventListener('click',function(){ dkGo(1); });
+  document.addEventListener('click',function(e){
+    var d=e.target.closest?e.target.closest('[data-demo]'):null;
+    if(!d) return;
+    openDeck(d.getAttribute('data-demo'),d.getAttribute('data-theme'));
+  });
+  document.addEventListener('keydown',function(e){
+    if(!deckEl.classList.contains('is-open')) return;
+    if(e.key==='Escape'){ e.stopPropagation(); closeDeck(); }
+    else if(e.key==='ArrowRight'||e.key==='PageDown'){ e.preventDefault(); dkGo(1); }
+    else if(e.key==='ArrowLeft'||e.key==='PageUp'){ e.preventDefault(); dkGo(-1); }
+  });
+
+  /* ---------------- 产物详情（历史页可点进产物） ---------------- */
+  var HISTORY_ART={
+    cacheWord:{kind:'word',file:'LLM缓存层设计说明.docx',time:'10 月 15 日 18:40',
+      tpl:WORD_TPL.tech,rows:[
+        ['生成时间','10 月 15 日 18:40 · 用全局默认模板，本任务未做临时覆盖'],
+        ['样式映射','标题 3 级 / 正文 / 列表 / 表格 / 页眉页脚 · 页面布局保留'],
+        ['完整性检查','可用 Word 打开 · 章节 5 / 5 · 正文 2 140 字 · 无空段落块'],
+        ['位置','<span class="mono">E:\\AI-ThinkForge\\outputs\\LLM 缓存层设计说明\\LLM缓存层设计说明.docx</span> · 28 KB']
+      ]},
+    cacheDeck:{kind:'deck',file:'LLM缓存层设计说明-演示.html',time:'10 月 15 日 18:44',theme:'slate',deckKey:'cache',
+      tpl:{name:'Slate 极简',tag:'OpenDesign 主题族 · 本地适配',src:'内置资产 · <span class="mono">themes\\slate</span>（样式 / 脚本 / 西文字体内联）'},
+      rows:[
+        ['生成时间','10 月 15 日 18:44 · 主题为全局默认，本任务未覆盖'],
+        ['内联内容','全部 CSS · 翻页与演讲者脚本 · 西文字体子集；中文使用系统字体'],
+        ['外部依赖','0 条网络引用 · 不需要服务器、Node 或联网'],
+        ['页数','12 页（可预览其中 '+DECKS.cache.shown.length+' 页）'],
+        ['完整性检查','无外链 · 结构可解析 · 键盘翻页可用'],
+        ['位置','<span class="mono">E:\\AI-ThinkForge\\outputs\\LLM 缓存层设计说明\\LLM缓存层设计说明-演示.html</span> · 1.2 MB']
+      ]}
+  };
+  document.addEventListener('click',function(e){
+    var b=e.target.closest?e.target.closest('[data-art]'):null;
+    if(!b) return;
+    var a=HISTORY_ART[b.getAttribute('data-art')];
+    if(!a) return;
+    var body=document.getElementById('amBody');
+    body.innerHTML='';
+    body.appendChild(gpArtEl(a));
+    document.getElementById('amFrom').textContent='来自任务「LLM 缓存层设计说明」· 主题创作 · 方案确认于 10 月 15 日';
+    document.getElementById('amNote').textContent='原型演示：真实版本由本地 API 打开文件与定位目录';
+    openModal('artifactModal');
   });
 
   /* ---------------- 初始化 ---------------- */
