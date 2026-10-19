@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
 
@@ -27,12 +28,19 @@ from app.analysis.service import (
     primary_unrecognized,
     unrecognized_parts,
 )
+from app.analysis.web import (
+    decode_html,
+    extract_page_title,
+    parse_web_document,
+    unrecognized_reason,
+)
 from app.api.deps import (
     AnalysisRepositoryDep,
     DataDirDep,
     MessageRepositoryDep,
     TaskRepositoryDep,
     TieredModelClientDep,
+    UrlFetcherDep,
 )
 from app.grilling.service import SEED_ROUND_NO
 from app.models.analysis import (
@@ -45,9 +53,11 @@ from app.models.analysis import (
     SourceInfo,
     SummaryCitation,
     UnrecognizedContent,
+    UrlSourceRequest,
 )
 from app.models.task import Task
 from app.providers.model_client import ModelCallError
+from app.providers.url_fetcher import UrlFetchError
 from app.security.uploads import (
     UploadError,
     read_upload,
@@ -55,6 +65,7 @@ from app.security.uploads import (
     store_under,
     validate_extension,
 )
+from app.security.url_guard import UrlSecurityError, validate_url
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 
@@ -69,6 +80,14 @@ TITLE_MAX_LENGTH = 60
 def _original_name(source: dict) -> str:
     """来源的可读名称：优先原始文件名，退回路径末段。"""
     return str(source["meta"].get("original_name") or Path(source["ref"]).name)
+
+
+def _url_title(url: str) -> str:
+    """URL 来源的任务标题：`主机 + 路径末段`（页面标题要抓取后才知道）。"""
+    parsed = urlsplit(url)
+    host = parsed.netloc
+    tail = parsed.path.rstrip("/").rsplit("/", 1)[-1]
+    return (f"{host}/{tail}" if tail else host)[:TITLE_MAX_LENGTH]
 
 
 def _document_info(record: dict, *, chunks: int) -> DocumentInfo:
@@ -214,6 +233,127 @@ def upload_source(
         source=SourceInfo(**source),
         document=_document_info(document, chunks=len(chunks)),
         unrecognized_parts=[UnrecognizedContent(**item) for item in parts],
+    )
+
+
+@router.post(
+    "/sources/url",
+    status_code=status.HTTP_201_CREATED,
+    response_model=AnalysisSourceResponse,
+)
+def create_url_source(
+    payload: UrlSourceRequest,
+    task_repository: TaskRepositoryDep,
+    analysis_repository: AnalysisRepositoryDep,
+    url_fetcher: UrlFetcherDep,
+) -> AnalysisSourceResponse:
+    """抓取一个公开网页作为资料，并建立来源 / 文档 / 分块（后续复用同一分析管线）。
+
+    安全与纪律（规格 §2 / US 15）：
+    - 提交即做**不联网的前置校验**（仅 http/https、拒绝内嵌凭据、拒绝字面量内网 /
+      环回 / 链路本地 / 元数据 / 组播 / 保留地址），不合格 → 400 且**不落库**；
+    - 抓取由 `UrlFetcher` 完成（真实实现逐跳重新校验、限超时 15s、限 5MB、最多 3 次
+      重定向），失败 / 需登录 / 超时 / 超限**如实落库并提示，绝不绕过**；
+    - 正文提取过滤导航 / 广告；无正文 → `unrecognized`（`no_main_text` /
+      `empty_page`），绝不用空内容冒充成功。
+    """
+    try:
+        validated = validate_url(payload.url, resolve=False)
+    except UrlSecurityError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+    task = task_repository.create("analysis", _url_title(validated.url))
+
+    try:
+        page = url_fetcher.fetch(validated.url)
+    except UrlFetchError as exc:
+        # 抓取失败也如实登记（来源 / 文档落库、可读原因），与上传失败口径一致：
+        # 不丢已存数据、可换链接重试，且绝不假装成功。
+        source = analysis_repository.create_source(
+            "url",
+            validated.url,
+            meta={"url": validated.url, "fetch_error": exc.reason},
+            task_id=task["id"],
+        )
+        document = analysis_repository.create_document(
+            source["id"],
+            validated.url,
+            parse_status="failed",
+            parse_message=str(exc),
+        )
+        return AnalysisSourceResponse(
+            source=SourceInfo(**source),
+            document=_document_info(document, chunks=0),
+            message=str(exc),
+        )
+
+    html = decode_html(page.body, page.content_type)
+    parsed = parse_web_document(html, url=page.final_url)
+    meta = {
+        "url": validated.url,
+        "final_url": page.final_url,
+        "original_name": extract_page_title(html) or page.final_url,
+        "fetched_at": page.fetched_at,
+        "status": page.status,
+        "content_type": page.content_type,
+        "size": page.size,
+        "redirects": page.redirects,
+    }
+    source = analysis_repository.create_source(
+        "url", validated.url, meta=meta, task_id=task["id"]
+    )
+
+    if not parsed.blocks:
+        reason = unrecognized_reason(html)
+        contract = {
+            "unrecognized": True,
+            "reason": reason,
+            "locator": {
+                "format": "url",
+                "url": page.final_url,
+                "status": page.status,
+                "content_type": page.content_type,
+            },
+            "needs_ocr": False,
+        }
+        document = analysis_repository.create_document(
+            source["id"],
+            page.final_url,
+            parse_status="unrecognized",
+            heading_source=parsed.heading_source,
+            unrecognized=contract,
+        )
+        return AnalysisSourceResponse(
+            source=SourceInfo(**source),
+            document=_document_info(document, chunks=0),
+            unrecognized=UnrecognizedContent(**contract),
+            message=(
+                "该网页未提取到可分析的正文"
+                "（可能是登录页 / 动态渲染页面 / 非文章页）"
+            ),
+        )
+
+    headings = sum(1 for block in parsed.blocks if block.heading_level is not None)
+    chunks = build_chunks(parsed.blocks, parsed.format)
+    document = analysis_repository.create_document(
+        source["id"],
+        page.final_url,
+        parse_status="parsed",
+        heading_source=parsed.heading_source,
+        encoding=parsed.encoding,
+        headings=headings,
+    )
+    analysis_repository.add_chunks(
+        document["id"],
+        [
+            {"seq": chunk.seq, "text": chunk.text, "locator": chunk.locator}
+            for chunk in chunks
+        ],
+    )
+
+    return AnalysisSourceResponse(
+        source=SourceInfo(**source),
+        document=_document_info(document, chunks=len(chunks)),
     )
 
 

@@ -174,7 +174,9 @@ CREATE TABLE IF NOT EXISTS sources (
 CREATE INDEX IF NOT EXISTS idx_sources_task ON sources (task_id, id);
 
 -- 文档（规格 §4；工单 16）：来源解析后的一份文档。
--- - path：`data/` 下的相对路径（与 sources.ref 一致，便于白名单解析）；
+-- - path：文件类为 `data/` 下的相对路径（与 sources.ref 一致，便于白名单解析）；
+--   URL 类（TB-9）为抓取重定向后的最终地址（不落盘，仅作文档的可回溯引用）；
+--   `unrecognized_json` 的 locator 亦记录该最终地址；
 -- - parse_status：pending / parsed / unrecognized / failed；
 --   失败与「未识别」都如实落库，**绝不用空字符串冒充解析成功**；
 -- - unrecognized_json / unrecognized_parts_json：未识别契约（一级输出字段）；

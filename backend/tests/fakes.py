@@ -1,14 +1,20 @@
-"""TB-1 测试替身：内存密钥库与脚本化模型客户端。
+"""TB-1 测试替身：内存密钥库与脚本化模型客户端；TB-9 追加 URL 抓取替身。
 
-这两个替身只在测试进程内使用：
+这些替身只在测试进程内使用：
 - `InMemoryKeyStore` 保证测试永不触碰 Windows 凭据管理器；
 - `ScriptedModelClient(Factory)` 让连接测试在不联网、零花费的前提下覆盖
-  成功与三类失败路径（网络异常 / 鉴权失败 / 模型名无效）。
+  成功与三类失败路径（网络异常 / 鉴权失败 / 模型名无效）；
+- `FakeUrlFetcher`（fake 注入点 2）返回预置网页或预置失败，**绝不发起真实请求**。
 """
 
 from __future__ import annotations
 
 from app.providers.model_client import ModelClientConfig
+from app.providers.url_fetcher import (
+    DEFAULT_MAX_BYTES,
+    DEFAULT_TIMEOUT_SECONDS,
+    FetchedPage,
+)
 
 
 class InMemoryKeyStore:
@@ -88,3 +94,41 @@ class ScriptedModelClientFactory:
         self.configs.append(config)
         self.create_count += 1
         return self._client
+
+
+class FakeUrlFetcher:
+    """URL 抓取替身（fake 注入点 2）：预置页面或预置失败，记录调用过的地址。
+
+    `fetch` 的签名与 `UrlFetcher` 协议一致（同样的默认边界值），使路由代码在
+    真假实现之间无需分支；完全离线，绝不发起真实请求。
+    """
+
+    def __init__(
+        self, *, page: FetchedPage | None = None, error: BaseException | None = None
+    ) -> None:
+        self._page = page
+        self._error = error
+        self.calls: list[str] = []
+
+    def fetch(
+        self,
+        url: str,
+        *,
+        timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        max_bytes: int = DEFAULT_MAX_BYTES,
+    ) -> FetchedPage:
+        self.calls.append(url)
+        if self._error is not None:
+            raise self._error
+        if self._page is None:
+            raise AssertionError("FakeUrlFetcher 未预置抓取结果")
+        return self._page
+
+    def set_page(self, page: FetchedPage) -> None:
+        """预置成功后返回的页面，并清掉此前预置的失败。"""
+        self._page = page
+        self._error = None
+
+    def set_error(self, error: BaseException | None) -> None:
+        """预置抓取失败（超时 / 需登录 / 超限 / 被安全策略拒绝等）。"""
+        self._error = error
