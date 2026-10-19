@@ -1,6 +1,6 @@
 # 07 - Word 与单文件 HTML deck 生成
 
-Status: ready-for-agent
+Status: closed — 已并入 08-v1-unified-spec.md（勿按本单执行；本单为按层切分，已被曳光弹工单取代）
 
 ## 目标
 
