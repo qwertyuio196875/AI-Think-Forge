@@ -29,7 +29,7 @@
 
 ## 当前状态
 
-领域文档与规格已就位，**后端行走骨架（TB-0）已落地并带自动化测试**；其余功能与前端仍在按曳光弹工单推进。除下表标 ✅ 者外，请以规格为准，勿当作已实现能力。
+领域文档与规格已就位，**后端已落地 TB-0（行走骨架）与 TB-1（模型配置与连接测试）并带自动化测试**；其余功能与前端仍在按曳光弹工单推进。除下表标 ✅ 者外，请以规格为准，勿当作已实现能力。
 
 | 部分 | 现状 |
 | --- | --- |
@@ -38,8 +38,9 @@
 | 页面原型 | ✅ `.scratch/workbench-v1/prototype/index.html`（静态自包含四视图，含评审标注 `REVIEW.md`） |
 | 前端骨架 | ⚠️ 部分：三栏壳与四路由已就位；`src/views/` 视图组件与构建由并行前端工作推进 |
 | 后端 | ✅ 行走骨架 TB-0：FastAPI 应用（`backend/app`）、`tasks` 最小表、健康检查与任务创建 / 列表 / 读取、模型客户端与 URL 抓取两个 fake 注入点接缝 |
+| 模型配置与连接测试 | ✅ TB-1：`providers` / `settings` 表、DeepSeek 默认播种（3 档角色）、密钥存 Windows 凭据管理器、OpenAI 兼容 httpx 客户端、配置 CRUD 与连接测试（错误分级）、开发期仅本机源的 CORS |
 | 运行时目录 | ✅ `data/`（运行时 SQLite 落此处，gitignored）、`启动.bat`、根 `.gitignore`（覆盖 `/data/`、`/templates/`、`.slim/`） |
-| 自动化测试 | ✅ `backend/tests`（pytest，进程内 HTTP 接缝，12 项通过） |
+| 自动化测试 | ✅ `backend/tests`（pytest，进程内 HTTP 接缝，不联网；76 项通过） |
 
 ---
 
@@ -49,7 +50,7 @@
 | --- | --- |
 | 后端 | Python 3.12 + FastAPI 单进程，仅监听 `127.0.0.1:8720`，同时托管前端构建产物与 `/api/*` |
 | Agent 工作流 | LangGraph 状态机（拷问节点、逐轮持久化、任务可恢复） |
-| 模型接入 | 统一 OpenAI 兼容客户端，业务代码不绑定厂商 SDK；默认服务商阿里云百炼，档位 plus / turbo / max 可任务级切换 |
+| 模型接入 | 统一 OpenAI 兼容客户端（`httpx` 直连，不引入厂商 SDK）；默认服务商 DeepSeek，档位 plus / turbo / max 为角色标签，可任务级切换 |
 | 存储 | SQLite（任务、对话、方案、模板元数据、非敏感配置、生成记录）+ 文件系统（原始资料、模板、成品） |
 | 密钥 | Windows 凭据管理器，SQLite 与日志均不落密钥 |
 | 前端 | Vue 3 + TypeScript + Vite + Element Plus，布局与工作台同构（左导航 / 中会话流 / 底部输入胶囊） |
@@ -89,7 +90,7 @@ npm install
 npm run dev      # Vite 开发服务器，默认 http://localhost:5173
 ```
 
-前端不做代理，直连后端 `http://127.0.0.1:8720/api`（见 `src/api/client.ts`）。后端未启动时，请求会被归类为「后端未启动」错误。
+前端不做代理，直连后端 `http://127.0.0.1:8720/api`（见 `src/api/client.ts`）。后端为开发期提供了**仅放行本机开发源的 CORS 中间件**（`http://localhost:5173`、`http://127.0.0.1:5173`；方法 GET/POST/PUT/DELETE，头 Content-Type，不使用通配来源）；生产同源托管 `dist` 不受影响。后端未启动时，请求会被归类为「后端未启动」错误。
 
 注意：开发服务器能起来，但路由懒加载的四个视图组件（`src/views/CreationView.vue` 等）尚未创建，因此进入任一页面都会加载失败；`npm run build` 与 `npm run type-check` 同样需先补齐这些组件。
 
@@ -101,7 +102,7 @@ npm run dev      # Vite 开发服务器，默认 http://localhost:5173
 
 ```powershell
 python -m venv backend\.venv
-backend\.venv\Scripts\python.exe -m pip install fastapi "uvicorn[standard]" pydantic httpx pytest ruff
+backend\.venv\Scripts\python.exe -m pip install fastapi "uvicorn[standard]" pydantic httpx keyring pytest ruff
 ```
 
 > 依赖记录在根 `pyproject.toml`（运行时依赖 + `dev` extras），不另设 `requirements.txt`。
@@ -129,6 +130,27 @@ cd backend
 | POST | `/api/tasks` | 创建任务，body `{"kind":"creation"\|"analysis","title":string?}` → 201 |
 | GET | `/api/tasks?kind=&status=` | 任务列表 `{"items":[...],"total":n}` |
 | GET | `/api/tasks/{id}` | 单个任务；不存在返回 404 |
+| GET | `/api/providers` | 模型配置列表（**不含密钥**，含 `has_key`） |
+| POST | `/api/providers` | 新建模型配置，body `{"name","base_url","model_name","kind?","api_key?"}` → 201 |
+| PUT | `/api/providers/{id}` | 编辑；`api_key` 可选，**传了才更新凭据**，否则保留 |
+| DELETE | `/api/providers/{id}` | 删除配置，同时删除其凭据 → 204 |
+| POST | `/api/providers/{id}/default` | 设为唯一默认 |
+| POST | `/api/providers/{id}/test` | 连接测试，返回 `{"ok":bool,"category":str,"message":str}`；`category` ∈ `ok \| network_error \| auth_error \| model_error \| insufficient_balance \| rate_limited \| request_error \| server_error` |
+
+### 真实连接测试操作手册（配好 `DEEPSEEK_API_KEY` 后自证真连）
+
+自动化测试一律走 fake 注入、不联网。要在本机确认真连 DeepSeek，按下面一条命令跑（先启动后端，或让 `启动.bat` 拉起）：
+
+```powershell
+# 一条命令：把 Key 写入默认 provider 的凭据，再点一次连接测试
+$env:DEEPSEEK_API_KEY = "<你的 DeepSeek Key>"
+Invoke-RestMethod -Method Put  http://127.0.0.1:8720/api/providers/1 -ContentType application/json -Body (@{ api_key = $env:DEEPSEEK_API_KEY } | ConvertTo-Json) | Out-Null
+Invoke-RestMethod -Method Post http://127.0.0.1:8720/api/providers/1/test | ConvertTo-Json
+```
+
+预期输出 `"ok": true, "category": "ok", "message": "连接成功"`。把 Key 改坏（删末尾一位）重跑，预期 `category` 为 `auth_error`。
+密钥写入 Windows 凭据管理器（service 名 `ThinkForge/provider/DeepSeek 主流程`，可用 `cmdkey /list` 核对），SQLite 与日志中不会出现明文。
+前端设置页的连接测试按钮（TB-1 前端车道）会调用同一接口，届时无需手敲命令。
 
 ---
 

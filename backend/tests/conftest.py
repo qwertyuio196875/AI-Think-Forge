@@ -11,8 +11,10 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from fakes import InMemoryKeyStore
 from fastapi.testclient import TestClient
 
+from app.api.deps import get_key_store
 from app.main import create_app
 
 
@@ -23,9 +25,20 @@ def db_path(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def app(db_path: Path):
-    """按可配置库路径构建应用实例（同一进程内多次重建，用于续作语义验证）。"""
-    return create_app(db_path=db_path)
+def key_store() -> InMemoryKeyStore:
+    """内存密钥库替身；测试永不触碰 Windows 凭据管理器。"""
+    return InMemoryKeyStore()
+
+
+@pytest.fixture
+def app(db_path: Path, key_store: InMemoryKeyStore):
+    """按可配置库路径构建应用实例（同一进程内多次重建，用于续作语义验证）。
+
+    密钥存储接缝经 `dependency_overrides` 注入内存替身（与 TB-0 的接缝风格一致）。
+    """
+    application = create_app(db_path=db_path, mount_frontend=False)
+    application.dependency_overrides[get_key_store] = lambda: key_store
+    return application
 
 
 @pytest.fixture

@@ -1,7 +1,8 @@
 """SQLite 连接管理与建表。
 
-TB-0 只落地 `tasks` 表最小集；资料登记 / 文本分块 / 嵌入版本等字段由
-后续工单（含 v1.1 RAG 预留）追加，此处冻结最小可用结构。
+TB-0 落地 `tasks` 表最小集；TB-1 追加 `providers`（模型配置非敏感字段）与
+`settings`（应用设置项）。密钥字段刻意不存在于任何表——凭据只进系统凭据管理器。
+资料登记 / 文本分块 / 嵌入版本等字段由后续工单（含 v1.1 RAG 预留）追加。
 """
 
 from __future__ import annotations
@@ -22,6 +23,23 @@ CREATE TABLE IF NOT EXISTS tasks (
                CHECK (status IN ('in_progress', 'completed', 'deleted')),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
+);
+
+-- 模型配置（服务商）非敏感字段。`kind` 仅为角色标签（turbo/plus/max，可空）。
+-- 注意：本表不含任何密钥列；密钥只进 Windows 凭据管理器。
+CREATE TABLE IF NOT EXISTS providers (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL UNIQUE,
+    base_url   TEXT NOT NULL,
+    model_name TEXT NOT NULL,
+    is_default INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
+    kind       TEXT CHECK (kind IN ('turbo', 'plus', 'max'))
+);
+
+-- 应用设置项（key-value），如默认播种标记。
+CREATE TABLE IF NOT EXISTS settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT
 );
 """
 

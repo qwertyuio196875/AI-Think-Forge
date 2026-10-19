@@ -1,7 +1,7 @@
 """FastAPI 依赖注入位置。
 
-业务依赖（任务仓库、模型客户端、URL 抓取器）集中在此声明，测试用
-`app.dependency_overrides[<函数>]` 替换即可注入替身。
+业务依赖（任务仓库、模型配置仓库、密钥库、模型客户端、URL 抓取器）集中在此
+声明，测试用 `app.dependency_overrides[<函数>]` 替换即可注入替身。
 """
 
 from __future__ import annotations
@@ -10,8 +10,10 @@ from typing import Annotated
 
 from fastapi import Depends, Request
 
+from app.db.provider_repository import ProviderRepository
 from app.db.task_repository import TaskRepository
-from app.providers.model_client import ModelClient
+from app.providers.key_store import KeyStore
+from app.providers.model_client import ModelClient, ProviderModelClientFactory
 from app.providers.url_fetcher import UrlFetcher
 
 
@@ -25,9 +27,24 @@ def get_task_repository(db_path: str = Depends(get_db_path)) -> TaskRepository:
     return TaskRepository(db_path)
 
 
+def get_provider_repository(db_path: str = Depends(get_db_path)) -> ProviderRepository:
+    """模型配置仓库依赖。"""
+    return ProviderRepository(db_path)
+
+
+def get_key_store(request: Request) -> KeyStore:
+    """密钥库依赖（默认写 Windows 凭据管理器；测试注入内存替身）。"""
+    return request.app.state.key_store
+
+
 def get_model_client(request: Request) -> ModelClient:
     """模型客户端依赖（fake 注入点 1）。"""
     return request.app.state.model_client
+
+
+def get_model_client_factory(request: Request) -> ProviderModelClientFactory:
+    """按 provider 配置构造模型客户端的工厂依赖（连接测试使用）。"""
+    return request.app.state.model_client_factory
 
 
 def get_url_fetcher(request: Request) -> UrlFetcher:
@@ -37,5 +54,8 @@ def get_url_fetcher(request: Request) -> UrlFetcher:
 
 # Annotated 别名：路由以类型标注声明依赖，避免在参数默认值里调用 Depends。
 TaskRepositoryDep = Annotated[TaskRepository, Depends(get_task_repository)]
+ProviderRepositoryDep = Annotated[ProviderRepository, Depends(get_provider_repository)]
+KeyStoreDep = Annotated[KeyStore, Depends(get_key_store)]
 ModelClientDep = Annotated[ModelClient, Depends(get_model_client)]
+ModelClientFactoryDep = Annotated[ProviderModelClientFactory, Depends(get_model_client_factory)]
 UrlFetcherDep = Annotated[UrlFetcher, Depends(get_url_fetcher)]

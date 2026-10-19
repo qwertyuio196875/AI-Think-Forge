@@ -22,5 +22,12 @@ API_PREFIX = "/api"
 HOST = "127.0.0.1"
 PORT = 8720
 
+# 开发期 CORS：前端 Vite 开发服务器不做代理、浏览器跨源直连后端，
+# 因此只放行本机开发源。生产为同源托管 dist，此中间件对同源请求无影响，
+# 且来源白名单固定、**绝不使用通配来源**。
+DEV_CORS_ORIGINS = ("http://localhost:5173", "http://127.0.0.1:5173")
+DEV_CORS_METHODS = ("GET", "POST", "PUT", "DELETE")
+DEV_CORS_HEADERS = ("Content-Type",)
+
 APP_NAME = "ThinkForge 工作台"
 APP_VERSION = "0.1.0"
