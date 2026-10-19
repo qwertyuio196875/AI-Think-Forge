@@ -53,6 +53,8 @@ class HistoryItem(BaseModel):
     updated_at: str
     dialogue_messages: int
     rounds: int
+    # 分析任务的最新来源 id（供历史「继续查看」直接打开分析页；创作类任务为 null）。
+    source_id: int | None = None
 
 
 class HistoryCounts(BaseModel):

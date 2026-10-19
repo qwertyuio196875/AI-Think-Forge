@@ -23,14 +23,16 @@ SCHEMA = """
 -- / deleted（已删除）。删除是**软删除**（规格 US 27：一次误操作不毁掉本地数据）：
 -- 只把状态置为 deleted 并记录 deleted_at 留痕，**不物理清库**，对话 / 方案 / 待确认事项照旧留存。
 CREATE TABLE IF NOT EXISTS tasks (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    kind       TEXT NOT NULL CHECK (kind IN ('creation', 'analysis')),
-    title      TEXT,
-    status     TEXT NOT NULL DEFAULT 'in_progress'
-               CHECK (status IN ('in_progress', 'completed', 'deleted')),
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    deleted_at TEXT
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind        TEXT NOT NULL CHECK (kind IN ('creation', 'analysis')),
+    title       TEXT,
+    -- 任务级模型覆盖（US23）：为空表示沿用默认 provider；删除 provider 不影响已建任务。
+    provider_id INTEGER,
+    status      TEXT NOT NULL DEFAULT 'in_progress'
+                CHECK (status IN ('in_progress', 'completed', 'deleted')),
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    deleted_at  TEXT
 );
 
 -- 历史查询用索引：分类 / 状态过滤 + 按 id 倒序（最近任务在前）分页。
@@ -247,6 +249,23 @@ CREATE TABLE IF NOT EXISTS embeddings (
     vector_json    TEXT,
     created_at     TEXT
 );
+
+-- 总结的 Word 交付记录（工单 16 / US16）：由「总结 + 引用」按模板生成，
+-- 与方案成品（generations）分开记账——总结没有结构化方案，绝不伪造 plan。
+-- - task_id：来源所属的资料分析任务（可空，兼容早期无任务来源）；
+-- - template_used：本次实际所用模板（`templates/` 下的相对路径）；
+-- - file_path：产物绝对路径（限定 `data/deliverables/` 白名单）。
+CREATE TABLE IF NOT EXISTS summary_deliverables (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_id     INTEGER NOT NULL REFERENCES sources(id),
+    task_id       INTEGER REFERENCES tasks(id),
+    file_path     TEXT NOT NULL,
+    template_used TEXT NOT NULL,
+    created_at    TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_summary_deliverables_source
+    ON summary_deliverables (source_id, id);
 """
 
 
@@ -278,7 +297,8 @@ def init_db(db_path: str | Path) -> None:
 # 已存在的库补齐新增列：`CREATE TABLE IF NOT EXISTS` 不会改已建好的表，
 # 故历史版本建的库需按列名探测后 `ALTER TABLE` 补列（幂等，不影响新库）。
 MIGRATION_COLUMNS: dict[str, dict[str, str]] = {
-    "tasks": {"deleted_at": "TEXT"},
+    # TB-10：删除留痕；US23：任务级模型覆盖。
+    "tasks": {"deleted_at": "TEXT", "provider_id": "INTEGER"},
     # TB-8：文档补「解析器标识」（pypdf / python-pptx / python-docx / plain-text）。
     "documents": {"parser": "TEXT"},
 }

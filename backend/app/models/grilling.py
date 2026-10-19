@@ -83,6 +83,8 @@ class GrillingStartRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     idea: str = Field(min_length=1)
+    # 任务级模型覆盖（US23）：为空时使用默认 provider。
+    provider_id: int | None = None
 
 
 class GrillingStartResponse(BaseModel):

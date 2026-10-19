@@ -62,21 +62,34 @@ class TieredModelClient:
         self.key_store = key_store
         self.factory = factory
 
-    def resolve(self, kind: str) -> ResolvedModelClient:
-        """解析档位对应 provider；该档位缺失时回退默认并留下说明。"""
-        provider = self.provider_repository.get_by_kind(kind)
-        fallback = False
-        note: str | None = None
+    def resolve(self, kind: str, provider_id: int | None = None) -> ResolvedModelClient:
+        """解析档位对应 provider；任务级覆盖优先，档位缺失时回退默认并留下说明。
 
-        if provider is None:
-            provider = self.provider_repository.get_default()
-            fallback = True
+        `provider_id` 非空表示来源所属任务 pin 了 provider（US23）：按 id 取配置，
+        **不回退**，并标注 `note="任务级模型覆盖"`，使覆盖可被观察。
+        """
+        if provider_id is not None:
+            provider = self.provider_repository.get_by_id(provider_id)
             if provider is None:
-                raise ModelCallError(NO_DEFAULT_PROVIDER_MESSAGE)
-            note = (
-                f"未配置 {kind} 档模型配置，已回退默认模型配置「{provider['name']}」"
-                f"（档位 {provider['kind'] or '未标注'}）"
-            )
+                raise ModelCallError(
+                    f"任务指定的模型配置 {provider_id} 不存在，请重新选择模型"
+                )
+            fallback = False
+            note: str | None = "任务级模型覆盖"
+        else:
+            provider = self.provider_repository.get_by_kind(kind)
+            fallback = False
+            note = None
+
+            if provider is None:
+                provider = self.provider_repository.get_default()
+                fallback = True
+                if provider is None:
+                    raise ModelCallError(NO_DEFAULT_PROVIDER_MESSAGE)
+                note = (
+                    f"未配置 {kind} 档模型配置，已回退默认模型配置「{provider['name']}」"
+                    f"（档位 {provider['kind'] or '未标注'}）"
+                )
 
         config = ModelClientConfig(
             base_url=provider["base_url"], model_name=provider["model_name"]

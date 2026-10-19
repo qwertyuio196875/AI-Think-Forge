@@ -158,6 +158,9 @@ DECK_THEMES: dict[str, DeckTheme] = {
 # 未指定主题时的默认值（原型主题选择器的首选项）。
 DEFAULT_THEME_ID = "slate"
 
+# `settings` 表里保存全局默认主题的键（US20）；读写两处共用同一常量。
+DECK_THEME_SETTING_KEY = "deck_theme_default"
+
 
 class DeckThemeError(ValueError):
     """主题不存在：明确报错，绝不静默退回默认主题。"""

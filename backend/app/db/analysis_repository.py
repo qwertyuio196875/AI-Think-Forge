@@ -53,6 +53,39 @@ class AnalysisRepository:
             ).fetchone()
         return _decode_source(dict(row)) if row is not None else None
 
+    def list_sources(self, *, limit: int, offset: int) -> tuple[list[dict], int]:
+        """来源列表：按 `sources.id DESC` 分页，并带最新文档 / 是否有总结。
+
+        返回 `(items, total)`；每项含 `source` / `document`（可为 None）/
+        `has_summary` / `summary_id` / `summary_created_at`。
+        """
+        with connect(self._db_path) as connection:
+            rows = connection.execute(
+                "SELECT * FROM sources ORDER BY id DESC LIMIT ? OFFSET ?",
+                (limit, offset),
+            ).fetchall()
+            total_row = connection.execute(
+                "SELECT COUNT(*) AS total FROM sources"
+            ).fetchone()
+
+        items: list[dict] = []
+        for row in rows:
+            source = _decode_source(dict(row))
+            document = self.get_document_for_source(source["id"])
+            summary = self.get_summary_for_source(source["id"])
+            items.append(
+                {
+                    "source": source,
+                    "document": document,
+                    "has_summary": summary is not None,
+                    "summary_id": summary["id"] if summary is not None else None,
+                    "summary_created_at": (
+                        summary["created_at"] if summary is not None else None
+                    ),
+                }
+            )
+        return items, int(total_row["total"])
+
     # --- 文档 ---------------------------------------------------------------
 
     def create_document(

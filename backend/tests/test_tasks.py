@@ -12,7 +12,15 @@ from fastapi.testclient import TestClient
 
 from app.main import create_app
 
-TASK_FIELDS = {"id", "kind", "title", "status", "created_at", "updated_at"}
+TASK_FIELDS = {
+    "id",
+    "kind",
+    "title",
+    "status",
+    "provider_id",
+    "created_at",
+    "updated_at",
+}
 
 
 def test_create_task_returns_201_and_fields(client: TestClient) -> None:
