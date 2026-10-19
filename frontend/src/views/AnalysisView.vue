@@ -22,14 +22,14 @@
         <div class="panel">
           <div class="panel-head">
             <h3>发起分析</h3>
-            <span class="right xs muted">TXT / MD / DOCX</span>
+            <span class="right xs muted">TXT / MD / DOCX / PDF / PPTX</span>
           </div>
           <div class="panel-body">
             <button
               type="button"
               class="drop"
-              :class="{ 'is-drag': dragging, 'is-busy': uploading || analyzing }"
-              :disabled="uploading || analyzing"
+              :class="{ 'is-drag': dragging, 'is-busy': uploading || fetching || analyzing }"
+              :disabled="uploading || fetching || analyzing"
               aria-describedby="drop-help"
               @click="openPicker"
               @dragover.prevent="onDragOver"
@@ -67,10 +67,13 @@
                   class="ico src-ico"
                   :class="{ 'is-warn': parseUnrecognized, 'is-err': parseFailed }"
                   aria-hidden="true"
-                ><Document /></el-icon>
+                ><Link v-if="isUrlSource" /><Document v-else /></el-icon>
                 <div class="grow">
                   <b :title="fileName">{{ fileName }}</b>
                   <span>{{ sourceMetaText }}</span>
+                  <span v-if="finalUrlNote" class="xs src-sub" :title="finalUrlNote">
+                    跳转后地址：{{ finalUrlNote }}
+                  </span>
                   <div v-if="parsedChips.length" class="chip-row">
                     <span v-for="chip in parsedChips" :key="chip" class="chip xs">{{ chip }}</span>
                   </div>
@@ -78,15 +81,35 @@
                 <el-tag size="small" :type="statusTag.type" effect="plain">{{ statusTag.label }}</el-tag>
               </div>
               <p v-if="parseFailed && current.message" class="xs muted fail-line" role="status">
-                解析失败原因：{{ current.message }}（来源与文件已保留，不丢数据；可重新上传其它文件）
+                {{ isUrlSource ? '抓取失败原因' : '解析失败原因' }}：{{ current.message }}（来源已保留，不丢数据；{{ isUrlSource ? '可换一个公开可访问的链接重试' : '可重新上传其它文件' }}）
               </p>
             </div>
 
-            <!-- TB-9 扩展位：URL 输入本单不启用 -->
+            <!-- TB-9：公开网页 URL 抓取（安全判定以后端为准，拒绝原因原样展示） -->
             <div class="url-field">
-              <el-input disabled aria-label="URL 抓取分析（当前不可用，将在后续工单提供）" placeholder="粘贴公开网页 URL 抓取分析 —— 尚未启用，将在后续工单提供">
-                <template #prepend>URL</template>
-              </el-input>
+              <div class="url-row">
+                <el-input
+                  v-model="urlInput"
+                  :disabled="uploading || fetching || analyzing"
+                  placeholder="粘贴公开网页 URL，抓取正文后分析"
+                  aria-label="公开网页 URL 地址"
+                  @keydown.enter.prevent="submitUrl"
+                >
+                  <template #prepend>URL</template>
+                </el-input>
+                <el-button
+                  type="primary"
+                  plain
+                  :loading="fetching"
+                  :disabled="uploading || analyzing || !urlInput.trim()"
+                  @click="submitUrl"
+                >
+                  抓取
+                </el-button>
+              </div>
+              <p class="xs muted url-hint">
+                {{ fetching ? '正在抓取并解析网页，请稍候…' : '仅 http / https；本机、内网与云元数据地址会被安全策略拒绝且不落库；超时 15 秒、上限 5 MB、最多 3 次重定向。' }}
+              </p>
             </div>
 
             <div class="note info" style="margin-top: var(--sp-4)">
@@ -229,7 +252,7 @@
                   <b>{{ describeUnrecognized(primaryUnrec) }}</b>
                   <span v-if="formatLocator(primaryUnrec.locator)">位置：{{ formatLocator(primaryUnrec.locator) }}</span>
                   <span v-if="current?.message">{{ current.message }}</span>
-                  <span>该结论已在任务历史中留痕；如为文本型资料，可检查文件内容或编码后重新上传。</span>
+                  <span>{{ isUrlSource ? '可换一个公开可访问、含正文的页面链接重试。' : '该结论已在任务历史中留痕；如为文本型资料，可检查文件内容或编码后重新上传。' }}</span>
                 </div>
               </div>
               <template v-if="pendingParts.length">
@@ -243,20 +266,20 @@
             </div>
           </template>
 
-          <!-- 解析失败：明确失败态 -->
+          <!-- 解析 / 抓取失败：明确失败态 -->
           <template v-else-if="rightState === 'parse-failed'">
             <div class="panel-head">
               <h3>分析结果</h3>
-              <el-tag size="small" type="danger" effect="plain">解析失败 · 未生成总结</el-tag>
+              <el-tag size="small" type="danger" effect="plain">{{ isUrlSource ? '抓取失败 · 未生成总结' : '解析失败 · 未生成总结' }}</el-tag>
               <span class="right xs muted">{{ fileName }}</span>
             </div>
             <div class="panel-body">
               <div class="note err" role="alert">
                 <el-icon class="ico"><WarningFilled /></el-icon>
                 <div class="note-body">
-                  <b>无法解析「{{ fileName }}」</b>
+                  <b>{{ isUrlSource ? `网页抓取未成功：${sourceHost || fileName}` : `无法解析「${fileName}」` }}</b>
                   <span>{{ doc?.parse_message || current?.message || '后端未给出具体原因' }}</span>
-                  <span>来源与文件已保留，不丢已存数据；无法对解析失败的资料做分析。可检查文件是否完整、是否另存为标准格式后重新上传。</span>
+                  <span>{{ isUrlSource ? '来源已保留，不丢已存数据；本系统不绕过登录与访问控制。确认链接公开可访问后可重试，或换其它链接。' : '来源与文件已保留，不丢已存数据；无法对解析失败的资料做分析。可检查文件是否完整、是否另存为标准格式后重新上传。' }}</span>
                 </div>
               </div>
             </div>
@@ -270,7 +293,7 @@
             </div>
             <div class="panel-body">
               <div class="empty">
-                <el-icon class="ico-lg"><Document /></el-icon>
+                <el-icon class="ico-lg"><Link v-if="isUrlSource" /><Document v-else /></el-icon>
                 <b>「{{ fileName }}」已解析（{{ doc?.chunks ?? 0 }} 个分块）</b>
                 <p>点左侧「开始分析」，逐块分析后综合为 500 汉字以内的总结；总结可一键送入主题创作继续拷问。</p>
               </div>
@@ -296,7 +319,7 @@
               <div class="empty">
                 <el-icon class="ico-lg"><Document /></el-icon>
                 <b>暂无分析结果</b>
-                <p>上传一份 TXT / MD / DOCX 资料即可解析并总结；总结可一键送入主题创作继续拷问。</p>
+                <p>上传 TXT / MD / DOCX / PDF / PPTX 文件，或粘贴公开网页 URL，解析后即可总结；总结可一键送入主题创作继续拷问。</p>
               </div>
             </div>
           </template>
@@ -315,6 +338,7 @@ import {
   CopyDocument,
   Document,
   InfoFilled,
+  Link,
   Loading,
   Promotion,
   Upload,
@@ -324,6 +348,7 @@ import {
 import {
   analyzeSource,
   BackendUnavailableError,
+  createAnalysisUrlSource,
   sendToCreation,
   uploadAnalysisSource,
   type AnalysisResultResponse,
@@ -336,8 +361,10 @@ import {
   formatFileSize,
   formatLocator,
   headingSourceLabel,
+  hostFromUrl,
   parseStatusTag,
-  validateUploadFile
+  validateUploadFile,
+  validateUrlInput
 } from '../utils/analysisMeta'
 import { formatDateTime } from '../utils/taskMeta'
 
@@ -353,6 +380,9 @@ const uploadPercent = ref(0)
 const uploadName = ref('')
 const rejectNote = ref('')
 
+const urlInput = ref('')
+const fetching = ref(false)
+
 const current = ref<AnalysisSourceResponse | null>(null)
 
 const analyzing = ref(false)
@@ -365,10 +395,28 @@ const sending = ref(false)
 
 const doc = computed(() => current.value?.document ?? null)
 
+const isUrlSource = computed(() => current.value?.source.kind === 'url')
+
+const sourceHost = computed(() => {
+  const c = current.value
+  if (!c || c.source.kind !== 'url') return ''
+  const meta = c.source.meta ?? {}
+  return hostFromUrl(typeof meta.url === 'string' ? meta.url : c.source.ref)
+})
+
 const fileName = computed(() => {
   const meta = current.value?.source.meta ?? {}
   const original = typeof meta.original_name === 'string' ? meta.original_name : ''
   return original || current.value?.source.ref || uploadName.value || '未知资料'
+})
+
+/** 重定向后的最终地址（与原始地址不同时才展示，供引用回溯核对）。 */
+const finalUrlNote = computed(() => {
+  const meta = current.value?.source.meta
+  if (!current.value || current.value.source.kind !== 'url' || !meta) return ''
+  const original = typeof meta.url === 'string' ? meta.url : ''
+  const final = typeof meta.final_url === 'string' ? meta.final_url : ''
+  return final && final !== original ? final : ''
 })
 
 const parseFailed = computed(() => doc.value?.parse_status === 'failed')
@@ -387,7 +435,7 @@ const summary = computed(() => result.value?.summary ?? null)
 const statusTag = computed(() => parseStatusTag(doc.value?.parse_status ?? ''))
 
 const canAnalyze = computed(
-  () => !!doc.value && doc.value.parse_status === 'parsed' && !uploading.value && !analyzing.value
+  () => !!doc.value && doc.value.parse_status === 'parsed' && !uploading.value && !fetching.value && !analyzing.value
 )
 
 type RightState =
@@ -411,6 +459,7 @@ const rightState = computed<RightState>(() => {
 
 const headChip = computed<{ label: string; type: TagType; dot: string } | null>(() => {
   if (uploading.value) return { label: '上传中', type: 'primary', dot: 'tf-dot--run' }
+  if (fetching.value) return { label: '抓取中', type: 'primary', dot: 'tf-dot--run' }
   if (analyzing.value) return { label: '分析中', type: 'primary', dot: 'tf-dot--run' }
   if (analyzeError.value) return { label: '分析未完成', type: 'danger', dot: 'tf-dot--err' }
   if (summary.value) return { label: '已生成总结', type: 'success', dot: 'tf-dot--ok' }
@@ -426,16 +475,30 @@ const acceptAttr = computed(() => ALLOWED_SUFFIXES.join(','))
 const sourceMetaText = computed(() => {
   const c = current.value
   if (!c) return ''
-  const size = typeof c.source.meta.size === 'number' ? formatFileSize(c.source.meta.size) : ''
   const time = formatDateTime(c.source.created_at)
+  if (c.source.kind === 'url') {
+    const host = hostFromUrl(typeof c.source.meta.url === 'string' ? c.source.meta.url : c.source.ref)
+    const redirects = typeof c.source.meta.redirects === 'number' ? c.source.meta.redirects : 0
+    const parts = [
+      host ? `网页 · ${host}` : '网页来源',
+      redirects > 0 ? `经 ${redirects} 次跳转` : '',
+      `抓取于 ${time}`
+    ]
+    return parts.filter(Boolean).join(' · ')
+  }
+  const size = typeof c.source.meta.size === 'number' ? formatFileSize(c.source.meta.size) : ''
   return [size && `大小 ${size}`, `上传于 ${time}`].filter(Boolean).join(' · ')
 })
+
+/** 版式类解析器值得回显（用户会关心 PDF/PPTX 是谁读的）；文本类不堆技术细节。 */
+const LAYOUT_PARSERS = new Set(['pypdf', 'python-pptx'])
 
 const parsedChips = computed(() => {
   const d = doc.value
   if (!d || d.parse_status !== 'parsed') return []
   const chips: string[] = []
-  if (d.encoding) chips.push(`编码 ${d.encoding}`)
+  if (d.parser && LAYOUT_PARSERS.has(d.parser)) chips.push(`解析器 ${d.parser}`)
+  if (!isUrlSource.value && d.encoding) chips.push(`编码 ${d.encoding}`)
   chips.push(`标题来源：${headingSourceLabel(d.heading_source)}`)
   if (d.headings > 0) chips.push(`${d.headings} 个标题`)
   if (d.images > 0) chips.push(`${d.images} 处图片（不参与文本分析）`)
@@ -444,10 +507,14 @@ const parsedChips = computed(() => {
 
 const analyzeHint = computed(() => {
   if (uploading.value) return '正在上传并解析文件…'
+  if (fetching.value) return '正在抓取并解析网页…'
   if (analyzing.value) return '正在逐块分析并综合，请稍候…'
-  if (!current.value) return '上传 TXT / MD / DOCX 资料后即可开始分析；PDF / PPTX 与 URL 将按路线图后续接入。'
-  if (parseFailed.value) return '解析失败的资料无法分析；来源与文件已保留，可重新上传其它文件。'
-  if (parseUnrecognized.value) return '未识别到可分析的文本，未调用模型；换一份含文本层的资料再试。'
+  if (!current.value) return '上传文件（TXT / MD / DOCX / PDF / PPTX）或粘贴公开网页 URL 后即可开始分析。'
+  if (parseFailed.value)
+    return isUrlSource.value
+      ? '抓取失败的资料无法分析；来源已保留，可换一个公开可访问的链接重试。'
+      : '解析失败的资料无法分析；来源与文件已保留，可重新上传其它文件。'
+  if (parseUnrecognized.value) return '未识别到可分析的文本，未调用模型；换一份含可分析正文的资料再试。'
   if (result.value?.summary) return '本份总结已保存；可复制，或一键送入主题创作。'
   return '分析 = 分块 → 逐块分析 → 综合（分析管线，不是 RAG）；完成后总结自动保存。'
 })
@@ -455,7 +522,7 @@ const analyzeHint = computed(() => {
 /* ---------- 上传 ---------- */
 
 function openPicker(): void {
-  if (uploading.value || analyzing.value) return
+  if (uploading.value || fetching.value || analyzing.value) return
   fileRef.value?.click()
 }
 
@@ -466,7 +533,7 @@ function onPick(event: Event): void {
 }
 
 function onDragOver(): void {
-  if (!uploading.value && !analyzing.value) dragging.value = true
+  if (!uploading.value && !fetching.value && !analyzing.value) dragging.value = true
 }
 
 function onDrop(event: DragEvent): void {
@@ -476,7 +543,7 @@ function onDrop(event: DragEvent): void {
 
 async function handleFiles(files: FileList | File[]): Promise<void> {
   const list = Array.from(files)
-  if (!list.length || uploading.value || analyzing.value) return
+  if (!list.length || uploading.value || fetching.value || analyzing.value) return
   rejectNote.value = ''
 
   const file = list[0]
@@ -513,6 +580,41 @@ async function handleFiles(files: FileList | File[]): Promise<void> {
   } finally {
     uploading.value = false
     uploadPercent.value = 0
+  }
+}
+
+/* ---------- URL 抓取（TB-9） ---------- */
+
+async function submitUrl(): Promise<void> {
+  if (uploading.value || fetching.value || analyzing.value) return
+  rejectNote.value = ''
+
+  const value = urlInput.value.trim()
+  const invalid = validateUrlInput(value)
+  if (invalid) {
+    rejectNote.value = invalid
+    return
+  }
+
+  fetching.value = true
+  try {
+    const res = await createAnalysisUrlSource(value)
+    current.value = res
+    result.value = null
+    analyzeError.value = ''
+    rejectNote.value = ''
+    urlInput.value = ''
+    if (res.document.parse_status === 'parsed') {
+      ElMessage.success(`已抓取网页：${res.document.chunks} 个分块，可开始分析`)
+    } else if (res.document.parse_status === 'failed') {
+      ElMessage.warning('来源已保留，但抓取未成功；原因见右侧提示')
+    } else {
+      ElMessage.warning('该网页未提取到可分析的正文；详情见右侧提示')
+    }
+  } catch (err) {
+    rejectNote.value = describeFetchError(err)
+  } finally {
+    fetching.value = false
   }
 }
 
@@ -615,6 +717,16 @@ function describeUploadError(err: unknown): string {
   if (err instanceof BackendUnavailableError) return '后端未启动，上传失败。请双击「启动.bat」拉起服务后重试。'
   const detail = extractDetail((err as Error).message || '')
   return detail || '上传失败，请重试；若多次失败请检查后端是否在运行'
+}
+
+/** URL 提交错误：400 安全拒绝原样展示后端可读原因（此时未抓取、未落库）。 */
+function describeFetchError(err: unknown): string {
+  if (err instanceof BackendUnavailableError) return '后端未启动，无法抓取。请双击「启动.bat」拉起服务后重试。'
+  const msg = (err as Error).message || ''
+  const detail = extractDetail(msg)
+  if (msg.includes('400')) return `${detail || '该链接未通过安全校验'}（未发起抓取，未保存任何数据）`
+  if (msg.includes('422')) return '链接不能为空，且长度不能超过 2048 字符'
+  return detail || '抓取请求失败，请重试'
 }
 
 function describeAnalyzeError(err: unknown): string {
@@ -822,9 +934,28 @@ function describeSendError(err: unknown): string {
   line-height: 1.6;
 }
 
-/* URL 扩展位（禁用，不承诺未实现能力） */
+/* URL 抓取输入（TB-9）：与拖放区共用「单份资料」的提交流程 */
 .url-field {
   margin-top: var(--sp-4);
+}
+.url-row {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: stretch;
+}
+.url-row .el-input {
+  flex: 1;
+  min-width: 0;
+}
+.url-hint {
+  margin: var(--sp-2) 0 0;
+  line-height: 1.6;
+}
+.src-sub {
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 分析按钮 */
