@@ -53,28 +53,37 @@ class SummaryOutcome:
 
 
 def primary_unrecognized(parsed: ParsedDocument) -> dict | None:
-    """整份资料读不出文本时的一级未识别契约；有文本块则返回 None。"""
+    """整份资料读不出文本时的一级未识别契约；有文本块则返回 None。
+
+    原因优先取解析器给出的 `empty_reason`（PDF / PPTX 无文本层时显式给
+    `no_text_layer`），否则按图片数量推断（DOCX 的既有口径）。`needs_ocr` 表示
+    「这段内容要靠 OCR 才能读」——扫描件 / 图片型文件为真，纯空白文件为假。
+    """
     if parsed.blocks:
         return None
 
-    if parsed.images:
-        return {
-            "unrecognized": True,
-            "reason": "no_text_layer",
-            "locator": {"format": parsed.format, "images": parsed.images},
-            "needs_ocr": True,
-        }
+    reason = parsed.empty_reason or (
+        "no_text_layer" if parsed.images else "empty_document"
+    )
     return {
         "unrecognized": True,
-        "reason": "empty_document",
-        "locator": {"format": parsed.format},
-        "needs_ocr": False,
+        "reason": reason,
+        "locator": {"format": parsed.format, "images": parsed.images},
+        "needs_ocr": parsed.images > 0 or reason == "no_text_layer",
     }
 
 
 def unrecognized_parts(parsed: ParsedDocument) -> list[dict]:
-    """有文本但仍有读不到的内容（图片 / 浮动对象）时逐项明示，不伪装成完整分析。"""
-    if not parsed.images or not parsed.blocks:
+    """有文本但仍有读不到的内容（图片 / 图表 / 浮动对象）时逐项明示，不伪装成完整分析。
+
+    版式类解析器（PDF / PPTX）逐项给出页 / 幻灯片级 locator，直接透传；DOCX 没有
+    逐项信息，沿用「图片数量」的既有口径（契约不变）。
+    """
+    if not parsed.blocks:
+        return []
+    if parsed.unread_parts:
+        return list(parsed.unread_parts)
+    if not parsed.images:
         return []
     return [
         {

@@ -5,8 +5,9 @@
 资料，不建索引、不做跨文档检索。
 
 纪律：
-- 上传只收 TXT / MD / DOCX，扩展名 + 50MB 上限；文件落 `data/` 白名单；
+- 上传只收 TXT / MD / DOCX / PDF / PPTX，扩展名 + 50MB 上限；文件落 `data/` 白名单；
 - 解析失败 / 未识别都如实落库并显式返回，**绝不用空字符串冒充成功**；
+  PDF / PPTX 的解析结果带解析器标识与页 / 幻灯片级 locator（TB-8）；
 - 模型失败返回可读 502，已入库的来源 / 文档 / 分块不受影响，可安全重试；
 - 总结走 turbo 档，该档缺失时回退默认 provider 并把实际所用者写进结果。
 """
@@ -80,6 +81,7 @@ def _document_info(record: dict, *, chunks: int) -> DocumentInfo:
         parse_status=record["parse_status"],
         parse_message=record["parse_message"],
         heading_source=record["heading_source"],
+        parser=record.get("parser"),
         encoding=record["encoding"],
         headings=record["headings"],
         images=record["images"],
@@ -124,7 +126,7 @@ def upload_source(
     data_dir: DataDirDep,
     file: Annotated[UploadFile, File()],
 ) -> AnalysisSourceResponse:
-    """上传并解析一份资料（TXT / MD / DOCX），建立来源 / 文档 / 分块。
+    """上传并解析一份资料（TXT / MD / DOCX / PDF / PPTX），建立来源 / 文档 / 分块。
 
     解析失败仍返回 201 与 `parse_status="failed"` + 可读 `message`：来源与文档
     已入库、文件已落盘，用户可换文件或重试，不丢已存数据。
@@ -174,6 +176,7 @@ def upload_source(
             relative,
             parse_status="unrecognized",
             heading_source=parsed.heading_source,
+            parser=parsed.parser,
             encoding=parsed.encoding,
             headings=headings,
             images=parsed.images,
@@ -197,6 +200,7 @@ def upload_source(
         relative,
         parse_status="parsed",
         heading_source=parsed.heading_source,
+        parser=parsed.parser,
         encoding=parsed.encoding,
         headings=headings,
         images=parsed.images,
