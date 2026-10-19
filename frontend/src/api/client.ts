@@ -21,6 +21,33 @@ export class BackendUnavailableError extends Error {
   }
 }
 
+/**
+ * 非 2xx 响应错误：状态码与后端可读 detail 各自成字段。
+ *
+ * 消息格式与既有实现一致（`请求失败：<code> <statusText> · <detail>`），
+ * 调用方不再需要用 `String(error).includes('404')` 反解析状态码，
+ * 改用 `isApiStatus(error, 404)` 判定（避免 detail 文案里出现数字导致误判）。
+ */
+export class ApiHttpError extends Error {
+  /** HTTP 状态码（如 404 / 409 / 500）。 */
+  readonly status: number
+  /** FastAPI 的可读 detail（无则为空串）。 */
+  readonly detail: string
+
+  constructor(status: number, statusText: string, detail: string) {
+    const base = `请求失败：${status} ${statusText}`.trimEnd()
+    super(detail ? `${base} · ${detail}` : base)
+    this.name = 'ApiHttpError'
+    this.status = status
+    this.detail = detail
+  }
+}
+
+/** 错误是否为指定 HTTP 状态码（后端未启动 / 网络错误恒为 false）。 */
+export function isApiStatus(error: unknown, status: number): boolean {
+  return error instanceof ApiHttpError && error.status === status
+}
+
 /* ============================================================
    任务（Task）—— TB-0 行走骨架的最小契约
    权威来源：TB-0 工单「后端 API 契约」。业务字段随后续工单扩展。
@@ -40,6 +67,11 @@ export interface Task {
   id: number
   kind: TaskKind
   title: string | null
+  /**
+   * 任务级模型覆盖（US23）：null = 未覆盖，按默认档位解析；
+   * 非空为该 provider 的 id，拷问 / 方案 / 修订与资料分析总结都读它。
+   */
+  provider_id: number | null
   status: TaskStatus
   created_at: string
   updated_at: string
@@ -73,7 +105,7 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     // 附带 FastAPI 的可读 detail（若有），让 400/409/500 等原因在前端可直接展示；
-    // 保留「请求失败：<code>」前缀，既有按状态码分支（includes('404') 等）不受影响。
+    // 状态码同时以字段形式给出（isApiStatus 判定），消息格式保持「请求失败：<code> …」不变。
     let detail = ''
     try {
       const body = (await response.json()) as { detail?: unknown }
@@ -81,8 +113,7 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       // 非 JSON 错误体（如纯文本）忽略
     }
-    const base = `请求失败：${response.status} ${response.statusText}`
-    throw new Error(detail ? `${base} · ${detail}` : base)
+    throw new ApiHttpError(response.status, response.statusText, detail)
   }
 
   if (response.status === 204) {
@@ -96,11 +127,19 @@ export function checkHealth(): Promise<HealthResponse> {
   return request<HealthResponse>('/health')
 }
 
-/** 新建任务：POST /api/tasks。 */
-export function createTask(input: { kind: TaskKind; title?: string }): Promise<Task> {
+/** 新建任务：POST /api/tasks（可带任务级模型覆盖 provider_id）。 */
+export function createTask(input: {
+  kind: TaskKind
+  title?: string
+  provider_id?: number | null
+}): Promise<Task> {
   return request<Task>('/tasks', {
     method: 'POST',
-    body: JSON.stringify(input)
+    body: JSON.stringify({
+      kind: input.kind,
+      title: input.title,
+      provider_id: input.provider_id ?? null
+    })
   })
 }
 
@@ -121,6 +160,18 @@ export function getTask(id: number): Promise<Task> {
   return request<Task>(`/tasks/${id}`)
 }
 
+/**
+ * 设置 / 清除任务级模型覆盖：PUT /api/tasks/{id}/model（US23）。
+ * `providerId = null` 回到默认档位；响应为更新后的完整任务。
+ * 404 任务不存在 / 400 模型配置不存在 / 409 任务已删除。
+ */
+export function updateTaskModel(taskId: number, providerId: number | null): Promise<Task> {
+  return request<Task>(`/tasks/${taskId}/model`, {
+    method: 'PUT',
+    body: JSON.stringify({ provider_id: providerId })
+  })
+}
+
 /* ============================================================
    模型配置（Provider）与连接测试 —— TB-1
    权威来源：TB-1 工单「后端 API 契约」。响应体永不含密钥，仅 has_key。
@@ -130,9 +181,9 @@ export function getTask(id: number): Promise<Task> {
 /** 档位为角色标签（可空）：turbo=总结流程 / plus=主流程 / max=任务级深问。 */
 export type ProviderKind = 'turbo' | 'plus' | 'max' | null
 
-/** 模型配置对象（不含密钥；密钥状态只以 has_key 表达）。 */
+/** 模型配置对象（不含密钥；密钥状态只以 has_key 表达）。id 为后端自增整数。 */
 export interface Provider {
-  id: string
+  id: number
   name: string
   base_url: string
   model_name: string
@@ -185,26 +236,26 @@ export function createProvider(input: ProviderInput): Promise<Provider> {
 }
 
 /** 编辑模型配置：PUT /api/providers/{id}（api_key 不传即保留原凭据）。 */
-export function updateProvider(id: string, input: ProviderInput): Promise<Provider> {
-  return request<Provider>(`/providers/${encodeURIComponent(id)}`, {
+export function updateProvider(id: number, input: ProviderInput): Promise<Provider> {
+  return request<Provider>(`/providers/${id}`, {
     method: 'PUT',
     body: buildProviderBody(input)
   })
 }
 
 /** 删除模型配置：DELETE /api/providers/{id}（204，同时清除该配置的凭据）。 */
-export function deleteProvider(id: string): Promise<void> {
-  return request<void>(`/providers/${encodeURIComponent(id)}`, { method: 'DELETE' })
+export function deleteProvider(id: number): Promise<void> {
+  return request<void>(`/providers/${id}`, { method: 'DELETE' })
 }
 
 /** 设为全局默认：POST /api/providers/{id}/default。 */
-export function setDefaultProvider(id: string): Promise<Provider> {
-  return request<Provider>(`/providers/${encodeURIComponent(id)}/default`, { method: 'POST' })
+export function setDefaultProvider(id: number): Promise<Provider> {
+  return request<Provider>(`/providers/${id}/default`, { method: 'POST' })
 }
 
 /** 连接测试：POST /api/providers/{id}/test。 */
-export function testProvider(id: string): Promise<ConnectionTestResult> {
-  return request<ConnectionTestResult>(`/providers/${encodeURIComponent(id)}/test`, {
+export function testProvider(id: number): Promise<ConnectionTestResult> {
+  return request<ConnectionTestResult>(`/providers/${id}/test`, {
     method: 'POST'
   })
 }
@@ -273,11 +324,17 @@ export interface GrillingStartResponse {
   round: FrontierRound
 }
 
-/** 发起主题创作：POST /api/grilling/tasks（一句话 / 一段描述 → 第一轮前沿）。 */
-export function startGrillingTask(idea: string): Promise<GrillingStartResponse> {
+/**
+ * 发起主题创作：POST /api/grilling/tasks（一句话 / 一段描述 → 第一轮前沿）。
+ * `providerId` 为该任务选定的模型配置（US23 任务级覆盖）；不传 / null 走默认档位。
+ */
+export function startGrillingTask(
+  idea: string,
+  providerId?: number | null
+): Promise<GrillingStartResponse> {
   return request<GrillingStartResponse>('/grilling/tasks', {
     method: 'POST',
-    body: JSON.stringify({ idea })
+    body: JSON.stringify({ idea, provider_id: providerId ?? null })
   })
 }
 
@@ -498,6 +555,30 @@ export function getDeckThemes(): Promise<DeckThemeListResponse> {
   return request<DeckThemeListResponse>('/deck-themes')
 }
 
+/** HTML 演示的全局默认主题（GET/PUT /api/settings/deck-theme）。 */
+export interface DeckThemeSettings {
+  /** 当前生效的全局默认主题 id。 */
+  theme: string
+  /** 后端认可的主题 id 清单（按内建顺序）。 */
+  available: string[]
+}
+
+/** 读取 HTML 演示的全局默认主题。 */
+export function getDeckThemeDefault(): Promise<DeckThemeSettings> {
+  return request<DeckThemeSettings>('/settings/deck-theme')
+}
+
+/**
+ * 写入 HTML 演示的全局默认主题：PUT /api/settings/deck-theme。
+ * 未知主题 400（后端不写入任何值，也不静默退回默认）。
+ */
+export function setDeckThemeDefault(theme: string): Promise<DeckThemeSettings> {
+  return request<DeckThemeSettings>('/settings/deck-theme', {
+    method: 'PUT',
+    body: JSON.stringify({ theme })
+  })
+}
+
 /* ---------- 成品投递（GET /api/deliverables/{id}）----------
    浏览器 http 页无法加载 file://，产物由后端按 generation id 投递：
    HTML=inline（可应用内预览），Word=attachment（下载）。缺失 / 越界一律 404。 */
@@ -678,6 +759,11 @@ export interface HistoryItem {
   updated_at: string
   dialogue_messages: number
   rounds: number
+  /**
+   * 分析任务的最新来源 id（供「回看」直接落到该份资料的分析页）；
+   * 创作任务与无来源的分析任务为 null。
+   */
+  source_id: number | null
 }
 
 /** 导航徽标用的分计数（全局，不随过滤变化）。 */
@@ -873,10 +959,41 @@ export interface SendToCreationResponse {
   known_input: string
 }
 
+/** 来源列表条目：来源 + 最新文档（可能为 null）+ 是否已有总结。 */
+export interface AnalysisSourceListItem {
+  source: AnalysisSourceInfo
+  document: AnalysisDocumentInfo | null
+  has_summary: boolean
+  summary_id: number | null
+  summary_created_at: string | null
+}
+
+/** GET /api/analysis/sources 列表返回体（按 id 倒序）。 */
+export interface AnalysisSourceListResponse {
+  items: AnalysisSourceListItem[]
+  total: number
+  limit: number
+  offset: number
+}
+
+/** 总结生成 Word 的成品记录 + 产物元数据（实际所用模板如实回显）。 */
+export interface SummaryWordDeliverable {
+  id: number
+  source_id: number
+  task_id: number | null
+  format: string
+  file_path: string
+  template_used: string
+  created_at: string
+  template_style_applied: boolean
+  missing_styles: string[]
+  headings: number
+}
+
 /**
  * 上传资料（multipart，字段 file）：走 XHR 以便回报真实上传进度（fetch 无上传进度事件）。
  * 支持 TXT / MD / DOCX / PDF / PPTX（TB-8 起含版式类）。
- * 错误语义与 request() 一致：网络失败 → BackendUnavailableError；非 2xx → Error（附 detail）。
+ * 错误语义与 request() 一致：网络失败 → BackendUnavailableError；非 2xx → ApiHttpError（附 detail）。
  * onProgress 收 0–100 百分比（按字节计，50MB 文件也有意义）。
  */
 export function uploadAnalysisSource(
@@ -914,8 +1031,7 @@ export function uploadAnalysisSource(
         typeof (payload as { detail?: unknown }).detail === 'string'
           ? (payload as { detail: string }).detail
           : ''
-      const base = `请求失败：${xhr.status}`
-      reject(new Error(detail ? `${base} · ${detail}` : base))
+      reject(new ApiHttpError(xhr.status, xhr.statusText || '', detail))
     }
     xhr.send(body)
   })
@@ -939,6 +1055,18 @@ export function getAnalysisSource(sourceId: number): Promise<AnalysisSourceRespo
   return request<AnalysisSourceResponse>(`/analysis/sources/${sourceId}`)
 }
 
+/** 来源列表：GET /api/analysis/sources?limit=&offset=（按 id 倒序，供「最近资料」回看）。 */
+export function listAnalysisSources(params: {
+  limit?: number
+  offset?: number
+} = {}): Promise<AnalysisSourceListResponse> {
+  const query = new URLSearchParams()
+  if (params.limit != null) query.set('limit', String(params.limit))
+  if (params.offset != null) query.set('offset', String(params.offset))
+  const qs = query.toString()
+  return request<AnalysisSourceListResponse>(qs ? `/analysis/sources?${qs}` : '/analysis/sources')
+}
+
 /**
  * 触发分析：POST /api/analysis/sources/{id}/analyze（分块 → 逐块 → 综合，同步返回）。
  * 未识别 → 200 + summary=null + 显式契约；解析失败 → 409；模型失败 → 502（已存数据保留，可安全重试）。
@@ -952,6 +1080,26 @@ export function analyzeSource(sourceId: number): Promise<AnalysisResultResponse>
 /** 某来源最新总结：GET /api/analysis/sources/{id}/summary（尚无总结 404）。 */
 export function getAnalysisSummary(sourceId: number): Promise<AnalysisSummary> {
   return request<AnalysisSummary>(`/analysis/sources/${sourceId}/summary`)
+}
+
+/**
+ * 由某来源的总结生成 Word 成品：POST /api/analysis/sources/{id}/summary/word。
+ * `template` 省略或空 = 走该格式的全局默认模板；无总结 → 409，模板缺失 / 损坏 → 400，完整性失败 → 500。
+ */
+export function createSummaryWord(
+  sourceId: number,
+  template?: string | null
+): Promise<SummaryWordDeliverable> {
+  const body = template && template.length > 0 ? JSON.stringify({ template }) : JSON.stringify({})
+  return request<SummaryWordDeliverable>(`/analysis/sources/${sourceId}/summary/word`, {
+    method: 'POST',
+    body
+  })
+}
+
+/** 总结 Word 成品的下载地址（GET /api/analysis/summary-deliverables/{id}，直接回 .docx）。 */
+export function summaryWordDownloadUrl(deliverableId: number): string {
+  return `${API_BASE_URL}/analysis/summary-deliverables/${deliverableId}`
 }
 
 /** 一键送入主题创作：POST /api/analysis/sources/{id}/send-to-creation（只预填、不调用模型）。 */
@@ -972,6 +1120,7 @@ export default {
   createTask,
   listTasks,
   getTask,
+  updateTaskModel,
   listProviders,
   createProvider,
   updateProvider,
@@ -990,6 +1139,8 @@ export default {
   registerTemplate,
   setDefaultTemplate,
   getDeckThemes,
+  getDeckThemeDefault,
+  setDeckThemeDefault,
   fetchDeliverable,
   fetchDeliverableHtml,
   downloadDeliverable,
@@ -1005,7 +1156,10 @@ export default {
   uploadAnalysisSource,
   createAnalysisUrlSource,
   getAnalysisSource,
+  listAnalysisSources,
   analyzeSource,
   getAnalysisSummary,
+  createSummaryWord,
+  summaryWordDownloadUrl,
   sendToCreation
 }

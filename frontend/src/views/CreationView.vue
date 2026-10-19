@@ -479,6 +479,11 @@
           </button>
         </div>
 
+        <div v-if="!isChat" class="composer-opts">
+          <ModelSelect v-model="ideaProviderId" label="模型" default-label="跟随默认模型" />
+          <span class="xs muted">{{ ideaProviderHint }}</span>
+        </div>
+
         <div class="composer-hint">
           {{ isChat ? '当前轮次的作答请在上方问题卡片中完成' : '输入想法并发送，即可发起第一轮拷问' }}
         </div>
@@ -535,6 +540,7 @@ import {
   getDialogue,
   getHistoryDetail,
   getPlan,
+  isApiStatus,
   isSkipAnswer,
   listOpenItems,
   listRevisions,
@@ -557,6 +563,7 @@ import { splitPlanSections } from '../utils/markdown'
 import { formatDateTime, statusDotClass, statusLabel } from '../utils/taskMeta'
 import { awaitingLabel, awaitingResumeHint } from '../utils/resumeMeta'
 import GenerationPanel from '../components/GenerationPanel.vue'
+import ModelSelect from '../components/ModelSelect.vue'
 
 type ListState = 'loading' | 'ready' | 'error'
 type ChatState = 'loading' | 'ready' | 'error'
@@ -588,6 +595,8 @@ const expandedIds = ref<number[]>([])
 
 const idea = ref('')
 const starting = ref(false)
+/** 发起创作时选定的任务级模型覆盖：null = 跟随默认档位（拷问 / 方案 / 修订都按它解析）。 */
+const ideaProviderId = ref<number | null>(null)
 const drafts = ref<string[]>([])
 const skippedQ = ref<number[]>([])
 const ideaRef = ref<HTMLTextAreaElement | null>(null)
@@ -655,6 +664,13 @@ const headSubtitle = computed(() => {
   }
   return '把模糊想法经拷问收敛为确认后的结构化方案，再生成成品'
 })
+
+/** 模型选择器旁的一句说明：只讲已实现的覆盖范围。 */
+const ideaProviderHint = computed(() =>
+  ideaProviderId.value === null
+    ? '不指定模型：拷问、方案与修订按默认档位解析'
+    : '本任务全程用这一个配置：拷问、方案与修订都读它，不改变设置页的全局默认'
+)
 
 type ChipType = 'primary' | 'success' | 'info' | 'warning'
 const statusChip = computed<{ label: string; type: ChipType; dot: string } | null>(() => {
@@ -803,7 +819,7 @@ async function startIdea(): Promise<void> {
   if (!text || starting.value) return
   starting.value = true
   try {
-    const res = await startGrillingTask(text)
+    const res = await startGrillingTask(text, ideaProviderId.value)
     const d: Dialogue = {
       task_id: res.task.id,
       seed_input: text,
@@ -1093,12 +1109,12 @@ async function doResolve(item: OpenItem, status: ResolveStatus): Promise<void> {
 function describeFlowError(err: unknown, action: string): string {
   if (err instanceof BackendUnavailableError) return `后端未启动，${action}失败`
   const msg = (err as Error).message || ''
-  if (msg.includes('502'))
+  if (isApiStatus(err, 502))
     return '模型无法产出可用内容（前沿 / 方案 / 修订解析失败），请稍后重试或检查默认模型配置'
-  if (msg.includes('501')) return '方案已确认，但成品生成管线由 TB-5 / TB-6 落地'
-  if (msg.includes('422')) return '请求被拒绝：回答数量与问题数量不一致，或处置状态不合法'
-  if (msg.includes('404')) return '对应的轮次 / 方案 / 待确认事项不存在'
-  if (msg.includes('409')) return '生成闸门未放行：方案未确认或仍有未处置的待确认事项'
+  if (isApiStatus(err, 501)) return '方案已确认，但成品生成管线由 TB-5 / TB-6 落地'
+  if (isApiStatus(err, 422)) return '请求被拒绝：回答数量与问题数量不一致，或处置状态不合法'
+  if (isApiStatus(err, 404)) return '对应的轮次 / 方案 / 待确认事项不存在'
+  if (isApiStatus(err, 409)) return '生成闸门未放行：方案未确认或仍有未处置的待确认事项'
   return `${action}失败：${msg}`
 }
 
@@ -1768,6 +1784,18 @@ onMounted(() => {
   margin-top: var(--sp-2);
   font-size: var(--fs-xs);
   color: var(--text-4);
+}
+
+/* 发起创想旁的次级控件行（模型选择）：窄屏自动换行 */
+.composer-opts {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2) var(--sp-3);
+  flex-wrap: wrap;
+  margin-top: var(--sp-2);
+}
+.composer-opts > .xs {
+  line-height: 1.55;
 }
 
 /* 「为什么现在问」与备选方向 */

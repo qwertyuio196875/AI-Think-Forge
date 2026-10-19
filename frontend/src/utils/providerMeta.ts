@@ -18,6 +18,22 @@ export function kindLabel(kind: ProviderKind): string {
   }
 }
 
+/** 任务级模型选择器所需的最小字段（Provider 的子集，便于纯函数测试）。 */
+export interface ProviderOptionLike {
+  name: string
+  model_name: string
+  is_default: boolean
+}
+
+/**
+ * 选择器选项文案：`名称 · 模型名`，全局默认配置追加「（默认）」。
+ * 只描述后端真实返回的字段，不补写「推荐 / 更快」之类判断。
+ */
+export function providerOptionLabel(p: ProviderOptionLike): string {
+  const base = `${p.name} · ${p.model_name}`
+  return p.is_default ? `${base}（默认）` : base
+}
+
 export interface ConnectionReport {
   /** 展示语气：成功 / 可稍后重试 / 需修正。 */
   level: 'ok' | 'warn' | 'err'

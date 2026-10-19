@@ -69,6 +69,41 @@ export function parseStatusTag(status: string): { label: string; type: ParseTagT
   return { label: status, type: 'info' }
 }
 
+/**
+ * 来源列表行的状态标签：document 为 null（后端没有解析记录）时绝不显示「已解析」。
+ * 其余沿用 parseStatusTag，parsed / failed / unrecognized 严格区分。
+ */
+export function sourceRowTag(document: { parse_status: string } | null): {
+  label: string
+  type: ParseTagType
+} {
+  if (!document) return { label: '未解析', type: 'info' }
+  return parseStatusTag(document.parse_status)
+}
+
+/** 来源条目的最小形状（列表项与详情页共用；只需这几个字段）。 */
+export interface SourceRowLike {
+  kind: string
+  ref: string
+  meta: Record<string, unknown>
+}
+
+/**
+ * 来源列表行的可读名称：上传文件用原始文件名，URL 用主机名，
+ * 两者都取不到时退回 ref；空 ref 用「未知资料」，不编造标题。
+ */
+export function sourceDisplayName(source: SourceRowLike): string {
+  const meta = source.meta ?? {}
+  const original = typeof meta.original_name === 'string' ? meta.original_name : ''
+  if (original) return original
+  if (source.kind === 'url') {
+    const url = typeof meta.url === 'string' ? meta.url : source.ref
+    const host = hostFromUrl(url)
+    if (host) return host
+  }
+  return source.ref || '未知资料'
+}
+
 /** heading_source → 中文（DOCX 标题来源如实标注：样式 / 启发式 / 无）。 */
 export function headingSourceLabel(source: string | null | undefined): string {
   if (source === 'style') return '内置标题样式'

@@ -221,16 +221,31 @@
                 上传文件入口属 TB-7；此处仅登记「已放入 templates/ 目录」的文件名。非 .docx 会被拒绝（400），不会静默接受。
               </p>
 
-              <div class="sub-label spaced">单文件 HTML 演示 · 默认主题</div>
-              <div v-if="!deckThemes.length" class="pend-empty">读不到主题族清单（GET /api/deck-themes）。</div>
+              <div class="sub-label spaced">
+                单文件 HTML 演示 · 全局默认主题
+                <span v-if="deckThemeSaving" class="xs muted">（正在保存…）</span>
+              </div>
+              <div v-if="!deckThemes.length" class="pend-empty">
+                读不到主题族清单（GET /api/deck-themes）。
+              </div>
               <div v-else class="theme-grid">
                 <label
                   v-for="th in deckThemes"
                   :key="th.id"
                   class="theme-opt"
-                  :class="{ sel: htmlTheme === th.id }"
+                  :class="{
+                    sel: deckThemeDefault === th.id,
+                    'is-quiet': deckThemeSaving || deckThemeState === 'error'
+                  }"
                 >
-                  <input v-model="htmlTheme" type="radio" name="htmltheme" :value="th.id" />
+                  <input
+                    type="radio"
+                    name="htmltheme"
+                    :value="th.id"
+                    :checked="deckThemeDefault === th.id"
+                    :disabled="deckThemeSaving || deckThemeState === 'error'"
+                    @change="saveDeckTheme(th.id)"
+                  />
                   <span>
                     <b>{{ th.name }}</b>
                     <span class="td">{{ th.derived_from }}</span>
@@ -245,9 +260,24 @@
                   </span>
                 </label>
               </div>
+
+              <!-- 读取当前默认值失败：如实说明，不拿界面猜测冒充后端状态 -->
+              <div v-if="deckThemeState === 'error'" class="note err" role="alert" style="margin-top: var(--sp-3)">
+                <el-icon class="ico"><WarningFilled /></el-icon>
+                <div class="note-body">
+                  <b>{{ deckThemeError }}</b>
+                  <span>下方选择不会改动后端记录；点「重新读取」再试。</span>
+                  <div><el-button size="small" @click="loadDeckThemeDefault">重新读取</el-button></div>
+                </div>
+              </div>
+
               <p class="hint">
-                主题与色卡取自 <span class="mono">GET /api/deck-themes</span>（与生成入口同一份事实），不硬编码。单文件 HTML 成品属 TB-6；
-                此处选择<strong>不写入后端</strong>（暂无「默认主题」接口），仅为本页预览 —— 未指定主题时生成默认用 slate。
+                主题与色卡取自 <span class="mono">GET /api/deck-themes</span>（与生成入口同一份事实），不硬编码。
+                当前全局默认：<b>{{ deckThemeName || (deckThemeState === 'ready' ? '未读取到' : '读取中…') }}</b>；
+                点选主题即写入 <span class="mono">PUT /api/settings/deck-theme</span>，失败会退回原选择并说明原因。
+                它只作用于<strong>未显式指定主题</strong>的单文件 HTML 生成；创作页「生成面板」的主题默认<strong>跟随此项</strong>，
+                在面板里选了具体主题只覆盖那一次生成（每次成品仍记录实际所用主题）；
+                Word 模板的默认值与此无关，仍用上方「Word 模板 · 全局默认」。
               </p>
 
               <!-- pptx 计划项（不可用） -->
@@ -398,12 +428,15 @@ import {
   BackendUnavailableError,
   createProvider,
   deleteProvider,
+  getDeckThemeDefault,
   getDeckThemes,
   getTemplates,
+  isApiStatus,
   listProviders,
   registerTemplate,
   setDefaultProvider,
   setDefaultTemplate,
+  setDeckThemeDefault,
   testProvider,
   updateProvider,
   type DeckTheme,
@@ -425,16 +458,26 @@ const tplError = ref('')
 const settingTpl = ref<string | null>(null)
 const regName = ref('')
 const regBusy = ref(false)
-const htmlTheme = ref('')
 
 // 演示主题族：色卡 / 字体 / 署名取自 GET /api/deck-themes（不硬编码）。
 const deckThemes = ref<DeckTheme[]>([])
+/** 后端记录的全局默认主题 id（GET /api/settings/deck-theme）。 */
+const deckThemeDefault = ref('')
+const deckThemeState = ref<ListState>('loading')
+const deckThemeError = ref('')
+const deckThemeSaving = ref(false)
 
 const docxTemplates = computed(() => templates.value.filter((t) => t.format === 'docx'))
 
-const testingMap = reactive<Record<string, boolean>>({})
-const testResultMap = ref<Record<string, ConnectionReport>>({})
-const settingDefaultId = ref<string | null>(null)
+const deckThemeName = computed(() => {
+  if (!deckThemeDefault.value) return ''
+  const hit = deckThemes.value.find((t) => t.id === deckThemeDefault.value)
+  return hit ? hit.name : deckThemeDefault.value
+})
+
+const testingMap = reactive<Record<number, boolean>>({})
+const testResultMap = ref<Record<number, ConnectionReport>>({})
+const settingDefaultId = ref<number | null>(null)
 
 const defaultProvider = computed(() => providers.value.find((p) => p.is_default) ?? null)
 
@@ -447,7 +490,7 @@ const roles = computed(() => {
   return defs.map((d) => ({ ...d, providers: providers.value.filter((p) => p.kind === d.kind) }))
 })
 
-function reportClass(id: string): string {
+function reportClass(id: number): string {
   const r = testResultMap.value[id]
   if (!r) return ''
   return r.level === 'ok' ? 'ok' : r.level === 'warn' ? 'warn' : 'err'
@@ -548,7 +591,7 @@ const EMPTY_FORM: FormModel = {
 }
 
 const dialogVisible = ref(false)
-const editingId = ref<string | null>(null)
+const editingId = ref<number | null>(null)
 const formSaving = ref(false)
 const form = ref<FormModel>({ ...EMPTY_FORM })
 
@@ -613,7 +656,7 @@ async function saveProvider(): Promise<void> {
   } catch (err) {
     if (err instanceof BackendUnavailableError) {
       ElMessage.error('后端未启动，保存失败')
-    } else if ((err as Error).message.includes('409')) {
+    } else if (isApiStatus(err, 409)) {
       ElMessage.error('已存在同名配置，请换一个名称')
     } else {
       ElMessage.error('保存失败：' + (err as Error).message)
@@ -640,10 +683,59 @@ async function loadDeckThemes(): Promise<void> {
   try {
     const res = await getDeckThemes()
     deckThemes.value = res.items
-    if (!htmlTheme.value) htmlTheme.value = res.items[0]?.id ?? ''
   } catch {
     deckThemes.value = []
   }
+}
+
+/** 读取后端记录的全局默认主题（与主题清单分开失败，读不到就如实说读不到）。 */
+async function loadDeckThemeDefault(): Promise<void> {
+  deckThemeState.value = 'loading'
+  deckThemeError.value = ''
+  try {
+    const res = await getDeckThemeDefault()
+    deckThemeDefault.value = res.theme
+    deckThemeState.value = 'ready'
+  } catch (err) {
+    deckThemeDefault.value = ''
+    deckThemeState.value = 'error'
+    deckThemeError.value =
+      err instanceof BackendUnavailableError
+        ? '后端未启动，读不到全局默认主题'
+        : '全局默认主题读取失败'
+  }
+}
+
+/** 选择即写入后端：成功后以后端回显为准，失败退回原选择并说明原因。 */
+async function saveDeckTheme(theme: string): Promise<void> {
+  if (deckThemeSaving.value) return
+  const previous = deckThemeDefault.value
+  deckThemeDefault.value = theme
+  deckThemeSaving.value = true
+  try {
+    const res = await setDeckThemeDefault(theme)
+    deckThemeDefault.value = res.theme
+    deckThemeState.value = 'ready'
+    ElMessage.success(`已设为全局默认主题：${deckThemeName.value || res.theme}`)
+  } catch (err) {
+    deckThemeDefault.value = previous
+    if (err instanceof BackendUnavailableError) {
+      ElMessage.error('后端未启动，未能保存全局默认主题')
+    } else if (isApiStatus(err, 400)) {
+      ElMessage.error(describeDeckThemeDetail(err))
+    } else {
+      ElMessage.error('保存全局默认主题失败：' + (err as Error).message)
+    }
+  } finally {
+    deckThemeSaving.value = false
+  }
+}
+
+/** 取后端可读 detail（形如「请求失败：400 Bad Request · 未知的演示主题…」）。 */
+function describeDeckThemeDetail(err: unknown): string {
+  const msg = (err as Error).message || ''
+  const idx = msg.indexOf('·')
+  return idx >= 0 ? msg.slice(idx + 1).trim() : msg
 }
 
 async function doSetDefaultTpl(name: string): Promise<void> {
@@ -679,8 +771,8 @@ async function doRegister(): Promise<void> {
 function describeTplError(err: unknown, action: string): string {
   if (err instanceof BackendUnavailableError) return `后端未启动，${action}失败`
   const msg = (err as Error).message || ''
-  if (msg.includes('404')) return '模板文件不存在：请先把 .docx 放入 templates/ 目录'
-  if (msg.includes('400')) return `该文件不可作为模板（只接受 .docx）：${tailDetail(msg)}`
+  if (isApiStatus(err, 404)) return '模板文件不存在：请先把 .docx 放入 templates/ 目录'
+  if (isApiStatus(err, 400)) return `该文件不可作为模板（只接受 .docx）：${tailDetail(msg)}`
   return `${action}失败：${msg}`
 }
 
@@ -694,6 +786,7 @@ onMounted(() => {
   loadProviders()
   loadTemplates()
   loadDeckThemes()
+  loadDeckThemeDefault()
 })
 </script>
 
@@ -990,6 +1083,13 @@ onMounted(() => {
   border-color: var(--brand-500);
   background: var(--brand-50);
   box-shadow: 0 0 0 2px var(--brand-50);
+}
+.theme-opt.is-quiet {
+  cursor: default;
+  opacity: 0.72;
+}
+.theme-opt.is-quiet:hover {
+  border-color: var(--line-1);
 }
 .theme-chips {
   display: flex;
