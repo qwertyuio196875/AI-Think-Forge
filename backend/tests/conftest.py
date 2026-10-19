@@ -11,11 +11,13 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from fakes import InMemoryKeyStore, ScriptedModelClient
+from fakes import InMemoryKeyStore, ScriptedModelClient, ScriptedModelClientFactory
 from fastapi.testclient import TestClient
 
 from app.api.deps import get_key_store, get_model_client
+from app.db.provider_repository import ProviderRepository
 from app.main import create_app
+from app.providers.tiered_client import TieredModelClient
 
 
 @pytest.fixture
@@ -83,4 +85,39 @@ def grilling_app(app, scripted_model_client: ScriptedModelClient):
 def grilling_client(grilling_app) -> Iterator[TestClient]:
     """注入 fake 模型客户端后的进程内 HTTP 客户端。"""
     with TestClient(grilling_app) as test_client:
+        yield test_client
+
+
+@pytest.fixture
+def scripted_model_client_factory(
+    scripted_model_client: ScriptedModelClient,
+) -> ScriptedModelClientFactory:
+    """记录配置、固定返回同一替身客户端的工厂（验证档位解析用）。"""
+    return ScriptedModelClientFactory(scripted_model_client)
+
+
+@pytest.fixture
+def analysis_app(
+    app,
+    scripted_model_client_factory: ScriptedModelClientFactory,
+    key_store: InMemoryKeyStore,
+    db_path: Path,
+):
+    """在既有 app 上把「按档位解析」的模型客户端换成脚本化替身。
+
+    主流程（拷问 / 方案）仍走 `get_model_client` 的 fake；本夹具只替换资料分析的
+    档位解析器——两者互不影响，正好钉住「主流程行为不变」。
+    """
+    app.state.tiered_model_client = TieredModelClient(
+        ProviderRepository(db_path),
+        key_store,
+        scripted_model_client_factory,
+    )
+    return app
+
+
+@pytest.fixture
+def analysis_client(analysis_app) -> Iterator[TestClient]:
+    """资料分析测试用的进程内 HTTP 客户端（lifespan 会播种三档 provider）。"""
+    with TestClient(analysis_app) as test_client:
         yield test_client

@@ -20,6 +20,12 @@ dependencies = [
     "langgraph>=1.2",
     # python-docx：Word 成品（读取用户模板 + 写入 + 回读完整性检查，见 ADR-0003）。
     "python-docx>=1.1",
+    # charset-normalizer：TXT/MD 编码兜底探测（先严格解码 utf-8-sig / gb18030）。
+    "charset-normalizer>=3.3",
+    # markdown-it-py：MD 标题走 token 流，避免正则把代码围栏里的 `#` 误判为标题。
+    "markdown-it-py>=3.0",
+    # python-multipart：FastAPI 解析 multipart 上传（资料文件 / 模板上传入口）。
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]

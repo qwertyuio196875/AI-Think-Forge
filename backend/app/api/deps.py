@@ -10,6 +10,7 @@ from typing import Annotated
 
 from fastapi import Depends, Request
 
+from app.db.analysis_repository import AnalysisRepository
 from app.db.generation_repository import GenerationRepository
 from app.db.message_repository import MessageRepository
 from app.db.open_item_repository import OpenItemRepository
@@ -20,6 +21,7 @@ from app.db.task_repository import TaskRepository
 from app.db.template_repository import TemplateRepository
 from app.providers.key_store import KeyStore
 from app.providers.model_client import ModelClient, ProviderModelClientFactory
+from app.providers.tiered_client import TieredModelClient
 from app.providers.url_fetcher import UrlFetcher
 
 
@@ -78,6 +80,11 @@ def get_template_repository(db_path: str = Depends(get_db_path)) -> TemplateRepo
     return TemplateRepository(db_path)
 
 
+def get_analysis_repository(db_path: str = Depends(get_db_path)) -> AnalysisRepository:
+    """资料分析仓库依赖（来源 / 文档 / 分块 / 总结）。"""
+    return AnalysisRepository(db_path)
+
+
 def get_key_store(request: Request) -> KeyStore:
     """密钥库依赖（默认写 Windows 凭据管理器；测试注入内存替身）。"""
     return request.app.state.key_store
@@ -91,6 +98,11 @@ def get_model_client(request: Request) -> ModelClient:
 def get_model_client_factory(request: Request) -> ProviderModelClientFactory:
     """按 provider 配置构造模型客户端的工厂依赖（连接测试使用）。"""
     return request.app.state.model_client_factory
+
+
+def get_tiered_model_client(request: Request) -> TieredModelClient:
+    """按档位解析模型客户端的依赖（资料分析总结走 turbo 档）。"""
+    return request.app.state.tiered_model_client
 
 
 def get_url_fetcher(request: Request) -> UrlFetcher:
@@ -111,9 +123,11 @@ GenerationRepositoryDep = Annotated[
     GenerationRepository, Depends(get_generation_repository)
 ]
 TemplateRepositoryDep = Annotated[TemplateRepository, Depends(get_template_repository)]
+AnalysisRepositoryDep = Annotated[AnalysisRepository, Depends(get_analysis_repository)]
 DataDirDep = Annotated[str, Depends(get_data_dir)]
 TemplatesDirDep = Annotated[str, Depends(get_templates_dir)]
 KeyStoreDep = Annotated[KeyStore, Depends(get_key_store)]
 ModelClientDep = Annotated[ModelClient, Depends(get_model_client)]
 ModelClientFactoryDep = Annotated[ProviderModelClientFactory, Depends(get_model_client_factory)]
+TieredModelClientDep = Annotated[TieredModelClient, Depends(get_tiered_model_client)]
 UrlFetcherDep = Annotated[UrlFetcher, Depends(get_url_fetcher)]

@@ -29,7 +29,7 @@
 
 ## 当前状态
 
-领域文档与规格已就位，**后端已落地 TB-0（行走骨架）、TB-1（模型配置与连接测试）、TB-2（拷问第一轮）、TB-3（收敛 → 方案 → 确认闸门）、TB-4（方案修订与待确认事项）、TB-5（Word 成品与模板机制）与 TB-6（单文件 HTML 演示）并带自动化测试**；其余功能与前端仍在按曳光弹工单推进。除下表标 ✅ 者外，请以规格为准，勿当作已实现能力。
+领域文档与规格已就位，**后端已落地 TB-0（行走骨架）、TB-1（模型配置与连接测试）、TB-2（拷问第一轮）、TB-3（收敛 → 方案 → 确认闸门）、TB-4（方案修订与待确认事项）、TB-5（Word 成品与模板机制）、TB-6（单文件 HTML 演示）与 TB-7（资料分析：文本类文件 → 总结）并带自动化测试**；其余功能与前端仍在按曳光弹工单推进。除下表标 ✅ 者外，请以规格为准，勿当作已实现能力。
 
 | 部分 | 现状 |
 | --- | --- |
@@ -44,8 +44,9 @@
 | 方案修订与待确认事项 | ✅ TB-4：`plan_revisions`（修订前 / 修订后 / 时间 / 差异提示，旧版本不丢）、`open_items`（来源轮次 / 条目 / 状态）、对话式修订（`POST …/plan/revisions`）与差异提示、前沿问题新增 `why`（为什么现在问）/ `alternatives`（备选方向）（资产升 `grilling-v2`）、「暂时跳过」入待确认事项、未处置条目拦截生成（409） |
 | Word 成品与模板机制 | ✅ TB-5：`generations`（任务 / 方案 / 格式 / 产物位置 / **本次实际所用模板** / 时间）、`templates`（模板登记：名称 / 格式 / 是否默认）、确认方案后经 `python-docx` 生成 .docx（标题 / 正文 / 列表 / 表格按模板样式映射）、内置最小默认模板按需幂等生成、全局默认模板与任务级**临时覆盖**分离、产物**回读**完整性检查（US 22）、模板缺失 / 损坏 / 非 `.docx` 明确报错不静默空白生成 |
 | 单文件 HTML 演示 | ✅ TB-6：同一张 `generations` 表（`format=html`、`template_used=deck-theme:<id>`）、三套内建主题（`slate` / `ember` / `mono`，调色板以原型 `DECKT` 为准）、方案确定性排成幻灯片、样式 / 翻页脚本 / **西文字体（latin 子集 woff2）全部内联**、中文走系统字体回退、产物**扫描断言 0 条外部网络引用**、`file://` 直开可用（键盘翻页 + 页码 + 页内演讲者模式）、`THIRD-PARTY-LICENSES` 与产物署名齐备 |
+| 资料分析（文本类） | ✅ TB-7：`sources` / `documents` / `document_chunks`（含 locator）/ `summaries`（含引用与档位证据）；`embeddings` 仅按 ADR-0002 预留不填；上传校验（TXT / MD / DOCX + 50MB）→ 解析（TXT 编码顺序 `utf-8-sig → gb18030 → charset-normalizer`；MD 走 `markdown-it-py` token 流；DOCX 标题按 `paragraph.style.name` + 启发式回退并标 `heading_source`）→ 分块 → **逐块分析 + 综合（map-reduce，不称 RAG）** → ≤500 汉字总结；未识别是一级输出字段（无文本层短路、不冒充成功）；模型失败可读 502 且不丢已存数据；总结走 **turbo 档**、缺失时回退默认并如实记录；一键送入主题创作只预填、不调用模型；模板 multipart 上传（仅 `.docx`） |
 | 运行时目录 | ✅ `data/`（运行时 SQLite 落此处，gitignored）、`启动.bat`、根 `.gitignore`（覆盖 `/data/`、`/templates/`、`.slim/`） |
-| 自动化测试 | ✅ `backend/tests`（pytest，进程内 HTTP 接缝，不联网；194 项通过） |
+| 自动化测试 | ✅ `backend/tests`（pytest，进程内 HTTP 接缝，不联网；217 项通过） |
 
 ---
 
@@ -107,7 +108,7 @@ npm run dev      # Vite 开发服务器，默认 http://localhost:5173
 
 ```powershell
 python -m venv backend\.venv
-backend\.venv\Scripts\python.exe -m pip install fastapi "uvicorn[standard]" pydantic httpx keyring langgraph python-docx pytest ruff
+backend\.venv\Scripts\python.exe -m pip install fastapi "uvicorn[standard]" pydantic httpx keyring langgraph python-docx charset-normalizer markdown-it-py python-multipart pytest ruff
 ```
 
 > 依赖记录在根 `pyproject.toml`（运行时依赖 + `dev` extras），不另设 `requirements.txt`。
@@ -157,7 +158,13 @@ cd backend
 | GET | `/api/deck-themes` | **演示主题族清单**：三套内建主题的 `id` / `name` / `palette`（以原型 `DECKT` 为准）/ 内联字体 / 来源署名 / 许可 / 需保留的网络资源；与生成入口读同一份事实 |
 | GET | `/api/templates` | **模板清单**：模板目录里可被选用的模板（含内置 `_builtin/minimal-default.docx`）+ 是否全局默认 / 是否内置 / 是否可用 / 是否已登记 / 是否文件已缺失 |
 | POST | `/api/templates` | **模板登记**：body `{"name":string,"is_default":bool?}`，登记已放入 `templates/` 的模板 → 201；只接受 `.docx`，`.dotx` / `.dotm` / `.docm`（含改名成 `.docx` 的模板类型文件）→ 400 并提示「请另存为 .docx」；文件不存在 → 404 |
+| POST | `/api/templates/upload` | **模板文件上传**（multipart，字段 `file`）：直接落进 `templates/` 并登记 → 201；只接受 `.docx`，复用同一套扩展名 + 50MB 校验；同名已存在 → 409（不静默覆盖）；模板类型 / 损坏文件 → 400 且不留下半成品 |
 | PUT | `/api/templates/{name}/default` | 设为该格式的**全局默认模板**（同格式至多一个） |
+| POST | `/api/analysis/sources` | **资料分析上传 + 解析**（multipart，字段 `file`）：只收 TXT / MD / DOCX，扩展名 + 50MB 校验，文件落 `data/uploads/`；建来源 / 文档 / 分块（长文按约 1200 字切块）。解析失败仍 201 且 `document.parse_status="failed"` + 可读 `message`（来源与文件保留，不丢已存数据）；无文本层 → `parse_status="unrecognized"` + 一级 `unrecognized` 契约（`reason` / `locator` / `needs_ocr`），不返回空总结冒充成功 |
+| GET | `/api/analysis/sources/{id}` | 来源 + 文档解析结果（`parse_status` / `heading_source` / `encoding` / `headings` / `chunks` / `unrecognized` / `unrecognized_parts`），供分析页展示与重试 |
+| POST | `/api/analysis/sources/{id}/analyze` | **分析**：分块 → 逐块分析 → 综合（N 块 = N 次逐块 + 1 次综合，**分析管线不是 RAG**）→ 保存 ≤500 汉字总结并返回引用位置与实际档位（`provider_kind` / `provider_used` / `model_used` / `provider_fallback` / `provider_note`）。总结走 **turbo** 档；该档缺失 → 回退默认 provider 并如实记录。未识别 → 200 + `summary:null` + 显式契约、**不调用模型**；解析失败 → 409；模型失败 → 502（已存来源 / 文档 / 分块保留） |
+| GET | `/api/analysis/sources/{id}/summary` | 读取该来源最新总结（保存即落库，可查看 / 复制）；尚无总结 → 404 |
+| POST | `/api/analysis/sources/{id}/send-to-creation` | **一键送入主题创作**：新建 `creation` 任务，把该来源的总结预填为第 0 轮种子输入（已知信息）→ 201；**不调用模型**（首轮问题等用户下次推进时才需要模型）；可选 body `{"title":string?}` |
 
 ### Word 成品与模板机制
 
@@ -263,3 +270,18 @@ v1.1 队列（顺序即优先级）：RAG 最小版 → PPTX 填用户模板 →
 - HTML 演示主题的**版式骨架与翻页运行时**改编自 [nexu-io/open-design](https://github.com/nexu-io/open-design) 的 MIT 主题目录（`html-ppt-zhangzara-blue-professional` / `-coral` / `-studio`，`Copyright (c) 2026 Zara Zhang`；仓库主体为 Apache-2.0）；调色板、CSS、方案→幻灯片映射与页内演讲者模式为本项目**本地原创**，不做像素级复刻。
 - 内联字体为 SIL OFL-1.1（Inter / Source Serif 4 / JetBrains Mono），不单独售卖字体。
 - 许可全文、版权行与「OpenDesign 派生 / 本地原创」的逐项区分见 [`backend/app/generation/assets/THIRD-PARTY-LICENSES.md`](backend/app/generation/assets/THIRD-PARTY-LICENSES.md)；每份生成的 `.html` 里也保留署名注释。
+
+### 资料分析（文本类文件 → 总结）
+
+- **命名纪律**：这是「分块 → 逐块分析 → 综合」的**分析管线**，**不是 RAG**（ADR-0002）。只处理刚上传的单份资料，不建索引、不做跨文档检索；`embeddings` 表仅按 ADR-0002 预留、本版不填充。
+- **入口与校验**：`POST /api/analysis/sources` 收 TXT / MD / DOCX（PDF / PPTX 归 TB-8，URL 归 TB-9），扩展名白名单 + 50MB 上限；上传件落在 `data/uploads/`，路径不越出 `data/` 白名单。
+- **解析规则**（调研 A1 / A5）：
+  - TXT 编码顺序 `utf-8-sig` → `gb18030` → `charset-normalizer`，并把实际编码回传（`document.encoding`）；
+  - MD 走 `markdown-it-py` 的 token 流，**不用正则**——代码围栏里的 `#` 不会被误判为标题；
+  - DOCX 用 `paragraph.style.name` 判标题（`Title` / `Heading N`），作者手写加粗放大时退回字号 / 加粗启发式，并以 `heading_source: style | heuristic | none` 如实标注；图片、SmartArt、图表内文字、文本框浮动内容读不到 → 归入未识别。
+- **分析**：按约 1200 字切块（超长单块按句读二次切分），逐块分析后再综合成 **≤500 汉字**的总结，提炼主题 / 核心观点 / 关键内容 / 重要数据 / 结论；模型给长了按句读收敛并记 `truncated`。
+- **未识别是一级输出字段**：统一契约 `{unrecognized, reason, locator, needs_ocr}`。无文本层（典型：扫描件 / 图片型 DOCX）→ `reason="no_text_layer"`、`needs_ocr=true`，**短路不调用模型**、不返回空总结；有正文但含图片时用 `unrecognized_parts` 逐项明示，不伪装成完整分析。
+- **失败不丢数据**：解析失败 → 文档 `parse_status="failed"` + 可读提示，来源 / 文件仍在；模型失败 → 502 可读错误，已入库的来源 / 文档 / 分块保留，可安全重试。
+- **档位**：总结固定走 **turbo** 档（规格：主流程 plus、总结流程 turbo），由 `TieredModelClient` 按档位解析 provider；该档不存在时回退当前默认 provider，并在总结记录与 API 结果里写明 `provider_fallback` / `provider_used` / `provider_note`（不静默）。主流程（拷问 / 方案 / 修订）仍走原默认 provider 客户端，行为不变。
+- **一键送入主题创作**：`POST /api/analysis/sources/{id}/send-to-creation` 新建 `creation` 任务，把总结作为第 0 轮种子输入预填；**不调用模型**，首轮问题等用户下次推进 / 发起时才产生。
+- **可复现演示记录**：`backend\scripts\demo_analysis_long_docx.py` 会自己造一份 320 段的长 DOCX，经进程内 HTTP 真实上传 → 打印分块数、逐块 + 综合调用次数、总结汉字数、引用位置、turbo 档证据，以及图片型 DOCX 的未识别提示。

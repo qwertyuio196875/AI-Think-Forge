@@ -25,6 +25,7 @@ from app.db.seed import seed_default_providers
 from app.providers.key_store import KeyringKeyStore
 from app.providers.openai_client import HttpModelClientFactory
 from app.providers.provider_backed_client import ProviderBackedModelClient
+from app.providers.tiered_client import TieredModelClient
 from app.providers.url_fetcher import UnconfiguredUrlFetcher
 
 
@@ -84,6 +85,12 @@ def create_app(
     # 而不是恒为未配置占位实现（否则拷问／方案／修订主链路永远调不到模型）。
     # 测试仍经 `dependency_overrides[get_model_client]` 覆盖该接缝。
     app.state.model_client = ProviderBackedModelClient(
+        ProviderRepository(app.state.db_path),
+        app.state.key_store,
+        app.state.model_client_factory,
+    )
+    # 资料分析的总结流程按档位解析（turbo）；主流程仍走上面的默认 provider 客户端。
+    app.state.tiered_model_client = TieredModelClient(
         ProviderRepository(app.state.db_path),
         app.state.key_store,
         app.state.model_client_factory,

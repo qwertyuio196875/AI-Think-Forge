@@ -156,6 +156,91 @@ CREATE TABLE IF NOT EXISTS templates (
     is_default INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
     created_at TEXT NOT NULL
 );
+
+-- 资料登记（规格 §4；工单 16）：一次资料分析的来源。
+-- - kind：file（本地上传）/ url（TB-9；本单只落 file）；
+-- - ref：文件类为 `data/` 下的相对路径（带唯一前缀），URL 类为原始地址；
+-- - meta_json：原始文件名 / 大小 / 扩展名等非结构化元信息；
+-- - task_id：该来源所属的资料分析任务（任务状态与历史列表复用既有 `tasks`）。
+CREATE TABLE IF NOT EXISTS sources (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind       TEXT NOT NULL CHECK (kind IN ('file', 'url')),
+    ref        TEXT NOT NULL,
+    meta_json  TEXT NOT NULL DEFAULT '{}',
+    task_id    INTEGER REFERENCES tasks(id),
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_sources_task ON sources (task_id, id);
+
+-- 文档（规格 §4；工单 16）：来源解析后的一份文档。
+-- - path：`data/` 下的相对路径（与 sources.ref 一致，便于白名单解析）；
+-- - parse_status：pending / parsed / unrecognized / failed；
+--   失败与「未识别」都如实落库，**绝不用空字符串冒充解析成功**；
+-- - unrecognized_json / unrecognized_parts_json：未识别契约（一级输出字段）；
+-- - heading_source：DOCX 标题来自内置样式（style）/ 启发式（heuristic）/ 无（none）。
+CREATE TABLE IF NOT EXISTS documents (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_id               INTEGER NOT NULL REFERENCES sources(id),
+    path                    TEXT NOT NULL,
+    parse_status            TEXT NOT NULL DEFAULT 'pending'
+                            CHECK (parse_status IN ('pending', 'parsed', 'unrecognized', 'failed')),
+    parse_message           TEXT,
+    heading_source          TEXT,
+    encoding                TEXT,
+    headings                INTEGER NOT NULL DEFAULT 0,
+    images                  INTEGER NOT NULL DEFAULT 0,
+    unrecognized_json       TEXT,
+    unrecognized_parts_json TEXT NOT NULL DEFAULT '[]',
+    created_at              TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_documents_source ON documents (source_id, id);
+
+-- 文本分块（规格 §4；工单 16）：分析管线的分块，含位置 locator。
+-- 注意：这是「分块 → 逐块分析 → 综合」的分析管线数据，**不是 RAG 索引**（ADR-0002）。
+CREATE TABLE IF NOT EXISTS document_chunks (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id  INTEGER NOT NULL REFERENCES documents(id),
+    seq          INTEGER NOT NULL,
+    text         TEXT NOT NULL,
+    locator_json TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_document_chunks_seq ON document_chunks (document_id, seq);
+
+-- 总结（规格 §4；工单 16）：资料分析的输出，含引用位置与实际所用档位。
+-- - citations_json：来自哪些分块 / 位置（chunk_seq + locator + 摘录），供「总结与引用来源」；
+-- - provider_kind / provider_used / model_used / provider_fallback：总结走 turbo 档的
+--   实际证据；该档缺失时回退默认 provider 也如实记录（不静默）。
+CREATE TABLE IF NOT EXISTS summaries (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_id         INTEGER NOT NULL REFERENCES sources(id),
+    task_id           INTEGER REFERENCES tasks(id),
+    text              TEXT NOT NULL,
+    citations_json    TEXT NOT NULL DEFAULT '[]',
+    chunk_count       INTEGER NOT NULL DEFAULT 0,
+    truncated         INTEGER NOT NULL DEFAULT 0 CHECK (truncated IN (0, 1)),
+    provider_kind     TEXT,
+    provider_used     TEXT,
+    model_used        TEXT,
+    provider_fallback INTEGER NOT NULL DEFAULT 0 CHECK (provider_fallback IN (0, 1)),
+    provider_note     TEXT,
+    created_at        TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_summaries_source ON summaries (source_id, id);
+
+-- 嵌入（规格 §4 预留；ADR-0002）：v1 **不填充**，v1.1 检索层追加时再加索引与写入。
+-- 保留本表是为了让 v1.1 的跨文档检索不重构既有资料 / 分块 / 总结路径。
+CREATE TABLE IF NOT EXISTS embeddings (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    chunk_id       INTEGER NOT NULL REFERENCES document_chunks(id),
+    model_name     TEXT,
+    version        TEXT,
+    vector_json    TEXT,
+    created_at     TEXT
+);
 """
 
 

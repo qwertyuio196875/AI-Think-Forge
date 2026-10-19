@@ -65,6 +65,11 @@ class ScriptedModelClient:
         """按调用顺序逐条应答；调用次数超出后用最后一条。"""
         self._sequence = list(results)
         self._sequence_index = 0
+        self._error = None
+
+    def set_error(self, error: BaseException | None) -> None:
+        """让后续调用抛出指定异常（测试模型失败路径）。"""
+        self._error = error
 
 
 class ScriptedModelClientFactory:
@@ -74,10 +79,12 @@ class ScriptedModelClientFactory:
         self._client = client
         self.last_config: ModelClientConfig | None = None
         self.last_api_key: str | None = None
+        self.configs: list[ModelClientConfig] = []
         self.create_count = 0
 
     def create(self, config: ModelClientConfig, *, api_key: str | None = None) -> ScriptedModelClient:
         self.last_config = config
         self.last_api_key = api_key
+        self.configs.append(config)
         self.create_count += 1
         return self._client

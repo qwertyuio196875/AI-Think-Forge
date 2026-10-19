@@ -11,10 +11,14 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, status
+from pathlib import Path
+from typing import Annotated
+
+from fastapi import APIRouter, File, HTTPException, UploadFile, status
 
 from app.api.deps import TemplateRepositoryDep, TemplatesDirDep
 from app.generation.templates import (
+    ALLOWED_TEMPLATE_SUFFIXES,
     TemplateError,
     discover_templates,
     template_path,
@@ -25,6 +29,12 @@ from app.models.generation import (
     TemplateListResponse,
     TemplateRegisterRequest,
     TemplateRegisterResponse,
+)
+from app.security.uploads import (
+    UploadError,
+    read_upload,
+    resolve_within,
+    safe_filename,
 )
 
 router = APIRouter(prefix="/templates", tags=["templates"])
@@ -91,6 +101,64 @@ def register_template(
         template=Template(
             **record,
             is_default=bool(registered["is_default"]),
+            registered=True,
+        ),
+        default_template=default["name"] if default else None,
+    )
+
+
+@router.post(
+    "/upload",
+    status_code=status.HTTP_201_CREATED,
+    response_model=TemplateRegisterResponse,
+)
+def upload_template(
+    templates_dir: TemplatesDirDep,
+    template_repository: TemplateRepositoryDep,
+    file: Annotated[UploadFile, File()],
+) -> TemplateRegisterResponse:
+    """**模板文件上传**（multipart）：把用户 .docx 直接落进 `templates/` 并登记。
+
+    复用资料上传同一套「扩展名 + 50MB」校验与白名单落盘；只接受 `.docx`，
+    沿用 TB-5 的错误口径：`.dotx` / `.dotm` / `.docm`（含改名成 `.docx` 的模板
+    类型文件）→ 400 并提示「请另存为 .docx」。同名模板已存在 → 409，不静默覆盖。
+    """
+    try:
+        filename = safe_filename(file.filename or "")
+        suffix = Path(filename).suffix.lower()
+        if suffix not in ALLOWED_TEMPLATE_SUFFIXES:
+            raise UploadError(
+                f"只接受 .docx 模板（收到 {filename}）；"
+                "请在本机把该文件另存为 .docx 后再上传"
+            )
+        payload = read_upload(file.file)
+        target = resolve_within(templates_dir, filename)
+    except UploadError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+    if target.exists():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"模板已存在：{filename}；请改名后再上传，系统不会静默覆盖",
+        )
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(payload)
+    try:
+        validate_template_file(target, label="模板上传")
+    except TemplateError as exc:
+        target.unlink(missing_ok=True)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    registered = template_repository.register(filename, "docx", is_default=False)
+    default = template_repository.get_default("docx")
+    return TemplateRegisterResponse(
+        template=Template(
+            name=filename,
+            format="docx",
+            is_default=bool(registered["is_default"]),
+            builtin=False,
+            usable=True,
             registered=True,
         ),
         default_template=default["name"] if default else None,

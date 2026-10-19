@@ -122,3 +122,21 @@ class ProviderRepository:
                 "SELECT * FROM providers WHERE is_default = 1 ORDER BY id ASC LIMIT 1"
             ).fetchone()
         return dict(row) if row is not None else None
+
+    def get_by_kind(self, kind: str) -> dict | None:
+        """按档位标签（turbo / plus / max）取 provider；同档位优先默认者。
+
+        档位只是角色标签，同一档位理论上可有多条配置；这里取「默认优先、id 升序」
+        的第一条，保证解析结果稳定可复现。
+        """
+        with connect(self._db_path) as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM providers
+                WHERE kind = ?
+                ORDER BY is_default DESC, id ASC
+                LIMIT 1
+                """,
+                (kind,),
+            ).fetchone()
+        return dict(row) if row is not None else None
