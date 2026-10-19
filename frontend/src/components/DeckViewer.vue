@@ -21,6 +21,15 @@
 
     <!-- 舞台：iframe 渲染自包含产物；降级态给真实路径 -->
     <div class="deck-stage">
+      <!--
+        沙箱取舍（本组件唯一的成型决策）：`allow-same-origin` 是必需的——
+        产物没有 postMessage 接口，父级要驱动翻页（向同源 document 合成按键）并读取页码，
+        就必须同源；去掉它，底栏的上一页/下一页与页码同步会一起失效。
+        这样做是安全的，因为产物里**不可能存在非我们自己的脚本**：
+        产物由本机后端生成，所有模型派生的文本（标题/正文/列表/表格/讲者备注）
+        都经 `backend/app/generation/deck.py::_escape` 转义，产物内的脚本只有自写的翻页运行时，
+        且生成时的完整性检查断言外部网络引用为 0。也就是说——**转义才是安全边界，沙箱只是外层包装**。
+      -->
       <iframe
         v-if="hasHtml"
         ref="frame"
@@ -34,8 +43,8 @@
         <el-icon class="ico"><Film /></el-icon>
         <b>应用内预览暂不可用</b>
         <p>
-          取产物文件需 `GET /api/deliverables/{id}`；该端点此刻尚未返回内容（并行车道在途）。
-          这是<b>如实降级</b>，不伪造预览。
+          演示由 `GET /api/deliverables/{id}` 投递；当前没取到内容——通常是后端未启动，
+          或该产物文件已被移动/删除。这是<b>如实降级</b>，不伪造预览。
         </p>
         <p class="fp mono" v-if="filePath">{{ filePath }}</p>
         <p class="muted">可在文件管理器中定位上面路径后双击，离线 `file://` 直接打开，键盘翻页与演讲者模式（S）可用。</p>
