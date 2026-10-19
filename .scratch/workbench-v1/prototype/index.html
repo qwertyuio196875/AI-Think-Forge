@@ -65,7 +65,7 @@ p{margin:0}
   border-right:1px solid var(--line-1);transition:width .16s
 }
 .side-head{display:flex;align-items:center;gap:var(--sp-2);padding:var(--sp-4) var(--sp-4) var(--sp-3)}
-.mark{width:28px;height:28px;flex:none;border-radius:var(--r-sm);background:var(--brand-500);color:#fff;display:grid;place-items:center}
+.mark{width:28px;height:28px;flex:none;border:0;padding:0;border-radius:var(--r-sm);background:var(--brand-500);color:#fff;display:grid;place-items:center;cursor:default}
 .mark svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.9}
 .wordmark{min-width:0}
 .wordmark b{display:block;font-size:var(--fs-lg);letter-spacing:.2px}
@@ -73,6 +73,10 @@ p{margin:0}
 .rail-toggle{margin-left:auto;border:1px solid var(--line-1);background:var(--bg-surface);color:var(--text-3);
   width:28px;height:28px;border-radius:var(--r-sm);display:grid;place-items:center}
 .rail-toggle:hover{color:var(--brand-500);border-color:var(--brand-200);background:var(--brand-50)}
+/* 折叠态：品牌标记即展开控件（可点暗示 + 焦点环） */
+html.rail .mark{cursor:pointer}
+html.rail .mark:hover{box-shadow:0 0 0 3px var(--brand-50)}
+html.rail .mark:focus-visible{outline:2px solid var(--brand-500);outline-offset:2px;border-radius:var(--r-sm)}
 
 .nav{padding:0 var(--sp-3);display:flex;flex-direction:column;gap:2px}
 .nav-item{
@@ -612,24 +616,24 @@ html.rail .env-row{justify-content:center}
   <!-- ==================== 左侧栏 ==================== -->
   <aside class="sidebar">
     <div class="side-head">
-      <div class="mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3.5 8.5 12 4l8.5 4.5v7L12 20l-8.5-4.5z"/><path d="M3.5 8.5 12 13l8.5-4.5"/></svg></div>
+      <button class="mark" id="railMark" type="button" aria-label="展开侧栏" aria-expanded="true" aria-hidden="true" tabindex="-1"><svg viewBox="0 0 24 24"><path d="M3.5 8.5 12 4l8.5 4.5v7L12 20l-8.5-4.5z"/><path d="M3.5 8.5 12 13l8.5-4.5"/></svg></button>
       <div class="wordmark"><b>ThinkForge</b><span>阅读与创作工作台</span></div>
-      <button class="rail-toggle" id="railToggle" type="button" title="折叠 / 展开侧栏" aria-label="折叠或展开侧栏">
+      <button class="rail-toggle" id="railToggle" type="button" title="折叠 / 展开侧栏" aria-label="折叠或展开侧栏" aria-expanded="true">
         <svg class="i i-14"><use href="#i-fold"/></svg>
       </button>
     </div>
 
     <nav class="nav" aria-label="工作台入口">
-      <button class="nav-item is-active" type="button" data-nav="creation">
+      <button class="nav-item is-active" type="button" data-nav="creation" title="主题创作">
         <svg class="i i-18"><use href="#i-edit"/></svg><span class="label">主题创作</span><span class="count">3</span>
       </button>
-      <button class="nav-item" type="button" data-nav="analysis">
+      <button class="nav-item" type="button" data-nav="analysis" title="资料分析">
         <svg class="i i-18"><use href="#i-doc"/></svg><span class="label">资料分析</span><span class="count">1</span>
       </button>
-      <button class="nav-item" type="button" data-nav="history">
+      <button class="nav-item" type="button" data-nav="history" title="任务历史">
         <svg class="i i-18"><use href="#i-clock"/></svg><span class="label">任务历史</span>
       </button>
-      <button class="nav-item" type="button" data-nav="settings">
+      <button class="nav-item" type="button" data-nav="settings" title="设置">
         <svg class="i i-18"><use href="#i-gear"/></svg><span class="label">设置</span>
       </button>
     </nav>
@@ -688,8 +692,6 @@ html.rail .env-row{justify-content:center}
             <div class="head-actions">
               <span class="tag tag-brand" id="statusChip"><i class="dot dot-run"></i>拷问进行中 · 第 2 轮</span>
               <button class="btn btn-sm" type="button" id="newTaskBtn2"><svg class="i i-14"><use href="#i-plus"/></svg>新任务</button>
-              <div class="head-sep" role="separator"></div>
-              <button class="icon-btn" type="button" id="railToggle2" title="折叠侧栏" aria-label="折叠侧栏"><svg class="i"><use href="#i-fold"/></svg></button>
             </div>
           </div>
 
@@ -1635,23 +1637,47 @@ html.rail .env-row{justify-content:center}
   var manualRail=false;
   var mq=window.matchMedia('(max-width:760px)');
   var sidebar=document.querySelector('.sidebar');
+  var railToggle=document.getElementById('railToggle');
+  var railMark=document.getElementById('railMark');
   function isDrawer(){ return mq.matches; }
+  function isCollapsed(){
+    if(isDrawer()) return !sidebar.classList.contains('is-open');
+    return root.classList.contains('rail');
+  }
+  /* 折叠控件（左栏）与品牌标记共享同一 aria-expanded 状态 */
+  function syncRailUI(){
+    var collapsed=isCollapsed();
+    var exp=collapsed?'false':'true';
+    railToggle.setAttribute('aria-expanded',exp);
+    if(railMark){
+      railMark.setAttribute('aria-expanded',exp);
+      if(collapsed){ railMark.removeAttribute('aria-hidden'); railMark.tabIndex=0; }
+      else { railMark.setAttribute('aria-hidden','true'); railMark.tabIndex=-1; }
+    }
+  }
   function applyRail(){
-    if(isDrawer()){ root.classList.remove('rail'); return; }
+    if(isDrawer()){ root.classList.remove('rail'); syncRailUI(); return; }
     root.classList.toggle('rail', manualRail || window.innerWidth<=960);
+    syncRailUI();
   }
   function toggleRail(){
-    if(isDrawer()){ sidebar.classList.toggle('is-open'); return; }
+    if(isDrawer()){ sidebar.classList.toggle('is-open'); syncRailUI(); return; }
     manualRail=!manualRail; applyRail();
   }
-  document.getElementById('railToggle').addEventListener('click',toggleRail);
-  document.getElementById('railToggle2').addEventListener('click',toggleRail);
+  railToggle.addEventListener('click',toggleRail);
+  /* 折叠态下点品牌标记即展开（button 语义，Enter/Space 原生触发 click） */
+  if(railMark) railMark.addEventListener('click',function(){
+    if(!isCollapsed()) return;
+    if(isDrawer()){ sidebar.classList.add('is-open'); syncRailUI(); return; }
+    manualRail=false; root.classList.remove('rail'); syncRailUI();
+  });
   window.addEventListener('resize',applyRail);
   if(mq.addEventListener) mq.addEventListener('change',applyRail); else mq.addListener(applyRail);
   document.addEventListener('click',function(e){
     if(!sidebar.classList.contains('is-open')) return;
-    if(sidebar.contains(e.target) || (e.target.closest && e.target.closest('#railToggle2'))) return;
+    if(sidebar.contains(e.target)) return;
     sidebar.classList.remove('is-open');
+    syncRailUI();
   });
 
   /* ---------------- 弹层 ---------------- */
@@ -2177,6 +2203,7 @@ html.rail .env-row{justify-content:center}
 
   /* ---------------- 初始化 ---------------- */
   syncState();
+  syncRailUI();
   document.getElementById('convergeNote').classList.remove('is-on');
 })();
 </script>
