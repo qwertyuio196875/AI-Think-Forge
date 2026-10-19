@@ -36,7 +36,7 @@
 | 领域文档 | ✅ `GLOSSARY.md`、`docs/adr/0001~0003` |
 | 规格与工单 | ✅ 权威规格 `.scratch/workbench-v1/issues/08-v1-unified-spec.md`；曳光弹工单 TB-0 ~ TB-10 |
 | 页面原型 | ✅ `.scratch/workbench-v1/prototype/index.html`（静态自包含四视图，含评审标注 `REVIEW.md`） |
-| 前端骨架 | ⚠️ 部分：三栏壳与四路由已就位；`src/views/` 视图组件与构建由并行前端工作推进 |
+| 前端工作台 | ✅ 三栏壳 + 四路由（创作 / 分析 / 历史 / 设置）；任务级模型选择、分析回看与总结 Word、HTML 全局默认主题均已接入；`npm run build` / `type-check` 通过 |
 | 后端 | ✅ 行走骨架 TB-0：FastAPI 应用（`backend/app`）、`tasks` 最小表、健康检查与任务创建 / 列表 / 读取、模型客户端与 URL 抓取两个 fake 注入点接缝 |
 | 模型配置与连接测试 | ✅ TB-1：`providers` / `settings` 表、DeepSeek 默认播种（3 档角色）、密钥存 Windows 凭据管理器、OpenAI 兼容 httpx 客户端、配置 CRUD 与连接测试（错误分级）、开发期仅本机源的 CORS |
 | 拷问第一轮 | ✅ TB-2：`messages` 表（轮次 / 角色 / 内容 / 时间，问答同序落库）、版本化提示词资产（MIT 署名，见 ADR-0001）、LangGraph 最小节点图（分析输入 → 生成前沿 → 落库返回，前沿为空即停）、`/api/grilling/*` 发起 / 作答 / 读取对话 |
@@ -48,7 +48,21 @@
 | 资料分析（版式类） | ✅ TB-8：`pypdf` 解析 PDF 正文与字号启发式标题、`python-pptx` 解析每页标题 / 正文 / 表格；`documents.parser` 记录解析器；页 / 幻灯片级 locator 进入分块与引用；扫描件 / 纯图片文件 → `no_text_layer` + `needs_ocr=true` 短路；图片 / 图表 / 组合形状逐项进 `unrecognized_parts`；加密或损坏 PDF 明确失败，不绕过 |
 | 资料分析（URL） | ✅ TB-9：`POST /api/analysis/sources/url` 抓取公开网页后进入同一分析管线；纯函数 SSRF 校验（仅 http/https、拒绝内嵌凭据 / 环回 / 私网 / 链路本地 / 云元数据、解析前后双检）；重定向最多 3 跳且逐跳复检、超时 15s、下载上限 5MB；`trafilatura` 提取正文并过滤导航 / 广告；需登录 / 超时 / 超限如实提示且不绕过；无正文 → `no_main_text` / `empty_page` 明示 |
 | 运行时目录 | ✅ `data/`（运行时 SQLite 落此处，gitignored）、`启动.bat`、根 `.gitignore`（覆盖 `/data/`、`/templates/`、`.slim/`） |
-| 自动化测试 | ✅ `backend/tests`（pytest，进程内 HTTP 接缝，不联网；336 项通过）+ `frontend/tests`（`node --test` 纯函数测试） |
+| 自动化测试 | ✅ `backend/tests`（pytest，进程内 HTTP 接缝，不联网；**360 项通过**，`ruff check` 全绿）+ `frontend/tests`（`node --test` 纯函数测试，**46 项通过**） |
+
+### v1 收尾补齐（2026-10-19 评审）
+
+代码评审发现三项跨工单规格缺口，已在集成分支补齐：
+
+| 缺口 | 落地 |
+| --- | --- |
+| US23 任务级切换模型 | `tasks.provider_id` + `PUT /api/tasks/{id}/model`；创作 / 分析的模型选择器；拷问、方案、修订与总结按任务 provider 解析，未指定时沿用默认档位 |
+| US16 / US26 分析回看、续看与总结 Word | `GET /api/analysis/sources` 来源列表；历史条目 `source_id`；`?source=N` 恢复解析与总结；`POST /api/analysis/sources/{id}/summary/word` + `GET /api/analysis/summary-deliverables/{id}` 下载 |
+| US20 HTML 全局默认主题 | `settings.deck_theme_default` + `GET/PUT /api/settings/deck-theme`；生成未显式给 `theme` 时用全局默认，生成面板首项「跟随全局默认主题」 |
+
+同时修复：任务 404 样板统一、分析落库管线去重、URL fetcher 的 DNS rebinding 注释改为「缓解 + 残留窗口」、前端错误码改用 `ApiHttpError` / `isApiStatus`、静态托管支持 SPA 深链回退（刷新 `/analysis?source=N` 不再 404）。
+
+规格层面的补充决策见 `.scratch/workbench-v1/issues/08-v1-unified-spec.md`：模板「可打开但缺样式」维持 `template_style_applied=false` 降级；「存在 open 待确认事项时拒绝确认与生成」维持服务端纵深防御。
 
 ---
 
@@ -100,7 +114,7 @@ npm run dev      # Vite 开发服务器，默认 http://localhost:5173
 
 前端不做代理，直连后端 `http://127.0.0.1:8720/api`（见 `src/api/client.ts`）。后端为开发期提供了**仅放行本机开发源的 CORS 中间件**（`http://localhost:5173`、`http://127.0.0.1:5173`；方法 GET/POST/PUT/DELETE，头 Content-Type，不使用通配来源）；生产同源托管 `dist` 不受影响。后端未启动时，请求会被归类为「后端未启动」错误。
 
-注意：开发服务器能起来，但路由懒加载的四个视图组件（`src/views/CreationView.vue` 等）尚未创建，因此进入任一页面都会加载失败；`npm run build` 与 `npm run type-check` 同样需先补齐这些组件。
+四个视图（`CreationView.vue` / `AnalysisView.vue` / `HistoryView.vue` / `SettingsView.vue`）均已就位；`npm run build` 与 `npm run type-check` 可直接通过。
 
 ### 后端
 
@@ -110,7 +124,7 @@ npm run dev      # Vite 开发服务器，默认 http://localhost:5173
 
 ```powershell
 python -m venv backend\.venv
-backend\.venv\Scripts\python.exe -m pip install fastapi "uvicorn[standard]" pydantic httpx keyring langgraph python-docx charset-normalizer markdown-it-py python-multipart pytest ruff
+backend\.venv\Scripts\python.exe -m pip install fastapi "uvicorn[standard]" pydantic httpx keyring langgraph python-docx charset-normalizer markdown-it-py pypdf python-pptx python-multipart trafilatura pytest ruff
 ```
 
 > 依赖记录在根 `pyproject.toml`（运行时依赖 + `dev` extras），不另设 `requirements.txt`。
@@ -135,16 +149,17 @@ cd backend
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | GET | `/api/health` | 存活探针，返回 `{"status":"ok",...}` |
-| POST | `/api/tasks` | 创建任务，body `{"kind":"creation"\|"analysis","title":string?}` → 201 |
+| POST | `/api/tasks` | 创建任务，body `{"kind":"creation"\|"analysis","title":string?,"provider_id":int?}` → 201；`provider_id` 不存在 → 400 |
 | GET | `/api/tasks?kind=&status=` | 任务列表 `{"items":[...],"total":n}` |
 | GET | `/api/tasks/{id}` | 单个任务；不存在返回 404 |
+| PUT | `/api/tasks/{id}/model` | **任务级模型切换（US23）**：body `{"provider_id":int\|null}` → `{"id","provider_id"}`；`null` 清除覆盖，未知 provider → 400。只影响该任务的拷问 / 方案 / 修订 / 分析总结 |
 | GET | `/api/providers` | 模型配置列表（**不含密钥**，含 `has_key`） |
 | POST | `/api/providers` | 新建模型配置，body `{"name","base_url","model_name","kind?","api_key?"}` → 201 |
 | PUT | `/api/providers/{id}` | 编辑；`api_key` 可选，**传了才更新凭据**，否则保留 |
 | DELETE | `/api/providers/{id}` | 删除配置，同时删除其凭据 → 204 |
 | POST | `/api/providers/{id}/default` | 设为唯一默认 |
 | POST | `/api/providers/{id}/test` | 连接测试，返回 `{"ok":bool,"category":str,"message":str}`；`category` ∈ `ok \| network_error \| auth_error \| model_error \| insufficient_balance \| rate_limited \| request_error \| server_error` |
-| POST | `/api/grilling/tasks` | 从一句话 / 一段描述发起主题创作，body `{"idea":string}` → 201，返回 `{"task":Task,"round":{round_no,frontier:[{title,body,recommended_answer,why,alternatives}],answers}}`（第一轮前沿，1~5 个相互独立问题；每题带推荐答案，以及「为什么现在问」`why` 与「备选方向」`alternatives`，二者缺失容错） |
+| POST | `/api/grilling/tasks` | 从一句话 / 一段描述发起主题创作，body `{"idea":string,"provider_id":int?}` → 201，返回 `{"task":Task,"round":{round_no,frontier:[{title,body,recommended_answer,why,alternatives}],answers}}`（第一轮前沿，1~5 个相互独立问题；每题带推荐答案，以及「为什么现在问」`why` 与「备选方向」`alternatives`，二者缺失容错；`provider_id` 为任务级模型覆盖，未知 provider → 400） |
 | POST | `/api/grilling/tasks/{id}/answers` | 提交某轮回答（与前沿问题一一对应），body `{"round_no":int,"answers":[string\|null]}`；`null`（或纯空白）= **暂时跳过**，该题入待确认事项、保持未定 → 写后对话状态 `Dialogue` |
 | GET | `/api/grilling/tasks/{id}/dialogue` | 读取某任务的对话 / 轮次（种子输入 + 各轮前沿与回答 + 原始消息流），供前端渲染对话流 |
 | POST | `/api/grilling/tasks/{id}/advance` | 按上一轮回答重算下一轮前沿；前沿为空即收敛并生成方案草稿。返回 `{"task_id","converged","next_round"\|null,"plan"\|null}` |
@@ -154,19 +169,24 @@ cd backend
 | GET | `/api/grilling/tasks/{id}/plan/revisions` | 方案的修订历史（逐条含修订前 / 修订后内容与时间）`{"items":[...],"total":n}` |
 | GET | `/api/grilling/tasks/{id}/open-items` | **待确认事项**清单 `{"items":[{id,task_id,round_no,text,status,created_at,resolved_at}],"total":n}` |
 | POST | `/api/grilling/tasks/{id}/open-items/{item_id}/resolve` | 处置一条待确认事项：body `{"status":"confirmed"\|"dismissed"}`（用户确认动作） |
-| POST | `/api/tasks/{id}/generations` | **成品生成入口（硬闸门）**：方案未确认 / 无方案 → 409；**仍有未处置的待确认事项 → 409**；已确认且无未定条目 → 按 `format` 生成成品 → 201。可选 body `{"format":"docx"\|"html","template":string?,"theme":"slate"\|"ember"\|"mono"}`：`template` 为 Word 的**任务级临时覆盖**（不改变全局默认）；`theme` 为**单文件 HTML 演示**的主题（未知主题 → 400，不静默退回默认）。Word 返回 `template_style_applied` / `missing_styles` / `headings`；HTML 返回 `theme_used` / `inlined_fonts` / `cjk_fallback` / `slides` / `external_resources` / `network_resources_declared` / `presenter_mode`。模板缺失 / 损坏 / 非 `.docx` → 400（明确报错，不产出成品）；完整性检查未通过（含产物含外部网络引用）→ 500 且产物已丢弃、不落库 |
+| POST | `/api/tasks/{id}/generations` | **成品生成入口（硬闸门）**：方案未确认 / 无方案 → 409；**仍有未处置的待确认事项 → 409**；已确认且无未定条目 → 按 `format` 生成成品 → 201。可选 body `{"format":"docx"\|"html","template":string?,"theme":"slate"\|"ember"\|"mono"\|null}`：`template` 为 Word 的**任务级临时覆盖**（不改变全局默认）；`theme` 为**单文件 HTML 演示**的主题，**省略或 null = 跟随设置页的全局默认主题**，显式值只覆盖本次（未知主题 → 400，不静默退回默认）。Word 返回 `template_style_applied` / `missing_styles` / `headings`；HTML 返回 `theme_used` / `inlined_fonts` / `cjk_fallback` / `slides` / `external_resources` / `network_resources_declared` / `presenter_mode`。模板缺失 / 损坏 / 非 `.docx` → 400（明确报错，不产出成品）；完整性检查未通过（含产物含外部网络引用）→ 500 且产物已丢弃、不落库 |
 | GET | `/api/tasks/{id}/generations` | 某任务已生成的成品记录 `{"items":[{id,task_id,plan_id,format,file_path,template_used,created_at}],"total":n}`（HTML 一轨的 `template_used` 为 `deck-theme:<主题 id>`） |
 | GET | `/api/deliverables/{generation_id}` | **成品投递**：按 generation id 取产物字节（浏览器无法读 `file://`，前端「打开成品」与「应用内预览演示」都走这里）。`.docx` → `application/vnd.openxmlformats-officedocument.wordprocessingml.document`（`attachment`）；`.html` → `text/html; charset=utf-8`（`inline`，不加 CSP，可在 `iframe` 内直接渲染）；中文文件名用 `filename*=UTF-8''…`。只投递 `data/deliverables/` 内的真实文件（`resolve()` 后校验，越界 / 缺失 / 未知 id 一律 404，响应体不带路径） |
 | GET | `/api/deck-themes` | **演示主题族清单**：三套内建主题的 `id` / `name` / `palette`（以原型 `DECKT` 为准）/ 内联字体 / 来源署名 / 许可 / 需保留的网络资源；与生成入口读同一份事实 |
+| GET | `/api/settings/deck-theme` | **HTML 全局默认主题（US20）**：`{"theme":"slate\|ember\|mono","available":[...]}` |
+| PUT | `/api/settings/deck-theme` | 设置 HTML 全局默认主题，body `{"theme":string}`；未知主题 → 400 |
 | GET | `/api/templates` | **模板清单**：模板目录里可被选用的模板（含内置 `_builtin/minimal-default.docx`）+ 是否全局默认 / 是否内置 / 是否可用 / 是否已登记 / 是否文件已缺失 |
 | POST | `/api/templates` | **模板登记**：body `{"name":string,"is_default":bool?}`，登记已放入 `templates/` 的模板 → 201；只接受 `.docx`，`.dotx` / `.dotm` / `.docm`（含改名成 `.docx` 的模板类型文件）→ 400 并提示「请另存为 .docx」；文件不存在 → 404 |
 | POST | `/api/templates/upload` | **模板文件上传**（multipart，字段 `file`）：直接落进 `templates/` 并登记 → 201；只接受 `.docx`，复用同一套扩展名 + 50MB 校验；同名已存在 → 409（不静默覆盖）；模板类型 / 损坏文件 → 400 且不留下半成品 |
 | PUT | `/api/templates/{name}/default` | 设为该格式的**全局默认模板**（同格式至多一个） |
 | POST | `/api/analysis/sources` | **资料分析上传 + 解析**（multipart，字段 `file`）：收 TXT / MD / DOCX / PDF / PPTX，扩展名 + 50MB 校验，文件落 `data/uploads/`；建来源 / 文档 / 分块（长文按约 1200 字切块），`document.parser` 记录实际解析器。解析失败仍 201 且 `document.parse_status="failed"` + 可读 `message`（来源与文件保留，不丢已存数据）；无文本层 → `parse_status="unrecognized"` + 一级 `unrecognized` 契约（`reason` / `locator` / `needs_ocr`），不返回空总结冒充成功 |
 | POST | `/api/analysis/sources/url` | **URL 来源 + 抓取解析**：body `{"url":string}` → 安全校验 → 抓取 → 正文提取 → 建来源 / 文档 / 分块（201）。安全拒绝（非法协议 / 内嵌凭据 / 环回 / 私网 / 链路本地 / 云元数据等）→ 400 + 可读原因，**不落库、不抓取**；抓取失败 / 需登录 / 超时 / 超限 → 201 + `parse_status="failed"` + 可读 `message`（与上传失败同口径）；无正文 → `unrecognized`（`no_main_text` / `empty_page`）。`source.meta` 记 `url` / `final_url` / `fetched_at` / `status` / `content_type` / `size` / `redirects` |
+| GET | `/api/analysis/sources?limit=&offset=` | **最近资料列表（US16/US26）**：按最近更新倒序返回来源、最新文档（`parse_status` / 分块数 / 文件名）与总结标记；供分析页「最近资料」与历史回看 |
 | GET | `/api/analysis/sources/{id}` | 来源 + 文档解析结果（`parser` / `parse_status` / `heading_source` / `encoding` / `headings` / `chunks` / `unrecognized` / `unrecognized_parts`），供分析页展示与重试 |
 | POST | `/api/analysis/sources/{id}/analyze` | **分析**：分块 → 逐块分析 → 综合（N 块 = N 次逐块 + 1 次综合，**分析管线不是 RAG**）→ 保存 ≤500 汉字总结并返回引用位置与实际档位（`provider_kind` / `provider_used` / `model_used` / `provider_fallback` / `provider_note`）。总结走 **turbo** 档；该档缺失 → 回退默认 provider 并如实记录。未识别 → 200 + `summary:null` + 显式契约、**不调用模型**；解析失败 → 409；模型失败 → 502（已存来源 / 文档 / 分块保留） |
-| GET | `/api/analysis/sources/{id}/summary` | 读取该来源最新总结（保存即落库，可查看 / 复制）；尚无总结 → 404 |
+| GET | `/api/analysis/sources/{id}/summary` | 读取该来源最新总结（保存即落库，可查看 / 复制 / 导出 Word）；尚无总结 → 404 |
+| POST | `/api/analysis/sources/{id}/summary/word` | **总结导出 Word（US16）**：body 可选 `{"template":string?}` → 201，用已保存总结 + 模板生成 `.docx` 并写入 `summary_deliverables`；无总结 → 409；模板缺失 / 损坏 / 非 `.docx` → 400。**不创建方案、不写 `generations`**，避免把资料总结冒充方案成品 |
+| GET | `/api/analysis/summary-deliverables/{id}` | 下载总结 Word 成品；只投递 `data/deliverables/` 内真实文件，越界 / 缺失 / 未知 id → 404 |
 | POST | `/api/analysis/sources/{id}/send-to-creation` | **一键送入主题创作**：新建 `creation` 任务，把该来源的总结预填为第 0 轮种子输入（已知信息）→ 201；**不调用模型**（首轮问题等用户下次推进时才需要模型）；可选 body `{"title":string?}` |
 
 ### Word 成品与模板机制
@@ -178,12 +198,14 @@ cd backend
 - **默认模板 vs 临时覆盖**：`PUT /api/templates/{name}/default` 设**全局默认模板**；生成请求里的 `template` 是**任务级临时覆盖**——只影响当次生成，**不改变全局默认**，两者在数据与 API 上都分开。
 - **每次生成记录实际所用模板**（`generations.template_used`，取 `templates/` 下的相对路径）。
 - **明确报错而非静默降级**：模板缺失 / 损坏 / 是 `.dotx`、`.dotm`、`.docm` → 400 并提示「请另存为 .docx」；模板未定义某样式 → 该段回退为「直接设字号 / 加粗」并在产物元数据标 `template_style_applied: false`；产物回读完整性检查（US 22）未通过 → 丢弃产物、不落库、返回 5xx。
+- **资料总结也可以用模板导出 Word**：`POST /api/analysis/sources/{id}/summary/word` 把已保存总结写入 `.docx`，记录在 `summary_deliverables`；与方案 Word 共用模板解析顺序（任务级临时选择 > 全局默认 > 内置最小默认），但**不创建方案、不写 `generations`**。
 - **可复现演示记录**：`backend\scripts\demo_word_deliverable.py`（进程内 HTTP 接缝 + 脚本化模型替身，不联网）会真的生成 .docx 并回读打印章节与样式映射，含换模板、缺模板、非 `.docx`、样式回退四种情形。
 
 ### 单文件 HTML 演示（主题族、资源内联与署名）
 
 - **成品形态**（术语「单文件 HTML」）：自包含 `.html`，双击经 `file://` 离线打开；不依赖服务器、Node 或外网。
 - **主题族**：内建三套本地主题，**id 与调色板以页面原型的 `DECKT` 为准**——`slate`（Slate 极简）/ `ember`（Ember 暖调）/ `mono`（Mono 等宽）。未知主题 → 400 明确报错，**绝不静默退回默认主题**。
+- **全局默认主题（US20）**：设置页保存 `deck_theme_default`；生成请求省略 `theme` 或传 `null` 时使用它，生成面板首项「跟随全局默认主题」并显示当前默认名；显式主题只覆盖本次，实际主题仍记入 `template_used=deck-theme:<id>`。
 - **资源内联（硬要求）**：样式、翻页脚本、**西文字体**全部内联；西文只打包**实际用到的 latin 子集 woff2**（base64，约 1.33x 膨胀），**中文用系统字体回退**（调研结论：中文单字重全量子集约 2.3 MB，base64 约 3.1 MB，是西文的 10~30 倍，且全量内联会丧失 CJK 按 `unicode-range` 的按需分片加载）。产物元数据记 `inlined_fonts` 与 `cjk_fallback: true`。
 - **无外部网络引用**：生成后扫描产物文本（`http(s)://`、指向网络的 `src=`/`href=`、`<link>`、CDN、非 `data:` 的 `url()`），要求 **0 条**；未过则视为结构损坏 → 丢弃产物、不落库、返回 5xx（US 22）。若将来有主题必须保留网络资源，必须在产物与生成记录里**明确声明**，不得静默（当前三套主题均为 `[]`）。
 - **演示能力**：键盘翻页（← / → / PageUp / PageDown / 空格，另支持 Home / End）、页码与进度条、触屏滑动、**页内演讲者模式**（`S` 切换：当前 / 下一页标题、计时器、讲者备注）。参照的 OpenDesign 主题示例**没有**演讲者模式，故这部分为本项目自写（`presenter_mode: "in-page-overlay"`）。
@@ -242,10 +264,25 @@ v1.1 队列（顺序即优先级）：RAG 最小版 → PPTX 填用户模板 →
 
 ## 测试与验收
 
-- **唯一自动化测试接缝 = 本地工作台 HTTP API 边界**：进程内客户端驱动，不起真实端口、不开浏览器、不联网。
+- **后端自动化测试接缝 = 本地工作台 HTTP API 边界**：进程内客户端驱动，不起真实端口、不开浏览器、不联网。前端另有 `node --test` 纯函数单测（46 项），不替代 API 接缝；UI 走手工验收。
 - 断言三类可观察结果：API 状态、持久化数据（「重启续作」靠重建客户端再读验证）、数据目录中的成品文件。
 - 外部世界只有两个 fake 注入点：模型客户端（脚本化应答，零真实花费）与 URL 抓取（假响应 + 纯函数式 URL 安全校验负测）。
 - 不对模型输出的语义质量做自动化断言，语义质量由人看证据链验收；前端走手工验收。
+
+### 验证命令（集成分支）
+
+```powershell
+# 后端（在 backend/ 下）：360 passed，ruff 全绿
+.\.venv\Scripts\python.exe -m pytest --no-header -q --tb=short
+.\.venv\Scripts\python.exe -m ruff check .
+
+# 前端（在 frontend/ 下）：46 passed，type-check / build 通过
+npm run test:unit
+npm run type-check
+npm run build
+```
+
+真实后端联调（无需有效模型 Key）：启动后端后用 `backend/scripts/` 下的演示脚本，或按 TB-7 工单（`16-tb7-file-analysis-text.md`）的演示记录上传 DOCX → 分析页「最近资料」→ `?source=N` 回看 → 总结「下载 Word」→ 设置页切 HTML 全局默认主题 → 生成面板「跟随全局默认主题」。真实模型总结的语义质量与引用渲染仍需持有效 Key 走查一次。
 
 ---
 

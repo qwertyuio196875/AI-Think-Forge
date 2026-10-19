@@ -103,3 +103,28 @@ Status: closed — 已实现并合入 integration/workbench-v1
 - 真实模型总结卡 / 引用 / 档位回退渲染需持有效 Key 人工走查一次。
 - 文件选择器触发的上传 → 分析全链路留人工验收。
 - 历史页暂无来源反查端点，分析任务只能进任务详情，不能直达对应来源；已以如实文案降级。
+
+### 2026-10-19 · 评审补齐：来源列表、回看与总结 Word（US16/US26）
+
+**提交**：`f56b66c`（后端）→ `8989305`；前端 `de06390` + `17f85a0` → 合并 `0e941b6`；静态托管深链回退 `f7b15b4`。
+
+**后端**
+- `GET /api/analysis/sources?limit=&offset=`：返回来源、最新文档（解析状态、分块数、文件名）与总结标记；按最近更新倒序。
+- `HistoryItem.source_id`：历史条目反查该任务最新来源，解决「分析任务只能进任务详情」的缺口。
+- `POST /api/analysis/sources/{id}/summary/word`：用已保存总结 + Word 模板生成 `.docx`，新表 `summary_deliverables` 留痕；`GET /api/analysis/summary-deliverables/{id}` 下载，路径限定 `data/deliverables/`，越界 404。
+- **不伪造 plan**：总结成品独立于 `generations`，不创建方案、不写生成记录，避免把资料总结冒充「已确认方案的成品」。
+- 无总结时返回 409 可读提示；模板缺失/损坏/非 `.docx` 仍按 TB-5 口径明确报错。
+
+**前端**
+- 分析页新增「最近资料」列表，点一行经 `?source=` 恢复当时的文档、解析状态、总结与引用；历史页分析任务显示「来源 #N · 可回看解析与总结」与「回看」按钮。
+- 总结卡新增「下载 Word」与模板选择（默认「全局默认模板」），显示实际所用模板。
+- 解析三态仍严格区分 `parsed` / `failed` / `unrecognized`；恢复失败时明确提示，不把失败显示成成功。
+
+**验证**
+- 后端：`test_analysis_sources.py` 3 项、`test_summary_word.py` 7 项、`test_history.py` 来源字段回归；集成分支全量 **360 passed**，`ruff` 全绿。
+- 真机联调（`data/demo/review-smoke.db`）：DOCX 上传 → 201 `parsed`、1 分块 → 最近资料 → `?source=1` 深链恢复 → 总结卡 → 「下载 Word」提示实际模板 `_builtin/minimal-default.docx`；`GET /summary` 200；历史「回看」跳转成功。
+- 修复 `createWebHistory` 深链刷新 404：`SPAStaticFiles` 对非 `/api/**`、非 `/assets/**`、无扩展名路径回退 `index.html`；`/api/no-such` 与缺失静态文件仍 404。`test_spa_static.py` 覆盖。
+
+**遗留**
+- 来源列表当前存在 N+1 查询；单用户本地规模可接受，未优化。
+- 真实模型生成的总结语义质量与引用渲染仍需持有效 Key 人工走查一次。

@@ -140,3 +140,13 @@ template_style_applied = False ｜missing_styles = ['Heading 1', 'Heading 2', 'H
 3. **`file_path` 存的是绝对路径**：个人本地工作台可接受且无歧义（`data_dir` 可配置，测试指向临时目录）；若日后要迁移 / 换机，需要「相对仓库根」的迁移脚本。已在 `generations.file_path` 注释里说明。
 4. **「用 Word 打开」的人工验收未做**：自动化只做到「文档库可打开 + 回读样式映射正确」。建议验收时双击 `data/deliverables/6/*.docx` 目视确认（复杂模板的页眉页脚 / 页面布局保留边界遵循 ADR-0003「不承诺无损」口径）。
 5. **未做**（本单范围外，勿误当已实现）：单文件 HTML 演示（TB-6，`format=html` 现返回 501）、PPTX、`docxtpl` 式模板填空、模板版本管理、模板删除（`templates` 表只增不删，删除留待有需求时补）。
+
+### 2026-10-19 · 评审补齐：资料总结也可以用 Word 模板导出（US16）
+
+**提交**：后端 `f56b66c` → 合并 `8989305`；前端 `de06390` + `17f85a0` → 合并 `0e941b6`。
+
+- 新增 `summary_deliverables` 表：`source_id`、`template_used`、`file_path`、`created_at` 等；**不复用 `generations`**，因为资料总结没有「已确认方案」，写进 `generations` 会把两种交付物混为一谈。
+- API：`POST /api/analysis/sources/{id}/summary/word`（body 可带 `template`）→ 生成 `.docx`；`GET /api/analysis/summary-deliverables/{id}` 下载。无总结 409；模板不存在 / 损坏 / 非 `.docx` 400；下载路径限定 `data/deliverables/`，越界 404。
+- 模板解析顺序与方案 Word 一致：任务级临时选择 > 全局默认 > 内置最小默认；响应记录实际模板。
+- 验证：`backend/tests/test_summary_word.py` 7 项；集成分支全量 **360 passed**、`ruff` 全绿。真机：DOCX 上传 → 注入已保存总结 → 下载 Word 200，实际模板 `_builtin/minimal-default.docx`，产物 36 KB 可被 `python-docx` 回读。
+- 遗留：总结 Word 的样式映射沿用 TB-5 的「可打开但缺样式降级 + `template_style_applied=false`」口径；未做总结专用的模板管理界面。

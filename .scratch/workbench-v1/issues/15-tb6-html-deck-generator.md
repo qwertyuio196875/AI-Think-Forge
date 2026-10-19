@@ -70,3 +70,13 @@ Status: closed — 已实现（待编排者提交）
   5. `generations` 表未新增列，HTML 一轨的 `inlined_fonts` / `cjk_fallback` / `slides` / `external_resources` 只在**生成响应**与**产物元数据**里，`GET /api/tasks/{id}/generations` 复读时只有 `template_used`（`deck-theme:<id>`）可推断主题；若前端需要在成品卡上展示内联字体清单，需再补列或让前端在生成当次缓存（当时判断为不值得为此改表）。
   6. `templates` 表 / `GET /api/templates` 仍只覆盖 `.docx`（`discover_templates` 扫的是模板目录里的文件）；HTML 主题不进模板登记表，也**不做**全局默认主题设置（生成时未指定 `theme` 即用 `slate`）。若产品要「默认 HTML 主题」，需另加设置项。
   7. 字体资产为随包分发的二进制（5 个 woff2，112 KB）。若将来要换字体/加主题，须同步更新 `THIRD-PARTY-LICENSES.md` 与 `licenses/`（当前 OFL-1.1 三族）。
+
+### 2026-10-19 · 评审补齐：HTML 全局默认主题（US20）
+
+**提交**：`f56b66c`（后端）→ `8989305`；前端 `de06390` + `17f85a0` → 合并 `0e941b6`。
+
+- 原「不做全局默认主题」的决定**已被本单覆盖**：`settings.deck_theme_default` 保存全局默认，`GET/PUT /api/settings/deck-theme` 读写，非法主题 400。
+- 生成请求未显式给 `theme` 时使用全局默认；显式主题只覆盖本次。实际主题仍记入 `generations.template_used=deck-theme:<id>`。
+- UI：生成面板主题区首项为「跟随全局默认主题」，并显示「当前：Ember 暖调」；`theme` 初始为空、不再自动选第一个；设置页「单文件 HTML 演示 · 全局默认主题」可真实读写。
+- 真机联调：设置全局默认 `ember` → 确认方案任务生成 HTML → 产物实际使用 Ember，页面显示 `已使用 Ember 暖调`；请求体 `theme: null` 由前端单测覆盖。
+- 测试：`backend/tests/test_deck_theme_settings.py` 4 项；前端 `workbenchGaps.test.mts` 覆盖 theme 空值与 API 读写。

@@ -73,3 +73,14 @@ Status: closed — 已实现（待编排者提交）
   3. `ModelClientConfig.timeout_seconds` 默认 60s；长生成（TB-2+）需按 03-deepseek-facts §6 调大 read timeout（官方建议显著 >10 分钟）。
   4. 未实现 `GET /api/providers/{id}` 单条（规格 API 列表未要求）；`settings` 表已建但暂无独立读写 API（供后续工单）。
   5. `ProviderUpdate` 用 `exclude_none`，暂不支持把 `kind` 显式清空为 NULL。
+
+### 2026-10-19 · 评审补齐：任务级模型切换（US23）
+
+**提交**：`f56b66c`（后端修复 lane）→ 合并 `8989305`；补充防御 `0abb1f7`。
+
+- schema：`tasks.provider_id`（可空，不建外键）+ 幂等迁移 `MIGRATION_COLUMNS`；老库直接补列。
+- API：`PUT /api/tasks/{id}/model` 设置或清除任务级 provider；`POST /api/tasks`、`POST /api/grilling/tasks` 可带 `provider_id`；未知 provider 返回 400。
+- 解析：拷问 start / advance / revise 与资料分析总结按任务 provider 解析；`TieredModelClient.resolve(kind, provider_id=None)` 未指定时沿用原档位/默认配置。
+- UI：「主题创作」发起区与「资料分析」面板都有「模型」选择器（`ModelSelect.vue`），默认「跟随默认模型 / 跟随档位」；设置页文案改为「任务级覆盖在任务内进行，不改写全局默认」。
+- 验证：`backend/tests/test_task_model.py` 9 项、`test_analysis.py` / `test_grilling.py` 相关回归；集成分支全量 `pytest` **360 passed**、`ruff` 全绿。
+- 遗留：provider 被删除后任务保留悬挂引用，调用时返回可读 502，需用户重选；未做「删除前提示被哪些任务引用」。

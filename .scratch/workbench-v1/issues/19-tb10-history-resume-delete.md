@@ -118,3 +118,10 @@ Status: closed — 已实现（待编排者提交）
         本单只保证该情况下返回可读 502 而非堆栈。
      c. 重复对同一轮 `submit_answers` 会再追加回答（无重入保护）；`advance` 成功后再次调用会多产出一份方案行
         （`get_current` 取最新，功能不受影响，但会累积冗余行）。
+
+### 2026-10-19 · 评审补齐：分析任务回看与深链刷新
+
+- `GET /api/history` 的条目新增 `source_id`（该任务最新分析来源）；前端历史页对分析任务显示「来源 #N · 可回看解析与总结」与「回看」按钮，点击跳 `/analysis?source=N`。
+- 修复 `createWebHistory` 下刷新深链 404：`SPAStaticFiles` 回退 `index.html`，`/api/**` 与 `/assets/**` 仍保持 404（`backend/tests/test_spa_static.py`）。
+- 真机联调：历史页「回看」→ `/analysis?source=1` → 恢复解析结果与已保存总结；直接刷新该 URL 仍 200。
+- 权限/安全边界不变：仍仅监听 `127.0.0.1`，文件访问白名单不外扩；`summary_deliverables` 下载路径限定 `data/deliverables/`。
