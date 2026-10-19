@@ -14,7 +14,7 @@
 
 - 后端 FastAPI 单进程，仅监听 `127.0.0.1:8720`；托管前端 Vite build 产物 + `/api/*`。
 - Agent 工作流用 LangGraph：拷问节点（状态机：分析输入→生成前沿问题→等待回答→重算）；每轮自动持久化，任务可恢复。
-- 模型接入统一 OpenAI 兼容客户端（DashScope compatible-mode，端点与模型 ID 以 @librarian 核实结果为准），禁止业务代码绑定厂商 SDK。
+- 模型接入统一 OpenAI 兼容客户端（**默认服务商 = DeepSeek**，2026-10-19 用户决策变更，见 §9；端点与模型 ID 以 @librarian 核实结果为准），禁止业务代码绑定厂商 SDK。
 - 密钥：Windows 凭据管理器（`keyring` 或 wincred），SQLite 只存非敏感配置；日志脱敏。
 - 文件访问限定 `data/`、`templates/` 白名单目录；上传校验扩展名+大小上限（默认 50MB）。
 - URL 抓取防护清单：仅 http/https、解析前+解析后双检封禁环回/私网/链路本地/元数据地址、最大重定向 3、超时 15s、下载上限 5MB。
@@ -58,10 +58,19 @@ docs/adr/  GLOSSARY.md  .scratch/  启动.bat  .gitignore
 
 ## 7. 风险登记
 
-- 百炼端点/模型 ID/定价：@librarian 核实中，03 单动工前必须落定。
+- 百炼端点/模型 ID/定价：**已核实**（2026-10-19，笔记 `01-bailian-facts.md`）。结论：`qwen-turbo` 已退市（2026-10-10 批次），`qwen-plus`/`qwen-max` 仍在但归入「旧版」。**用户决定默认服务商改用 DeepSeek，百炼降级为可选的用户自配 provider（见 §9）。**
 - HTML deck 内联体积（约几 MB）与 OpenDesign 主题署名文件（Apache-2.0 + 附属许可）。
 - 拷问移植保真度：提示词以本机 grilling SKILL.md 规则为底，偏离处对照 ADR-0001 记录。
 
 ## 8. v1.1 队列（顺序即优先级）
 
 RAG 最小版 → PPTX 填用户模板 → 文档型 HTML → 方案直接编辑 → exe 打包 → 模板版本管理完善。
+
+## 9. 决策变更记录
+
+- **2026-10-19 · 默认模型服务商：阿里云百炼 → DeepSeek**（用户决策，编排者记录）。
+  - 触发事实：@librarian 核实发现 `qwen-turbo` 已在 2026-10-10 生效的批次中退市（不在模型列表与价格表），`qwen-plus`/`qwen-max` 仍可用但被官方归入「旧版 Qwen」（笔记 `01-bailian-facts.md`）。
+  - 变更内容：默认服务商改为 **DeepSeek**（OpenAI 兼容），作为联调对象；百炼降级为**可选的用户自配 provider**，不再作为默认值硬编码。
+  - 不变项：模型接入仍是「统一 OpenAI 兼容适配层，业务代码不绑定厂商 SDK」（§2）；档位 `kind[turbo|plus|max]` 保留为角色标签，`model_name` 可编辑。
+  - 影响工单：TB-1（10）——验收由「对百炼真连成功」改为「对 DeepSeek 真连成功」，详见该工单的「决策变更」小节；自动化测试仍走 fake 注入，不联网。
+  - 接口事实：`03-deepseek-facts.md`（DeepSeek，TB-1 用）、`01-bailian-facts.md`（百炼，保留供用户自配时参考）。
