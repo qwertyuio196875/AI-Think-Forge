@@ -778,6 +778,177 @@ export function setTaskStatus(taskId: number, status: 'in_progress' | 'completed
   })
 }
 
+/* ============================================================
+   资料分析（来源 → 文档 → 分块 → 总结）—— TB-7
+   权威来源：backend/app/models/analysis.py、routes/analysis.py。
+   术语：资料分析 / 总结 / 未识别 / 来源 / 分块 / 一键送入主题创作。
+   命名纪律：这是「分块 → 逐块分析 → 综合」分析管线，不是 RAG（ADR-0002）。
+   扩展位：TB-8（PDF / PPTX）与 TB-9（URL）沿用同一组端点，kind 字段区分来源类型。
+   ============================================================ */
+
+/** 未识别内容统一契约（一级输出字段，绝不以空字符串冒充成功）。 */
+export interface UnrecognizedContent {
+  unrecognized: boolean
+  reason: string
+  locator: Record<string, unknown>
+  needs_ocr: boolean
+}
+
+/** 来源登记（kind: file；url 等来源类型由后续工单启用）。 */
+export interface AnalysisSourceInfo {
+  id: number
+  kind: string
+  ref: string
+  meta: Record<string, unknown>
+  task_id: number | null
+  created_at: string
+}
+
+/** 文档解析结果；chunks 为已落库分块数。 */
+export interface AnalysisDocumentInfo {
+  id: number
+  source_id: number
+  path: string
+  parse_status: string
+  parse_message: string | null
+  heading_source: string | null
+  encoding: string | null
+  headings: number
+  images: number
+  chunks: number
+  created_at: string
+}
+
+/** 上传 + 解析的结果（解析失败仍是 201 + failed + 可读 message，不丢已存数据）。 */
+export interface AnalysisSourceResponse {
+  source: AnalysisSourceInfo
+  document: AnalysisDocumentInfo
+  unrecognized: UnrecognizedContent | null
+  unrecognized_parts: UnrecognizedContent[]
+  message: string | null
+}
+
+/** 总结引用：来自哪个分块、什么位置、该块开头摘录。 */
+export interface SummaryCitation {
+  chunk_seq: number
+  locator: Record<string, unknown>
+  excerpt: string
+}
+
+/** 总结（含长度、引用与实际档位证据；档位缺失回退不静默）。 */
+export interface AnalysisSummary {
+  id: number
+  source_id: number
+  task_id: number | null
+  text: string
+  hanzi_count: number
+  citations: SummaryCitation[]
+  chunk_count: number
+  truncated: boolean
+  provider_kind: string | null
+  provider_used: string | null
+  model_used: string | null
+  provider_fallback: boolean
+  provider_note: string | null
+  created_at: string
+}
+
+/** 一次分析的结果：有总结，或（未识别时）只有显式的未识别契约。 */
+export interface AnalysisResultResponse {
+  source: AnalysisSourceInfo
+  document: AnalysisDocumentInfo
+  summary: AnalysisSummary | null
+  unrecognized: UnrecognizedContent | null
+  unrecognized_parts: UnrecognizedContent[]
+  message: string | null
+}
+
+/** 一键送入主题创作的结果：新建任务 + 预填的已知信息（后端不调用模型）。 */
+export interface SendToCreationResponse {
+  task: Task
+  source_id: number
+  summary_id: number
+  known_input: string
+}
+
+/**
+ * 上传资料（multipart，字段 file）：走 XHR 以便回报真实上传进度（fetch 无上传进度事件）。
+ * 错误语义与 request() 一致：网络失败 → BackendUnavailableError；非 2xx → Error（附 detail）。
+ * onProgress 收 0–100 百分比（按字节计，50MB 文件也有意义）。
+ */
+export function uploadAnalysisSource(
+  file: File,
+  onProgress?: (percent: number) => void
+): Promise<AnalysisSourceResponse> {
+  return new Promise((resolve, reject) => {
+    const body = new FormData()
+    body.append('file', file, file.name)
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', `${API_BASE_URL}/analysis/sources`)
+    xhr.responseType = 'text'
+    xhr.upload.onprogress = (event) => {
+      if (onProgress && event.lengthComputable) {
+        onProgress(Math.min(100, Math.round((event.loaded / event.total) * 100)))
+      }
+    }
+    xhr.onerror = () => reject(new BackendUnavailableError())
+    xhr.ontimeout = () => reject(new Error('上传超时，请检查后端是否在运行后重试'))
+    xhr.onload = () => {
+      let payload: unknown = null
+      try {
+        payload = JSON.parse(xhr.responseText)
+      } catch {
+        /* 非 JSON 响应体，保持 null */
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(payload as AnalysisSourceResponse)
+        return
+      }
+      const detail =
+        payload &&
+        typeof payload === 'object' &&
+        'detail' in payload &&
+        typeof (payload as { detail?: unknown }).detail === 'string'
+          ? (payload as { detail: string }).detail
+          : ''
+      const base = `请求失败：${xhr.status}`
+      reject(new Error(detail ? `${base} · ${detail}` : base))
+    }
+    xhr.send(body)
+  })
+}
+
+/** 读取来源与解析结果：GET /api/analysis/sources/{id}（供展示与重试）。 */
+export function getAnalysisSource(sourceId: number): Promise<AnalysisSourceResponse> {
+  return request<AnalysisSourceResponse>(`/analysis/sources/${sourceId}`)
+}
+
+/**
+ * 触发分析：POST /api/analysis/sources/{id}/analyze（分块 → 逐块 → 综合，同步返回）。
+ * 未识别 → 200 + summary=null + 显式契约；解析失败 → 409；模型失败 → 502（已存数据保留，可安全重试）。
+ */
+export function analyzeSource(sourceId: number): Promise<AnalysisResultResponse> {
+  return request<AnalysisResultResponse>(`/analysis/sources/${sourceId}/analyze`, {
+    method: 'POST'
+  })
+}
+
+/** 某来源最新总结：GET /api/analysis/sources/{id}/summary（尚无总结 404）。 */
+export function getAnalysisSummary(sourceId: number): Promise<AnalysisSummary> {
+  return request<AnalysisSummary>(`/analysis/sources/${sourceId}/summary`)
+}
+
+/** 一键送入主题创作：POST /api/analysis/sources/{id}/send-to-creation（只预填、不调用模型）。 */
+export function sendToCreation(
+  sourceId: number,
+  title?: string
+): Promise<SendToCreationResponse> {
+  return request<SendToCreationResponse>(`/analysis/sources/${sourceId}/send-to-creation`, {
+    method: 'POST',
+    body: JSON.stringify(title && title.trim() ? { title: title.trim() } : {})
+  })
+}
+
 export default {
   API_BASE_URL,
   checkHealth,
@@ -814,5 +985,10 @@ export default {
   getHistoryDetail,
   getDeletionImpact,
   deleteTask,
-  setTaskStatus
+  setTaskStatus,
+  uploadAnalysisSource,
+  getAnalysisSource,
+  analyzeSource,
+  getAnalysisSummary,
+  sendToCreation
 }
