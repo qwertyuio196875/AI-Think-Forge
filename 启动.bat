@@ -18,6 +18,27 @@ if not exist "backend\.venv\Scripts\python.exe" (
     exit /b 1
 )
 
+REM 前端构建产物：缺失则先构建（首次运行）。构建失败不阻断后端启动，只给出可读警告。
+if not exist "frontend\dist\index.html" (
+    echo [信息] 未找到前端构建产物 frontend\dist，正在构建...
+    where npm >nul 2>nul
+    if errorlevel 1 (
+        echo [警告] 未找到 npm（Node.js）。后端仍会启动，但 http://127.0.0.1:8720 只提供 /api，工作台界面不可用。
+        echo        请安装 Node.js 后在 frontend 目录执行：npm install ^&^& npm run build
+    ) else (
+        pushd "%~dp0frontend"
+        if not exist "node_modules" (
+            echo [信息] 安装前端依赖（首次较慢）...
+            call npm install
+        )
+        call npm run build
+        popd
+        if not exist "frontend\dist\index.html" (
+            echo [警告] 前端构建未产出 frontend\dist\index.html。后端仍会启动，但工作台界面不可用。
+        )
+    )
+)
+
 REM 延迟 3 秒再打开浏览器，给后端启动留出时间；后端在前台运行，Ctrl+C 可停止。
 start "" powershell -NoProfile -WindowStyle Hidden -Command "Start-Sleep -Seconds 3; Start-Process 'http://127.0.0.1:8720'"
 
