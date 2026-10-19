@@ -108,11 +108,105 @@ export function getTask(id: string): Promise<Task> {
   return request<Task>(`/tasks/${encodeURIComponent(id)}`)
 }
 
+/* ============================================================
+   模型配置（Provider）与连接测试 —— TB-1
+   权威来源：TB-1 工单「后端 API 契约」。响应体永不含密钥，仅 has_key。
+   api_key 为只写字段：提交后不落任何前端持久化（localStorage/sessionStorage/日志）。
+   ============================================================ */
+
+/** 档位为角色标签（可空）：turbo=总结流程 / plus=主流程 / max=任务级深问。 */
+export type ProviderKind = 'turbo' | 'plus' | 'max' | null
+
+/** 模型配置对象（不含密钥；密钥状态只以 has_key 表达）。 */
+export interface Provider {
+  id: string
+  name: string
+  base_url: string
+  model_name: string
+  is_default: boolean
+  kind: ProviderKind
+  has_key: boolean
+}
+
+/** GET /api/providers 列表返回体。 */
+export interface ProviderListResponse {
+  items: Provider[]
+  total: number
+}
+
+/** 新增 / 编辑提交的字段。api_key 留空即不携带（编辑时保留原凭据）。 */
+export interface ProviderInput {
+  name: string
+  base_url: string
+  model_name: string
+  kind?: ProviderKind
+  api_key?: string
+}
+
+/** 连接测试结果。category ∈ ok|network_error|auth_error|model_error|insufficient_balance|rate_limited|request_error|server_error。 */
+export interface ConnectionTestResult {
+  ok: boolean
+  category: string
+  message: string
+}
+
+/** 组装 provider 请求体：去掉 undefined / 空 api_key（只写字段，空即不发送）。 */
+function buildProviderBody(input: ProviderInput): string {
+  return JSON.stringify({
+    name: input.name,
+    base_url: input.base_url,
+    model_name: input.model_name,
+    kind: input.kind ?? undefined,
+    api_key: input.api_key && input.api_key.length > 0 ? input.api_key : undefined
+  })
+}
+
+/** 模型配置列表：GET /api/providers。 */
+export function listProviders(): Promise<ProviderListResponse> {
+  return request<ProviderListResponse>('/providers')
+}
+
+/** 新增模型配置：POST /api/providers（重名 409）。 */
+export function createProvider(input: ProviderInput): Promise<Provider> {
+  return request<Provider>('/providers', { method: 'POST', body: buildProviderBody(input) })
+}
+
+/** 编辑模型配置：PUT /api/providers/{id}（api_key 不传即保留原凭据）。 */
+export function updateProvider(id: string, input: ProviderInput): Promise<Provider> {
+  return request<Provider>(`/providers/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: buildProviderBody(input)
+  })
+}
+
+/** 删除模型配置：DELETE /api/providers/{id}（204，同时清除该配置的凭据）。 */
+export function deleteProvider(id: string): Promise<void> {
+  return request<void>(`/providers/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+/** 设为全局默认：POST /api/providers/{id}/default。 */
+export function setDefaultProvider(id: string): Promise<Provider> {
+  return request<Provider>(`/providers/${encodeURIComponent(id)}/default`, { method: 'POST' })
+}
+
+/** 连接测试：POST /api/providers/{id}/test。 */
+export function testProvider(id: string): Promise<ConnectionTestResult> {
+  return request<ConnectionTestResult>(`/providers/${encodeURIComponent(id)}/test`, {
+    method: 'POST'
+  })
+}
+
 export default {
   API_BASE_URL,
   checkHealth,
   request,
   createTask,
   listTasks,
-  getTask
+  getTask,
+  listProviders,
+  createProvider,
+  updateProvider,
+  deleteProvider,
+  setDefaultProvider,
+  testProvider
 }

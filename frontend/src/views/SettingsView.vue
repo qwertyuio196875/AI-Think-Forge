@@ -7,98 +7,486 @@
           <p>模型配置 · 默认档位 · 本地与隐私边界</p>
         </div>
         <div class="head-actions">
-          <el-tag type="info" effect="plain" size="small">配置管理将在 TB-1 接入</el-tag>
+          <el-button :icon="Refresh" :loading="listState === 'loading'" @click="loadProviders">刷新</el-button>
+          <el-button type="primary" :icon="Plus" @click="openAdd">新增模型配置</el-button>
         </div>
       </div>
     </header>
 
     <div class="view-body">
       <div class="form-wrap">
-        <!-- 模型配置 -->
+        <!-- ============ 模型配置 ============ -->
         <section class="sec">
           <header>
             <h3>模型配置</h3>
             <p>业务不绑定厂商：统一走 OpenAI 兼容接口，可新增、编辑、删除、设为默认，并做连接测试</p>
           </header>
           <div class="sec-body">
-            <div class="note info">
-              <el-icon class="ico"><InfoFilled /></el-icon>
+            <!-- 加载 -->
+            <div v-if="listState === 'loading'" class="list-loading">
+              <el-skeleton v-for="n in 3" :key="n" :rows="1" animated />
+            </div>
+
+            <!-- 错误 -->
+            <div v-else-if="listState === 'error'" class="note err" role="alert">
+              <el-icon class="ico"><WarningFilled /></el-icon>
               <div class="note-body">
-                <b>还没有模型配置</b>
-                <span>新增配置、设为默认、连接测试与密钥保存将在 TB-1 接入。</span>
+                <b>{{ listError }}</b>
+                <span>本地后端未启动或连接失败，暂时读不到模型配置。</span>
+                <div><el-button size="small" @click="loadProviders">重新加载</el-button></div>
               </div>
             </div>
-            <div class="row-actions">
-              <el-button type="primary" disabled>
-                <el-icon class="ico"><Plus /></el-icon>
-                <span>新增模型配置</span>
-              </el-button>
+
+            <!-- 空态 -->
+            <div v-else-if="providers.length === 0" class="empty">
+              <el-icon class="ico-lg"><Cpu /></el-icon>
+              <b>还没有模型配置</b>
+              <p>新增一条 OpenAI 兼容配置（如 DeepSeek），保存后用「连接测试」验证即可开始使用。</p>
+              <el-button type="primary" :icon="Plus" @click="openAdd">新增模型配置</el-button>
+            </div>
+
+            <!-- 列表 -->
+            <div v-else class="cfg-list">
+              <article
+                v-for="p in providers"
+                :key="p.id"
+                class="cfg"
+                :class="{ 'is-def': p.is_default }"
+              >
+                <div class="cfg-info">
+                  <b>{{ p.name }}</b>
+                  <div class="meta mono">{{ p.base_url }}</div>
+                  <div class="meta">
+                    模型名 {{ p.model_name }} · 档位 {{ kindLabel(p.kind) }}
+                  </div>
+                </div>
+
+                <div class="cfg-tags">
+                  <el-tag v-if="p.is_default" size="small" effect="dark">默认</el-tag>
+                  <el-tag v-else size="small" type="info" effect="plain">{{ kindLabel(p.kind) }}</el-tag>
+                  <el-tag
+                    size="small"
+                    :type="p.has_key ? 'success' : 'warning'"
+                    effect="plain"
+                  >{{ p.has_key ? '已配密钥' : '未配密钥' }}</el-tag>
+                </div>
+
+                <div class="cfg-acts">
+                  <el-button size="small" :icon="Connection" :loading="testingMap[p.id]" @click="doTest(p)">
+                    连接测试
+                  </el-button>
+                  <el-button size="small" :icon="EditPen" @click="openEdit(p)">编辑</el-button>
+                  <el-button
+                    v-if="!p.is_default"
+                    size="small"
+                    :icon="Star"
+                    :disabled="settingDefaultId === p.id"
+                    @click="doSetDefault(p)"
+                  >
+                    设为默认
+                  </el-button>
+                  <el-button size="small" type="danger" plain :icon="Delete" @click="askDelete(p)">
+                    删除
+                  </el-button>
+                </div>
+
+                <div
+                  v-if="testResultMap[p.id]"
+                  class="cfg-test note"
+                  :class="reportClass(p.id)"
+                  role="status"
+                >
+                  <el-icon class="ico">
+                    <CircleCheck v-if="testResultMap[p.id].level === 'ok'" />
+                    <WarningFilled v-else />
+                  </el-icon>
+                  <div class="note-body">
+                    <b>{{ testResultMap[p.id].title }}</b>
+                    <span>{{ testResultMap[p.id].detail }}</span>
+                  </div>
+                </div>
+              </article>
+
+              <p class="hint">
+                「默认」标记的是<strong>全局默认配置</strong>，作用于未单独指定档位的新任务；
+                任务级临时覆盖在创作 / 分析任务内进行，不会改变此处默认。每次生成都会记录实际所用配置。
+              </p>
+
+              <div class="row-actions">
+                <el-button :icon="Plus" @click="openAdd">新增模型配置</el-button>
+              </div>
             </div>
           </div>
         </section>
 
-        <!-- 默认档位与额度 -->
+        <!-- ============ 默认档位与额度 ============ -->
         <section class="sec">
           <header>
             <h3>默认档位与额度</h3>
-            <p>主流程 / 总结 / 任务级深问的默认档位，以及百炼额度统计</p>
+            <p>全局默认来自下方标记为「默认」的配置；额度统计将在后续工单接入</p>
           </header>
           <div class="sec-body">
+            <div class="field">
+              <label>全局默认配置</label>
+              <div v-if="defaultProvider" class="default-line">
+                <b>{{ defaultProvider.name }}</b>
+                <span class="meta mono">{{ defaultProvider.base_url }} · {{ defaultProvider.model_name }}</span>
+              </div>
+              <div v-else class="muted small">尚无标记为默认的模型配置，可在上方对任一配置点「设为默认」。</div>
+              <p class="hint">
+                用列表中的「设为默认」切换全局默认；任务级临时档位选择只影响该次任务，不会改写这里。
+              </p>
+            </div>
+
             <ul class="tiers">
-              <li>
-                <span class="tier-name">主流程档位</span>
-                <span class="tier-val muted">未配置</span>
-              </li>
-              <li>
-                <span class="tier-name">总结流程档位</span>
-                <span class="tier-val muted">未配置</span>
-              </li>
-              <li>
-                <span class="tier-name">任务级深问档位</span>
-                <span class="tier-val muted">未配置</span>
-              </li>
-              <li>
-                <span class="tier-name">百炼额度</span>
-                <span class="tier-val muted">统计将在 TB-1 接入</span>
+              <li v-for="role in roles" :key="role.kind">
+                <span class="tier-name">{{ role.label }}</span>
+                <span class="tier-val" :class="{ muted: role.providers.length === 0 }">
+                  {{ role.providers.length ? role.providers.map((p) => p.name).join('、') : '无此档位配置' }}
+                </span>
               </li>
             </ul>
+
+            <div class="note info">
+              <el-icon class="ico"><InfoFilled /></el-icon>
+              <div class="note-body">
+                <span>
+                  额度统计（百炼 / DeepSeek 用量）属应用设置，暂无独立读写接口，将在后续工单接入。
+                </span>
+              </div>
+            </div>
           </div>
         </section>
 
-        <!-- 本地与隐私 -->
+        <!-- ============ 本地与隐私 ============ -->
         <section class="sec">
           <header>
             <h3>本地与隐私</h3>
-            <p>系统运行的安全边界，始终生效</p>
+            <p>只监听本机回环；文件访问限定白名单；调用云端模型前如实告知数据去向</p>
           </header>
           <div class="sec-body">
+            <div class="note warn">
+              <el-icon class="ico"><WarningFilled /></el-icon>
+              <div class="note-body">
+                <b>「本地运行」不等于「数据不出机」</b>
+                <span>
+                  调用云端模型时，你的提示词与资料片段（含拷问对话、总结输入与方案）都会发送给所配置的服务商。
+                  只有配置为本地推理服务时，数据才不出本机。
+                </span>
+              </div>
+            </div>
+
+            <div class="field">
+              <label>监听地址</label>
+              <el-input class="mono" model-value="http://127.0.0.1:8720" readonly />
+              <p class="hint">不可改为局域网或公网地址；同网段他人无法访问。</p>
+            </div>
+
             <ul class="note-list">
               <li>
-                <el-icon class="ico"><Select /></el-icon>
-                <span>仅监听本机回环（127.0.0.1），同网段他人无法访问</span>
+                <el-icon class="ico"><CircleCheck /></el-icon>
+                <span>文件访问限定在工作目录白名单内；上传校验扩展名与大小，路径穿越会被拒绝</span>
               </li>
               <li>
-                <el-icon class="ico"><Select /></el-icon>
-                <span>文件访问限定在工作目录白名单内；上传校验扩展名与大小</span>
+                <el-icon class="ico"><CircleCheck /></el-icon>
+                <span>API 密钥存于 Windows 凭据管理器，不进入源码 / Git / 前端持久化 / SQLite / 日志</span>
               </li>
               <li>
-                <el-icon class="ico"><Select /></el-icon>
-                <span>密钥存于 Windows 凭据管理器，不进入源码 / Git / 前端 / SQLite / 日志</span>
+                <el-icon class="ico"><CircleCheck /></el-icon>
+                <span>日志对失败信息脱敏，不含完整密钥与不必要的敏感内容</span>
               </li>
               <li>
-                <el-icon class="ico"><Select /></el-icon>
-                <span>调用云端模型前会告知：提示词与资料片段可能发送给所配置的服务商</span>
+                <el-icon class="ico"><CircleCheck /></el-icon>
+                <span>删除模型配置会同时清除其保存在凭据管理器中的密钥</span>
               </li>
             </ul>
           </div>
         </section>
       </div>
     </div>
+
+    <!-- ============ 新增 / 编辑 对话框 ============ -->
+    <el-dialog
+      v-model="dialogVisible"
+      :title="editingId ? '编辑模型配置' : '新增模型配置'"
+      width="560px"
+      :close-on-click-modal="false"
+      append-to-body
+    >
+      <el-form label-position="top" @submit.prevent>
+        <p class="hint" style="margin-top: 0">
+          保存后，可在列表中对这条配置点「连接测试」验证可用性。
+        </p>
+        <el-form-item label="服务商名称">
+          <el-input v-model="form.name" placeholder="例如 DeepSeek 主流程" maxlength="80" />
+        </el-form-item>
+        <el-form-item label="API 地址（Base URL）">
+          <el-input v-model="form.base_url" spellcheck="false" placeholder="https://api.deepseek.com" />
+          <p class="hint">仅允许 http / https。DeepSeek 填 https://api.deepseek.com（客户端会容忍自动补 /v1）。</p>
+        </el-form-item>
+        <el-form-item label="模型名">
+          <el-input v-model="form.model_name" spellcheck="false" placeholder="deepseek-flash" />
+          <p class="hint">DeepSeek 当前有效模型：deepseek-flash（轻量主力）、deepseek-v4-pro（旗舰）。</p>
+        </el-form-item>
+        <el-form-item label="用途档位（角色标签，可空）">
+          <el-select v-model="form.kind" placeholder="选择档位" style="width: 100%">
+            <el-option label="主流程（拷问与方案生成）" value="plus" />
+            <el-option label="总结流程（资料分析）" value="turbo" />
+            <el-option label="任务级深问" value="max" />
+            <el-option label="不分档" value="" />
+          </el-select>
+          <p class="hint">档位只是角色标签，供任务级临时选择时参考，不影响「默认」判定。</p>
+        </el-form-item>
+        <el-form-item label="API 密钥">
+          <el-input
+            v-model="form.api_key"
+            type="password"
+            show-password
+            spellcheck="false"
+            autocomplete="new-password"
+            :placeholder="editingId ? '留空则保留当前密钥' : '填写该服务商的密钥'"
+          />
+          <p class="hint">
+            <el-icon class="ico-sm"><Lock /></el-icon>
+            密钥只写入 Windows 凭据管理器，界面只显示「已配 / 未配」状态；不会存入浏览器，不写 SQLite，不进日志。
+            {{ editingId ? '留空即保留原密钥，只有填写才会更新。' : '' }}
+          </p>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="dialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="formSaving" @click="saveProvider">保存配置</el-button>
+      </template>
+    </el-dialog>
   </section>
 </template>
 
 <script setup lang="ts">
-import { InfoFilled, Plus, Select } from '@element-plus/icons-vue'
+import { computed, onMounted, reactive, ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import {
+  CircleCheck,
+  Connection,
+  Cpu,
+  Delete,
+  EditPen,
+  InfoFilled,
+  Lock,
+  Plus,
+  Refresh,
+  Star,
+  WarningFilled
+} from '@element-plus/icons-vue'
+import {
+  BackendUnavailableError,
+  createProvider,
+  deleteProvider,
+  listProviders,
+  setDefaultProvider,
+  testProvider,
+  updateProvider,
+  type Provider,
+  type ProviderKind
+} from '../api/client'
+import { describeConnection, kindLabel, type ConnectionReport } from '../utils/providerMeta'
+
+type ListState = 'loading' | 'ready' | 'error'
+const providers = ref<Provider[]>([])
+const listState = ref<ListState>('loading')
+const listError = ref('')
+
+const testingMap = reactive<Record<string, boolean>>({})
+const testResultMap = ref<Record<string, ConnectionReport>>({})
+const settingDefaultId = ref<string | null>(null)
+
+const defaultProvider = computed(() => providers.value.find((p) => p.is_default) ?? null)
+
+const roles = computed(() => {
+  const defs: Array<{ kind: 'plus' | 'turbo' | 'max'; label: string }> = [
+    { kind: 'plus', label: '主流程档位（plus）' },
+    { kind: 'turbo', label: '总结流程档位（turbo）' },
+    { kind: 'max', label: '任务级深问档位（max）' }
+  ]
+  return defs.map((d) => ({ ...d, providers: providers.value.filter((p) => p.kind === d.kind) }))
+})
+
+function reportClass(id: string): string {
+  const r = testResultMap.value[id]
+  if (!r) return ''
+  return r.level === 'ok' ? 'ok' : r.level === 'warn' ? 'warn' : 'err'
+}
+
+async function loadProviders(): Promise<void> {
+  listState.value = 'loading'
+  try {
+    const res = await listProviders()
+    providers.value = res.items
+    listState.value = 'ready'
+  } catch (err) {
+    providers.value = []
+    listState.value = 'error'
+    listError.value =
+      err instanceof BackendUnavailableError ? '后端未启动，无法读取模型配置' : '模型配置读取失败'
+  }
+}
+
+async function doTest(p: Provider): Promise<void> {
+  testingMap[p.id] = true
+  try {
+    const r = await testProvider(p.id)
+    testResultMap.value = { ...testResultMap.value, [p.id]: describeConnection(r) }
+  } catch (err) {
+    testResultMap.value = {
+      ...testResultMap.value,
+      [p.id]:
+        err instanceof BackendUnavailableError
+          ? { level: 'err', title: '后端未启动，无法完成测试', detail: '请确认本地服务已启动后重试。' }
+          : { level: 'err', title: '测试请求未能完成', detail: (err as Error).message }
+    }
+  } finally {
+    testingMap[p.id] = false
+  }
+}
+
+async function doSetDefault(p: Provider): Promise<void> {
+  settingDefaultId.value = p.id
+  try {
+    await setDefaultProvider(p.id)
+    ElMessage.success(`已将「${p.name}」设为全局默认`)
+    await loadProviders()
+  } catch (err) {
+    ElMessage.error(
+      err instanceof BackendUnavailableError ? '后端未启动，设置失败' : '设为默认失败'
+    )
+  } finally {
+    settingDefaultId.value = null
+  }
+}
+
+async function askDelete(p: Provider): Promise<void> {
+  try {
+    await ElMessageBox.confirm(
+      `删除「${p.name}」会同时清除它保存在 Windows 凭据管理器中的密钥，且不可恢复。确认删除吗？`,
+      '删除模型配置',
+      {
+        type: 'warning',
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        confirmButtonClass: 'el-button--danger'
+      }
+    )
+  } catch {
+    return // 用户取消
+  }
+  try {
+    await deleteProvider(p.id)
+    ElMessage.success('已删除该模型配置')
+    delete testingMap[p.id]
+    const rest = { ...testResultMap.value }
+    delete rest[p.id]
+    testResultMap.value = rest
+    await loadProviders()
+  } catch (err) {
+    ElMessage.error(
+      err instanceof BackendUnavailableError ? '后端未启动，删除失败' : '删除失败'
+    )
+  }
+}
+
+/* ---------------- 新增 / 编辑表单 ---------------- */
+type FormKind = '' | 'turbo' | 'plus' | 'max'
+interface FormModel {
+  name: string
+  base_url: string
+  model_name: string
+  kind: FormKind
+  api_key: string
+}
+const EMPTY_FORM: FormModel = {
+  name: '',
+  base_url: 'https://api.deepseek.com',
+  model_name: 'deepseek-flash',
+  kind: '',
+  api_key: ''
+}
+
+const dialogVisible = ref(false)
+const editingId = ref<string | null>(null)
+const formSaving = ref(false)
+const form = ref<FormModel>({ ...EMPTY_FORM })
+
+function openAdd(): void {
+  editingId.value = null
+  // 只预填非敏感的 DeepSeek 默认地址与模型名；服务商名与密钥留待用户填写。
+  form.value = { ...EMPTY_FORM }
+  dialogVisible.value = true
+}
+
+function openEdit(p: Provider): void {
+  editingId.value = p.id
+  // 绝不回填密钥：编辑态只知 has_key，api_key 输入框一律清空（留空即保留）。
+  form.value = {
+    name: p.name,
+    base_url: p.base_url,
+    model_name: p.model_name,
+    kind: p.kind ?? '',
+    api_key: ''
+  }
+  dialogVisible.value = true
+}
+
+async function saveProvider(): Promise<void> {
+  const name = form.value.name.trim()
+  const baseUrl = form.value.base_url.trim()
+  const modelName = form.value.model_name.trim()
+  if (!name) {
+    ElMessage.warning('请填写服务商名称')
+    return
+  }
+  if (!/^https?:\/\//i.test(baseUrl)) {
+    ElMessage.warning('Base URL 需以 http:// 或 https:// 开头')
+    return
+  }
+  if (!modelName) {
+    ElMessage.warning('请填写模型名')
+    return
+  }
+
+  const input = {
+    name,
+    base_url: baseUrl,
+    model_name: modelName,
+    kind: (form.value.kind || undefined) as ProviderKind | undefined,
+    // 只写字段：空字符串即不携带（编辑保留原密钥）；提交后不存任何前端持久化。
+    api_key: form.value.api_key.length > 0 ? form.value.api_key : undefined
+  }
+
+  formSaving.value = true
+  try {
+    if (editingId.value) {
+      await updateProvider(editingId.value, input)
+      ElMessage.success('已保存配置')
+    } else {
+      await createProvider(input)
+      ElMessage.success('已新增配置')
+    }
+    dialogVisible.value = false
+    form.value = { ...EMPTY_FORM }
+    await loadProviders()
+  } catch (err) {
+    if (err instanceof BackendUnavailableError) {
+      ElMessage.error('后端未启动，保存失败')
+    } else if ((err as Error).message.includes('409')) {
+      ElMessage.error('已存在同名配置，请换一个名称')
+    } else {
+      ElMessage.error('保存失败：' + (err as Error).message)
+    }
+  } finally {
+    formSaving.value = false
+  }
+}
+
+onMounted(loadProviders)
 </script>
 
 <style scoped>
@@ -110,12 +498,114 @@ import { InfoFilled, Plus, Select } from '@element-plus/icons-vue'
   flex-direction: column;
   gap: var(--sp-5);
 }
+
+.list-loading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+/* 配置行（对齐原型 .cfg） */
+.cfg-list {
+  display: flex;
+  flex-direction: column;
+}
+.cfg {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-md);
+  margin-bottom: var(--sp-2);
+  flex-wrap: wrap;
+}
+.cfg:hover {
+  border-color: var(--line-2);
+}
+.cfg.is-def {
+  border-color: var(--brand-200);
+  background: var(--brand-50);
+}
+.cfg-info {
+  flex: 1;
+  min-width: 220px;
+}
+.cfg-info b {
+  font-size: var(--fs-md);
+  color: var(--text-1);
+}
+.meta {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  margin-top: 2px;
+}
+.meta.mono {
+  font-family: var(--font-mono);
+  color: var(--text-2);
+  word-break: break-all;
+}
+.cfg-tags {
+  display: flex;
+  gap: var(--sp-1);
+  align-items: center;
+  flex-wrap: wrap;
+}
+.cfg-acts {
+  display: flex;
+  gap: var(--sp-1);
+  align-items: center;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+.cfg-test {
+  width: 100%;
+  margin-top: var(--sp-2);
+}
+
 .row-actions {
-  margin-top: var(--sp-4);
+  margin-top: var(--sp-2);
+}
+
+/* 表单字段 */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.field > label {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+.hint {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  line-height: 1.55;
+  margin: 6px 0 0;
+}
+.ico-sm {
+  font-size: 13px;
+  vertical-align: -2px;
+}
+.mono {
+  font-family: var(--font-mono);
+}
+
+/* 默认档位 */
+.default-line {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.default-line b {
+  font-size: var(--fs-md);
+  color: var(--text-1);
 }
 .tiers {
   list-style: none;
-  margin: 0;
+  margin: var(--sp-4) 0;
   padding: 0;
 }
 .tiers li {
@@ -136,10 +626,13 @@ import { InfoFilled, Plus, Select } from '@element-plus/icons-vue'
 }
 .tier-val {
   font-size: var(--fs-sm);
+  color: var(--text-2);
 }
+
+/* 隐私清单 */
 .note-list {
   list-style: none;
-  margin: 0;
+  margin: var(--sp-4) 0 0;
   padding: 0;
   display: flex;
   flex-direction: column;
@@ -156,5 +649,12 @@ import { InfoFilled, Plus, Select } from '@element-plus/icons-vue'
   color: var(--ok-fg);
   margin-top: 3px;
   flex: none;
+}
+.field + .note,
+.field {
+  margin-top: var(--sp-4);
+}
+.field:first-child {
+  margin-top: 0;
 }
 </style>
