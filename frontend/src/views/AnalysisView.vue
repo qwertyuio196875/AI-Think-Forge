@@ -17,6 +17,16 @@
     </header>
 
     <div class="view-body">
+      <!-- 由历史页 / 最近资料进入时的轻量回看提示（不弹对话框） -->
+      <div v-if="restoredNote" class="note info restored" role="status">
+        <el-icon class="ico"><InfoFilled /></el-icon>
+        <div class="note-body">
+          <b>{{ summary ? '已恢复保存的分析' : '已恢复保存的来源' }}</b>
+          <span>{{ restoredNote }}</span>
+          <div><el-button size="small" text @click="leaveRestore">开始新的分析</el-button></div>
+        </div>
+      </div>
+
       <div class="split">
         <!-- ============ 左：发起分析 ============ -->
         <div class="panel">
@@ -28,8 +38,8 @@
             <button
               type="button"
               class="drop"
-              :class="{ 'is-drag': dragging, 'is-busy': uploading || fetching || analyzing }"
-              :disabled="uploading || fetching || analyzing"
+              :class="{ 'is-drag': dragging, 'is-busy': uploading || fetching || analyzing || restoring }"
+              :disabled="uploading || fetching || analyzing || restoring"
               aria-describedby="drop-help"
               @click="openPicker"
               @dragover.prevent="onDragOver"
@@ -112,6 +122,17 @@
               </p>
             </div>
 
+            <!-- 任务级模型覆盖（次级行）：只对之后的解析与总结生效 -->
+            <div class="model-field">
+              <ModelSelect
+                :model-value="analysisProviderId"
+                label="分析模型"
+                default-label="跟随档位"
+                @update:model-value="onProviderChange"
+              />
+              <p class="xs muted model-hint">{{ analysisModelHint }}</p>
+            </div>
+
             <div class="note info" style="margin-top: var(--sp-4)">
               <el-icon class="ico"><InfoFilled /></el-icon>
               <div class="note-body">
@@ -155,7 +176,7 @@
                 </div>
               </div>
               <p class="xs muted hint-line" aria-live="polite">
-                  逐块分析 {{ doc?.chunks ?? 0 }} 次后再综合 1 次，长文需要一些时间；总结走 turbo 档（该档缺失时回退默认配置并如实标注）。完成后的总结会保存，可在分析记录中留痕。
+                  逐块分析 {{ doc?.chunks ?? 0 }} 次后再综合 1 次，长文需要一些时间；未指定模型时走默认档位（该档缺失时回退默认配置并如实标注），指定了模型则整份分析都按它执行。完成后的总结会保存，可在分析记录中留痕。
               </p>
             </div>
           </template>
@@ -232,10 +253,38 @@
             </div>
             <div class="result-actions">
               <el-button size="small" :icon="CopyDocument" @click="copySummary">复制总结</el-button>
-              <el-button size="small" type="primary" :icon="Promotion" :loading="sending" @click="doSend">
+              <el-button
+                size="small"
+                :icon="Document"
+                :loading="wordBusy"
+                @click="doSummaryWord"
+              >
+                下载 Word
+              </el-button>
+              <el-select v-model="wordTemplate" class="word-tpl" size="small" :disabled="wordBusy">
+                <el-option label="全局默认模板" :value="WORD_DEFAULT" />
+                <el-option
+                  v-for="t in docxTemplates"
+                  :key="t.name"
+                  :label="t.name + wordTplSuffix(t)"
+                  :value="t.name"
+                  :disabled="!t.usable"
+                />
+              </el-select>
+              <el-button
+                size="small"
+                type="primary"
+                class="send-btn"
+                :icon="Promotion"
+                :loading="sending"
+                @click="doSend"
+              >
                 送入主题创作
               </el-button>
             </div>
+            <p class="xs muted tpl-note">
+              {{ wordTplNote }}
+            </p>
           </template>
 
           <!-- 未识别：一级契约展示，绝不显示为成功 -->
@@ -309,7 +358,7 @@
             </div>
           </template>
 
-          <!-- 空态 -->
+          <!-- 空态：可发起新分析，也可回到已保存的来源续看 -->
           <template v-else>
             <div class="panel-head">
               <h3>总结结果</h3>
@@ -321,6 +370,42 @@
                 <b>暂无分析结果</b>
                 <p>上传 TXT / MD / DOCX / PDF / PPTX 文件，或粘贴公开网页 URL，解析后即可总结；总结可一键送入主题创作继续拷问。</p>
               </div>
+
+              <section class="recent" aria-label="最近资料">
+                <div class="recent-head">
+                  <h4>最近资料</h4>
+                  <el-button size="small" text :icon="Refresh" :loading="recentLoading" @click="loadRecent">
+                    刷新
+                  </el-button>
+                </div>
+                <p class="xs muted">点一行回到当时的解析结果与已保存的总结</p>
+
+                <div v-if="recentError" class="note err" role="alert">
+                  <el-icon class="ico"><WarningFilled /></el-icon>
+                  <div class="note-body">
+                    <b>{{ recentError }}</b>
+                    <span>本地后端未启动或连接失败时读不到资料清单。</span>
+                  </div>
+                </div>
+                <ul v-else-if="recent.length" class="recent-list">
+                  <li v-for="row in recent" :key="row.source.id">
+                    <button type="button" class="recent-row" @click="openRecent(row.source.id)">
+                      <el-icon class="ico" aria-hidden="true"><Link v-if="row.source.kind === 'url'" /><Document v-else /></el-icon>
+                      <span class="rc-main">
+                        <b :title="sourceDisplayName(row.source)">{{ sourceDisplayName(row.source) }}</b>
+                        <em class="xs">{{ recentRowMeta(row) }}</em>
+                      </span>
+                      <el-tag size="small" :type="sourceRowTag(row.document).type" effect="plain">
+                        {{ sourceRowTag(row.document).label }}
+                      </el-tag>
+                      <el-tag v-if="row.has_summary" size="small" type="success" effect="plain">有总结</el-tag>
+                      <span v-else class="chip xs">{{ row.document?.parse_status === 'parsed' ? '未分析' : '无总结' }}</span>
+                    </button>
+                  </li>
+                </ul>
+                <div v-else-if="!recentLoading" class="pend-empty">还没有保存的资料分析记录</div>
+                <div v-else class="xs muted">正在读取资料清单…</div>
+              </section>
             </div>
           </template>
         </div>
@@ -330,8 +415,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   Clock,
@@ -341,6 +426,7 @@ import {
   Link,
   Loading,
   Promotion,
+  Refresh,
   Upload,
   Warning,
   WarningFilled
@@ -349,10 +435,22 @@ import {
   analyzeSource,
   BackendUnavailableError,
   createAnalysisUrlSource,
+  createSummaryWord,
+  getAnalysisSource,
+  getAnalysisSummary,
+  getTask,
+  getTemplates,
+  isApiStatus,
+  listAnalysisSources,
   sendToCreation,
+  summaryWordDownloadUrl,
+  updateTaskModel,
   uploadAnalysisSource,
   type AnalysisResultResponse,
+  type AnalysisSourceListItem,
   type AnalysisSourceResponse,
+  type AnalysisSourceInfo,
+  type Template,
   type UnrecognizedContent
 } from '../api/client'
 import {
@@ -363,10 +461,13 @@ import {
   headingSourceLabel,
   hostFromUrl,
   parseStatusTag,
+  sourceDisplayName,
+  sourceRowTag,
   validateUploadFile,
   validateUrlInput
 } from '../utils/analysisMeta'
 import { formatDateTime } from '../utils/taskMeta'
+import ModelSelect from '../components/ModelSelect.vue'
 
 type TagType = 'primary' | 'success' | 'info' | 'warning' | 'danger'
 
@@ -390,6 +491,34 @@ const analyzeError = ref('')
 const result = ref<AnalysisResultResponse | null>(null)
 
 const sending = ref(false)
+
+/* ---------- 任务级模型覆盖（分析模型） ---------- */
+
+/** 选择器当前值：null = 跟随默认档位。 */
+const analysisProviderId = ref<number | null>(null)
+/** 后端已确认的任务覆盖值（保存失败时退回它，不让界面谎报已生效）。 */
+const savedProviderId = ref<number | null>(null)
+const applyingModel = ref(false)
+
+/* ---------- 总结导出 Word ---------- */
+
+const docxTemplates = ref<Template[]>([])
+/**
+ * 「全局默认模板」用哨兵值而不是空串：Element Plus 把空串视为未选择，
+ * 会把选项文案显示成占位符「Select」。
+ */
+const WORD_DEFAULT = '__global_default__'
+const wordTemplate = ref<string>(WORD_DEFAULT)
+const wordBusy = ref(false)
+
+/* ---------- 回看（?source=）与最近资料 ---------- */
+
+const route = useRoute()
+const restoring = ref(false)
+const restoredNote = ref('')
+const recent = ref<AnalysisSourceListItem[]>([])
+const recentLoading = ref(false)
+const recentError = ref('')
 
 /* ---------- 派生状态 ---------- */
 
@@ -435,7 +564,13 @@ const summary = computed(() => result.value?.summary ?? null)
 const statusTag = computed(() => parseStatusTag(doc.value?.parse_status ?? ''))
 
 const canAnalyze = computed(
-  () => !!doc.value && doc.value.parse_status === 'parsed' && !uploading.value && !fetching.value && !analyzing.value
+  () =>
+    !!doc.value &&
+    doc.value.parse_status === 'parsed' &&
+    !uploading.value &&
+    !fetching.value &&
+    !analyzing.value &&
+    !restoring.value
 )
 
 type RightState =
@@ -515,9 +650,218 @@ const analyzeHint = computed(() => {
       ? '抓取失败的资料无法分析；来源已保留，可换一个公开可访问的链接重试。'
       : '解析失败的资料无法分析；来源与文件已保留，可重新上传其它文件。'
   if (parseUnrecognized.value) return '未识别到可分析的文本，未调用模型；换一份含可分析正文的资料再试。'
-  if (result.value?.summary) return '本份总结已保存；可复制，或一键送入主题创作。'
-  return '分析 = 分块 → 逐块分析 → 综合（分析管线，不是 RAG）；完成后总结自动保存。'
+  if (result.value?.summary) return '本份总结已保存；可复制、导出 Word，或一键送入主题创作。'
+  return '分析 = 分块 → 逐块分析 → 综合；完成后总结自动保存。'
 })
+
+/** 分析模型说明：只讲后端真实行为（任务级覆盖优先，未覆盖按默认档位）。 */
+const analysisModelHint = computed(() => {
+  if (applyingModel.value) return '正在把所选模型写入该任务…'
+  if (analysisProviderId.value === null) {
+    return '未指定：解析与总结按默认档位选模型（该档缺失时回退默认配置并如实标注）。'
+  }
+  return savedProviderId.value === analysisProviderId.value
+    ? '已写入该任务：逐块分析与总结都用这份配置，不影响其它任务，也不改设置页的全局默认。'
+    : '选定后即写入该任务（重新分析前可切换）。'
+})
+
+/** Word 模板说明：一次一用，不改全局默认。 */
+const wordTplNote = computed(() =>
+  wordTemplate.value === WORD_DEFAULT
+    ? '不指定模板：用设置页的 Word 全局默认模板；每次导出都记录实际所用模板。'
+    : `本次用「${wordTemplate.value}」生成，只影响这一次导出。`
+)
+
+function wordTplSuffix(t: Template): string {
+  if (t.missing) return '（文件已缺失）'
+  if (t.builtin) return '（内置最小默认）'
+  if (t.is_default) return '（全局默认）'
+  return ''
+}
+
+/* ---------- 分析模型覆盖：上传 / 抓取后写入任务 ---------- */
+
+/**
+ * 把当前选择写入来源所属任务。
+ * `notify=false` 用于「上传 / 抓取后顺手写入」，成功不再多弹一条；
+ * 失败一律退回后端已确认的值并说明原因，已入库的来源不受影响。
+ */
+async function pushModelToTask(
+  source: AnalysisSourceInfo,
+  wanted: number | null,
+  notify: boolean
+): Promise<void> {
+  if (source.task_id === null) {
+    if (wanted !== null) ElMessage.warning('该来源没有关联任务，未能设置分析模型')
+    return
+  }
+  applyingModel.value = true
+  try {
+    const task = await updateTaskModel(source.task_id, wanted)
+    savedProviderId.value = task.provider_id
+    analysisProviderId.value = task.provider_id
+    if (notify) {
+      ElMessage.success(
+        task.provider_id === null ? '已取消分析模型覆盖' : '分析模型已设为所选配置'
+      )
+    }
+  } catch (err) {
+    analysisProviderId.value = savedProviderId.value
+    ElMessage.warning(describeModelError(err))
+  } finally {
+    applyingModel.value = false
+  }
+}
+
+/** 选择器变更：已有来源立即写入任务（重新分析前可切换），否则留待下一次上传 / 抓取。 */
+function onProviderChange(value: number | null): void {
+  analysisProviderId.value = value
+  const c = current.value
+  if (c) void pushModelToTask(c.source, value, true)
+}
+
+/** 上传 / 抓取成功后顺手写入所选模型（未选择则什么都不做，走默认档位）。 */
+async function applyChosenModel(source: AnalysisSourceInfo): Promise<void> {
+  if (analysisProviderId.value === null) return
+  await pushModelToTask(source, analysisProviderId.value, false)
+}
+
+function describeModelError(err: unknown): string {
+  if (err instanceof BackendUnavailableError) return '后端未启动，分析模型未能设置；资料本身已保存'
+  if (isApiStatus(err, 400)) return '分析模型未能设置：该配置不存在或已被删除；资料本身已保存'
+  if (isApiStatus(err, 404)) return '该任务不存在或已被清理，分析模型未能设置；资料本身已保存'
+  if (isApiStatus(err, 409)) return '任务已删除，分析模型未能设置；资料本身已保存'
+  return `分析模型未能设置：${(err as Error).message}；资料本身已保存`
+}
+
+/* ---------- 回看：?source= 还原来源 + 已存总结 ---------- */
+
+function sourceIdFromQuery(): number | null {
+  const raw = route.query.source
+  const id = Number(Array.isArray(raw) ? raw[0] : raw)
+  return Number.isFinite(id) && id > 0 ? id : null
+}
+
+/**
+ * 还原某个已保存来源：来源 / 文档如实回显，总结有才显示总结。
+ * 连续切换来源时用 token 保证「最后一次点击」胜出，不会被慢响应覆盖。
+ */
+let restoreToken = 0
+
+async function restoreSource(sourceId: number): Promise<void> {
+  if (analyzing.value) return
+  const token = ++restoreToken
+  restoring.value = true
+  restoredNote.value = ''
+  analyzeError.value = ''
+  result.value = null
+  try {
+    const src = await getAnalysisSource(sourceId)
+    if (token !== restoreToken) return
+    current.value = src
+    // 任务级模型覆盖回填：读取失败按「跟随档位」显示，绝不伪造已保存
+    savedProviderId.value = null
+    analysisProviderId.value = null
+    if (src.source.task_id !== null) {
+      try {
+        const task = await getTask(src.source.task_id)
+        if (token !== restoreToken) return
+        savedProviderId.value = task.provider_id
+        analysisProviderId.value = task.provider_id
+      } catch {
+        /* 任务读不到（如已清理）：保持跟随档位，来源本身仍可查看 */
+      }
+    }
+    const statusLabel = src.document.parse_status
+    if (statusLabel === 'parsed') {
+      restoredNote.value = `「${sourceDisplayName(src.source)}」已解析（${src.document.chunks} 个分块）；尚未分析，可直接开始分析`
+    } else if (statusLabel === 'failed') {
+      restoredNote.value = `「${sourceDisplayName(src.source)}」当时${
+        src.source.kind === 'url' ? '抓取' : '解析'
+      }失败，未生成总结；来源与原因已保留，无法对失败资料做分析`
+    } else {
+      restoredNote.value = `「${sourceDisplayName(src.source)}」未识别到可分析文本，未调用模型，也没有总结`
+    }
+    // 有总结则切到总结视图；404 = 尚未分析（正常态），其它错误如实提示但保留来源
+    if (statusLabel === 'parsed') {
+      try {
+        const fetched = await getAnalysisSummary(sourceId)
+        if (token !== restoreToken) return
+        result.value = {
+          source: src.source,
+          document: src.document,
+          summary: fetched,
+          unrecognized: src.unrecognized ?? null,
+          unrecognized_parts: src.unrecognized_parts ?? [],
+          message: src.message ?? null
+        }
+        restoredNote.value = `「${sourceDisplayName(src.source)}」已解析（${src.document.chunks} 个分块）；下方是当时保存的总结，可复制、送入主题创作或导出 Word`
+      } catch (err) {
+        if (!isApiStatus(err, 404) && !(err instanceof BackendUnavailableError)) {
+          restoredNote.value = `「${sourceDisplayName(src.source)}」已恢复，但当时的总结读取失败；可重新分析`
+        }
+      }
+    }
+  } catch (err) {
+    if (token !== restoreToken) return
+    current.value = null
+    result.value = null
+    restoredNote.value = ''
+    if (err instanceof BackendUnavailableError) {
+      ElMessage.error('后端未启动，无法恢复已保存的分析')
+    } else if (isApiStatus(err, 404)) {
+      ElMessage.warning('该来源不存在或已被清理，可重新上传资料')
+    } else {
+      ElMessage.error('恢复已保存的分析失败：' + (err as Error).message)
+    }
+  } finally {
+    if (token === restoreToken) restoring.value = false
+  }
+}
+
+/** 离开回看态：清掉 query，回到可发起新分析的空态。 */
+function leaveRestore(): void {
+  restoredNote.value = ''
+  current.value = null
+  result.value = null
+  analyzeError.value = ''
+  savedProviderId.value = null
+  analysisProviderId.value = null
+  router.replace('/analysis')
+  void loadRecent()
+}
+
+/* ---------- 最近资料（空闲态续看入口） ---------- */
+
+async function loadRecent(): Promise<void> {
+  recentLoading.value = true
+  recentError.value = ''
+  try {
+    recent.value = (await listAnalysisSources({ limit: 10 })).items
+  } catch (err) {
+    recent.value = []
+    recentError.value =
+      err instanceof BackendUnavailableError
+        ? '后端未启动，读不到最近资料'
+        : '最近资料读取失败：' + (err as Error).message
+  } finally {
+    recentLoading.value = false
+  }
+}
+
+/** 列表行副文案：来源类型 + 时间 + 是否已有总结（全部取自接口字段）。 */
+function recentRowMeta(row: AnalysisSourceListItem): string {
+  const kind = row.source.kind === 'url' ? '网页' : '文件'
+  const time = formatDateTime(row.source.created_at)
+  const summary = row.has_summary
+    ? `总结 ${row.summary_created_at ? formatDateTime(row.summary_created_at) : '已保存'}`
+    : '尚无总结'
+  return `${kind} · ${time} · ${summary}`
+}
+
+function openRecent(sourceId: number): void {
+  router.push(`/analysis?source=${sourceId}`)
+}
 
 /* ---------- 上传 ---------- */
 
@@ -568,6 +912,8 @@ async function handleFiles(files: FileList | File[]): Promise<void> {
     result.value = null
     analyzeError.value = ''
     rejectNote.value = ''
+    restoredNote.value = ''
+    savedProviderId.value = null
     if (res.document.parse_status === 'parsed') {
       ElMessage.success(`已解析「${file.name}」：${res.document.chunks} 个分块，可开始分析`)
     } else if (res.document.parse_status === 'failed') {
@@ -575,6 +921,7 @@ async function handleFiles(files: FileList | File[]): Promise<void> {
     } else {
       ElMessage.warning('未识别到可分析的文本；详情见右侧提示')
     }
+    await applyChosenModel(res.source)
   } catch (err) {
     rejectNote.value = describeUploadError(err)
   } finally {
@@ -603,7 +950,9 @@ async function submitUrl(): Promise<void> {
     result.value = null
     analyzeError.value = ''
     rejectNote.value = ''
+    restoredNote.value = ''
     urlInput.value = ''
+    savedProviderId.value = null
     if (res.document.parse_status === 'parsed') {
       ElMessage.success(`已抓取网页：${res.document.chunks} 个分块，可开始分析`)
     } else if (res.document.parse_status === 'failed') {
@@ -611,6 +960,7 @@ async function submitUrl(): Promise<void> {
     } else {
       ElMessage.warning('该网页未提取到可分析的正文；详情见右侧提示')
     }
+    await applyChosenModel(res.source)
   } catch (err) {
     rejectNote.value = describeFetchError(err)
   } finally {
@@ -640,6 +990,60 @@ async function runAnalyze(): Promise<void> {
   } finally {
     analyzing.value = false
   }
+}
+
+/* ---------- 总结导出 Word（POST /analysis/sources/{id}/summary/word） ---------- */
+
+/** 拉 Word 可用模板清单（只看 .docx；读不到就只留「全局默认模板」一项，不编造）。 */
+async function loadTemplates(): Promise<void> {
+  try {
+    docxTemplates.value = (await getTemplates()).items.filter((t) => t.format === 'docx')
+  } catch {
+    docxTemplates.value = []
+  }
+}
+
+async function doSummaryWord(): Promise<void> {
+  const c = current.value
+  if (!c || !summary.value || wordBusy.value) return
+  wordBusy.value = true
+  try {
+    const done = await createSummaryWord(
+      c.source.id,
+      wordTemplate.value === WORD_DEFAULT ? null : wordTemplate.value
+    )
+    const name = done.file_path.split(/[\\/]/).pop() || `总结-${c.source.id}.docx`
+    triggerBrowserDownload(summaryWordDownloadUrl(done.id), name)
+    ElMessage.success(`已生成 Word 成品（实际模板：${done.template_used}）`)
+    if (!done.template_style_applied && done.missing_styles.length) {
+      ElMessage.warning(`模板缺样式，已按回退渲染：${done.missing_styles.join('、')}`)
+    }
+  } catch (err) {
+    ElMessage.error(describeWordError(err))
+  } finally {
+    wordBusy.value = false
+  }
+}
+
+/** 用临时 <a download> 触发下载（后端 attachment 头给出真实文件名）。 */
+function triggerBrowserDownload(url: string, filename: string): void {
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.rel = 'noopener'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+}
+
+function describeWordError(err: unknown): string {
+  if (err instanceof BackendUnavailableError) return '后端未启动，无法生成 Word 成品'
+  const detail = (err as { detail?: string })?.detail || ''
+  if (isApiStatus(err, 409)) return detail || '该来源尚无总结，无法生成 Word；请先完成分析'
+  if (isApiStatus(err, 400)) return detail || '模板缺失或不可用（只接受已放入 templates/ 的 .docx）'
+  if (isApiStatus(err, 500)) return detail || '成品完整性检查未通过，产物已丢弃，可重试'
+  if (isApiStatus(err, 404)) return detail || '该来源或成品不存在'
+  return `生成 Word 失败：${(err as Error).message}`
 }
 
 /* ---------- 总结操作 ---------- */
@@ -724,8 +1128,8 @@ function describeFetchError(err: unknown): string {
   if (err instanceof BackendUnavailableError) return '后端未启动，无法抓取。请双击「启动.bat」拉起服务后重试。'
   const msg = (err as Error).message || ''
   const detail = extractDetail(msg)
-  if (msg.includes('400')) return `${detail || '该链接未通过安全校验'}（未发起抓取，未保存任何数据）`
-  if (msg.includes('422')) return '链接不能为空，且长度不能超过 2048 字符'
+  if (isApiStatus(err, 400)) return `${detail || '该链接未通过安全校验'}（未发起抓取，未保存任何数据）`
+  if (isApiStatus(err, 422)) return '链接不能为空，且长度不能超过 2048 字符'
   return detail || '抓取请求失败，请重试'
 }
 
@@ -733,9 +1137,9 @@ function describeAnalyzeError(err: unknown): string {
   if (err instanceof BackendUnavailableError) return '后端未启动，无法发起分析'
   const msg = (err as Error).message || ''
   const detail = extractDetail(msg)
-  if (msg.includes('502')) return detail || '模型调用失败，总结未生成'
-  if (msg.includes('409')) return detail || '该资料当前不可分析'
-  if (msg.includes('404')) return '该资料不存在或已被清理，请重新上传'
+  if (isApiStatus(err, 502)) return detail || '模型调用失败，总结未生成'
+  if (isApiStatus(err, 409)) return detail || '该资料当前不可分析'
+  if (isApiStatus(err, 404)) return '该资料不存在或已被清理，请重新上传'
   return detail || '分析请求失败，请重试'
 }
 
@@ -743,10 +1147,28 @@ function describeSendError(err: unknown): string {
   if (err instanceof BackendUnavailableError) return '后端未启动，送入失败'
   const msg = (err as Error).message || ''
   const detail = extractDetail(msg)
-  if (msg.includes('409')) return detail || '该来源尚无总结，无法送入主题创作；请先完成分析'
-  if (msg.includes('404')) return '该资料不存在或已被清理，请重新上传'
+  if (isApiStatus(err, 409)) return detail || '该来源尚无总结，无法送入主题创作；请先完成分析'
+  if (isApiStatus(err, 404)) return '该资料不存在或已被清理，请重新上传'
   return detail ? `送入失败：${detail}` : '送入主题创作失败，请重试'
 }
+
+/* ---------- 入口：?source= 回看，空闲态读最近资料 ---------- */
+
+// 历史页 / 最近资料列表切换来源时同一组件内复用：query 变化即还原，不重新挂载
+watch(
+  () => route.query.source,
+  () => {
+    const id = sourceIdFromQuery()
+    if (id !== null) void restoreSource(id)
+  }
+)
+
+onMounted(() => {
+  void loadTemplates()
+  const id = sourceIdFromQuery()
+  if (id !== null) void restoreSource(id)
+  else void loadRecent()
+})
 </script>
 
 <style scoped>
@@ -958,6 +1380,23 @@ function describeSendError(err: unknown): string {
   white-space: nowrap;
 }
 
+/* 分析模型（次级行）：与 URL 输入同区，不抢「开始分析」的层级 */
+.model-field {
+  margin-top: var(--sp-4);
+}
+.model-hint {
+  margin: var(--sp-2) 0 0;
+  line-height: 1.6;
+}
+
+/* 回看提示（轻量、单行内 note） */
+.restored {
+  margin-bottom: var(--sp-4);
+  max-width: 1180px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
 /* 分析按钮 */
 .analyze-btn {
   width: 100%;
@@ -1070,6 +1509,7 @@ function describeSendError(err: unknown): string {
 .result-actions {
   display: flex;
   gap: var(--sp-2);
+  align-items: center;
   flex-wrap: wrap;
   padding: var(--sp-4);
   border-top: 1px solid var(--line-1);
@@ -1077,8 +1517,107 @@ function describeSendError(err: unknown): string {
 .result-actions .el-button + .el-button {
   margin-left: 0;
 }
-.result-actions .el-button:nth-child(2) {
+.result-actions .send-btn {
   margin-left: auto;
+}
+.word-tpl {
+  width: 168px;
+  max-width: 100%;
+}
+.tpl-note {
+  margin: 0;
+  padding: 0 var(--sp-4) var(--sp-4);
+  line-height: 1.6;
+}
+
+/* 最近资料（空闲态续看入口） */
+.recent {
+  margin-top: var(--sp-5);
+  border-top: 1px solid var(--line-1);
+  padding-top: var(--sp-3);
+}
+.recent-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.recent-head h4 {
+  margin: 0;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text-1);
+}
+.recent-head .el-button {
+  margin-left: auto;
+}
+.recent > p {
+  margin: var(--sp-2) 0 var(--sp-3);
+}
+.recent-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.recent-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  background: var(--bg-surface);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-sm);
+  padding: var(--sp-2) var(--sp-3);
+  cursor: pointer;
+}
+.recent-row:hover {
+  border-color: var(--brand-200);
+  background: var(--brand-50);
+}
+.recent-row:focus-visible {
+  outline: 2px solid var(--brand-500);
+  outline-offset: 2px;
+}
+.recent-row .ico {
+  color: var(--text-4);
+  flex: none;
+}
+.rc-main {
+  flex: 1;
+  min-width: 0;
+}
+.rc-main b {
+  display: block;
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rc-main em {
+  display: block;
+  font-style: normal;
+  color: var(--text-3);
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pend-empty {
+  border: 1px dashed var(--line-3);
+  border-radius: var(--r-sm);
+  background: var(--bg-sunken);
+  padding: var(--sp-3) var(--sp-4);
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+  text-align: center;
+  line-height: 1.6;
 }
 
 @media (max-width: 1100px) {

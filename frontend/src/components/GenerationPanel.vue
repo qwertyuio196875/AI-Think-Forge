@@ -48,7 +48,7 @@
       <div v-if="format === 'docx'" class="gfield">
         <label>Word 模板 · 本任务临时选择</label>
         <el-select v-model="templateSel" class="tpl-select" placeholder="跟随全局默认模板">
-          <el-option label="跟随全局默认模板" value="" />
+          <el-option label="跟随全局默认模板" :value="TEMPLATE_DEFAULT" />
           <el-option
             v-for="t in docxTemplates"
             :key="t.name"
@@ -69,7 +69,7 @@
         <div v-if="themesLoading" class="xs muted">正在读取主题族…</div>
         <div v-else-if="themes.length === 0" class="note warn">
           <el-icon class="ico"><WarningFilled /></el-icon>
-          <div class="note-body"><span>读不到主题族清单；仍可尝试生成，未指定主题时后端用默认主题 slate。</span></div>
+          <div class="note-body"><span>读不到主题族清单；仍可尝试生成，未指定主题时后端用设置页的「全局默认主题」。</span></div>
         </div>
         <div v-else class="theme-grid" role="radiogroup" aria-label="演示主题">
           <label
@@ -97,6 +97,7 @@
         <p class="hint">
           主题取自 OpenDesign 主题族适配后的本地资产（MIT 族，见署名）；中文走系统字体回退、不内联 CJK。
           未知主题后端返回 400，不静默退回默认。
+          这里是<strong>显式指定</strong>，优先于设置页的「全局默认主题」；后者只作用于未指定主题的生成。
         </p>
       </div>
 
@@ -262,6 +263,7 @@ import {
   generateDeliverable,
   getDeckThemes,
   getTemplates,
+  isApiStatus,
   listGenerations,
   type DeckTheme,
   type Generation,
@@ -280,9 +282,14 @@ const props = defineProps<{
 
 const BUILTIN_TEMPLATE = '_builtin/minimal-default.docx'
 const DECK_THEME_PREFIX = 'deck-theme:'
+/**
+ * 「跟随全局默认模板」的下拉值：不能用空串（Element Plus 把空串当未选择，
+ * 会把选项文案显示成占位符），这里用哨兵并在提交时映射回 null。
+ */
+const TEMPLATE_DEFAULT = '__global_default__'
 
 const format = ref<GenerationFormat>('docx')
-const templateSel = ref('')
+const templateSel = ref<string>(TEMPLATE_DEFAULT)
 const theme = ref('')
 const templates = ref<Template[]>([])
 const themes = ref<DeckTheme[]>([])
@@ -401,7 +408,8 @@ async function runGenerate(override?: string | null): Promise<void> {
   genError.value = ''
   genErrorTitle.value = ''
   canRetryBuiltin.value = false
-  const template = override !== undefined ? override : templateSel.value || null
+  const template =
+    override !== undefined ? override : templateSel.value === TEMPLATE_DEFAULT ? null : templateSel.value
   try {
     const resp = await generateDeliverable(props.taskId, {
       format: format.value,
@@ -425,10 +433,10 @@ function handleGenError(err: unknown): void {
     return
   }
   const msg = (err as Error).message || ''
-  if (msg.includes('409')) {
+  if (isApiStatus(err, 409)) {
     genErrorTitle.value = '生成闸门未放行'
     genError.value = '方案未确认或仍有未处置的待确认事项：' + tailDetail(msg)
-  } else if (msg.includes('400')) {
+  } else if (isApiStatus(err, 400)) {
     // Word 模板不可用 或 HTML 未知主题：都明确报错、不静默退回。
     const isTheme = format.value === 'html'
     genErrorTitle.value = isTheme
@@ -436,10 +444,10 @@ function handleGenError(err: unknown): void {
       : '模板不可用，已按规则拒绝生成（不会静默产出空白文档）'
     genError.value = tailDetail(msg)
     canRetryBuiltin.value = !isTheme
-  } else if (msg.includes('500')) {
+  } else if (isApiStatus(err, 500)) {
     genErrorTitle.value = '完整性检查未通过，产物已丢弃'
     genError.value = tailDetail(msg)
-  } else if (msg.includes('501')) {
+  } else if (isApiStatus(err, 501)) {
     genErrorTitle.value = '该格式暂不可用'
     genError.value = '该成品格式后端尚未落地。'
   } else {

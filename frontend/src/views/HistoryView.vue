@@ -89,7 +89,14 @@
                   <div class="t-name">
                     <button type="button" @click="open(row)">{{ row.title || '未命名任务' }}</button>
                   </div>
-                  <div class="t-sub">第 {{ row.rounds }} 轮 · {{ row.dialogue_messages }} 条对话</div>
+                  <div v-if="row.kind === 'analysis'" class="t-sub">
+                    {{
+                      row.source_id != null
+                        ? `来源 #${row.source_id} · 可回看解析与总结`
+                        : '未登记来源（旧任务），无法回看'
+                    }}
+                  </div>
+                  <div v-else class="t-sub">第 {{ row.rounds }} 轮 · {{ row.dialogue_messages }} 条对话</div>
                 </td>
                 <td class="col-hide">
                   <el-tag size="small" type="info" effect="plain">{{ kindLabel(row.kind) }}</el-tag>
@@ -111,7 +118,7 @@
                       {{ row.status === 'in_progress' ? '继续' : '打开' }}
                     </el-button>
                     <el-button v-else size="small" @click="open(row)">
-                      {{ row.kind === 'analysis' ? '打开' : '查看' }}
+                      {{ row.kind === 'analysis' ? (row.source_id != null ? '回看' : '打开') : '查看' }}
                     </el-button>
 
                     <el-button
@@ -192,6 +199,7 @@ import {
   BackendUnavailableError,
   deleteTask,
   getDeletionImpact,
+  isApiStatus,
   listHistory,
   setTaskStatus,
   type DeletionImpact,
@@ -326,10 +334,15 @@ async function open(row: HistoryItem): Promise<void> {
   if (row.kind === 'creation') {
     // 续作跳转：把任务 id 交给创作页，由它拉取 history 详情按 awaiting 落在正确一步
     router.push(`/creation?task=${row.id}`)
-  } else {
-    router.push('/analysis')
-    ElMessage.info('该分析任务已记录在历史、总结已保存；按任务打开历史分析的视图将随后端来源清单能力接入')
+    return
   }
+  if (row.source_id != null) {
+    // 分析任务带着自己的来源 id：分析页按 ?source= 还原解析结果与已保存的总结
+    router.push(`/analysis?source=${row.source_id}`)
+    return
+  }
+  router.push('/analysis')
+  ElMessage.info('该分析任务没有可回看的来源（来源清单里未记录到它），可在分析页重新上传资料')
 }
 
 async function mark(row: HistoryItem, next: 'in_progress' | 'completed'): Promise<void> {
@@ -387,8 +400,8 @@ function exportUnavailable(): void {
 function describe(err: unknown, action: string): string {
   if (err instanceof BackendUnavailableError) return `后端未启动，${action}失败`
   const msg = (err as Error).message || ''
-  if (msg.includes('404')) return '对应的任务不存在或已被清理'
-  if (msg.includes('409')) return '该操作不被允许（如已删除任务不可再变更状态）'
+  if (isApiStatus(err, 404)) return '对应的任务不存在或已被清理'
+  if (isApiStatus(err, 409)) return '该操作不被允许（如已删除任务不可再变更状态）'
   return `${action}失败：${msg}`
 }
 
@@ -483,6 +496,11 @@ onMounted(load)
   font-size: var(--fs-xs);
   color: var(--text-3);
   margin-top: 2px;
+  /* 副文案不得撑宽表格（窄屏整页会出现横向滚动） */
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .st {
   display: inline-flex;
