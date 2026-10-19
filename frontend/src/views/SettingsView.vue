@@ -275,7 +275,8 @@
                 主题与色卡取自 <span class="mono">GET /api/deck-themes</span>（与生成入口同一份事实），不硬编码。
                 当前全局默认：<b>{{ deckThemeName || (deckThemeState === 'ready' ? '未读取到' : '读取中…') }}</b>；
                 点选主题即写入 <span class="mono">PUT /api/settings/deck-theme</span>，失败会退回原选择并说明原因。
-                它只作用于<strong>未显式指定主题</strong>的单文件 HTML 生成（生成时指定了主题以那次为准，每次成品仍记录实际所用主题）；
+                它只作用于<strong>未显式指定主题</strong>的单文件 HTML 生成；创作页「生成面板」的主题默认<strong>跟随此项</strong>，
+                在面板里选了具体主题只覆盖那一次生成（每次成品仍记录实际所用主题）；
                 Word 模板的默认值与此无关，仍用上方「Word 模板 · 全局默认」。
               </p>
 

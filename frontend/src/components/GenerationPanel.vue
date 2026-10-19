@@ -63,15 +63,32 @@
         </p>
       </div>
 
-      <!-- HTML：演示主题（数据来自 GET /api/deck-themes，色板不硬编码） -->
+      <!-- HTML：演示主题（清单来自 GET /api/deck-themes，色板不硬编码；空值 = 跟随全局默认） -->
       <div v-else class="gfield">
         <label>演示主题 · 本任务临时选择</label>
-        <div v-if="themesLoading" class="xs muted">正在读取主题族…</div>
-        <div v-else-if="themes.length === 0" class="note warn">
-          <el-icon class="ico"><WarningFilled /></el-icon>
-          <div class="note-body"><span>读不到主题族清单；仍可尝试生成，未指定主题时后端用设置页的「全局默认主题」。</span></div>
-        </div>
-        <div v-else class="theme-grid" role="radiogroup" aria-label="演示主题">
+        <div class="theme-grid" role="radiogroup" aria-label="演示主题">
+          <label class="theme-opt is-follow" :class="{ sel: theme === '' }">
+            <input v-model="theme" type="radio" name="gptheme" value="" />
+            <span>
+              <b>跟随全局默认主题</b>
+              <span class="td">{{ followThemeText }}</span>
+              <span class="theme-chips is-follow-chips">
+                <template v-if="defaultThemeInfo">
+                  <i :style="{ background: defaultThemeInfo.palette.bg }"></i>
+                  <i :style="{ background: defaultThemeInfo.palette.fg }"></i>
+                  <i :style="{ background: defaultThemeInfo.palette.accent }"></i>
+                  <i :style="{ background: defaultThemeInfo.palette.line }"></i>
+                </template>
+                <template v-else>
+                  <i class="void"></i><i class="void"></i><i class="void"></i><i class="void"></i>
+                </template>
+              </span>
+              <span class="th-src">不指定主题 · 由后端按全局默认生成</span>
+            </span>
+          </label>
+          <template v-if="themesLoading">
+            <div class="xs muted theme-loading">正在读取主题族…</div>
+          </template>
           <label
             v-for="th in themes"
             :key="th.id"
@@ -94,10 +111,14 @@
             </span>
           </label>
         </div>
+        <div v-if="!themesLoading && themes.length === 0" class="note warn" style="margin-top: var(--sp-3)">
+          <el-icon class="ico"><WarningFilled /></el-icon>
+          <div class="note-body"><span>读不到主题族清单；仍可生成，未选择具体主题时由后端按全局默认主题产出。</span></div>
+        </div>
         <p class="hint">
           主题取自 OpenDesign 主题族适配后的本地资产（MIT 族，见署名）；中文走系统字体回退、不内联 CJK。
+          <strong>未选择具体主题时</strong>用设置页的「全局默认主题」；选了具体主题<strong>只覆盖本次生成</strong>，不改变全局默认。
           未知主题后端返回 400，不静默退回默认。
-          这里是<strong>显式指定</strong>，优先于设置页的「全局默认主题」；后者只作用于未指定主题的生成。
         </p>
       </div>
 
@@ -261,6 +282,7 @@ import {
   downloadDeliverable,
   fetchDeliverableHtml,
   generateDeliverable,
+  getDeckThemeDefault,
   getDeckThemes,
   getTemplates,
   isApiStatus,
@@ -290,10 +312,14 @@ const TEMPLATE_DEFAULT = '__global_default__'
 
 const format = ref<GenerationFormat>('docx')
 const templateSel = ref<string>(TEMPLATE_DEFAULT)
+/** 演示主题：空串 = 跟随设置页的全局默认主题（生成时不带 theme，由后端按默认产出）。 */
 const theme = ref('')
 const templates = ref<Template[]>([])
 const themes = ref<DeckTheme[]>([])
 const themesLoading = ref(true)
+/** 后端记录的全局默认主题 id（GET /api/settings/deck-theme）。 */
+const deckDefault = ref('')
+const deckDefaultState = ref<'loading' | 'ready' | 'error'>('loading')
 const generations = ref<Generation[]>([])
 const metaById = ref<Record<number, GenerationResponse>>({})
 const generating = ref(false)
@@ -384,15 +410,41 @@ async function loadTemplates(): Promise<void> {
 async function loadThemes(): Promise<void> {
   themesLoading.value = true
   try {
+    // 只填清单，不预选具体主题：默认保持「跟随全局默认主题」（theme 为空）
     themes.value = (await getDeckThemes()).items
-    if (!theme.value) theme.value = themes.value[0]?.id ?? 'slate'
   } catch {
     themes.value = []
-    if (!theme.value) theme.value = 'slate'
   } finally {
     themesLoading.value = false
   }
 }
+
+/** 读取全局默认主题，用于「跟随全局默认」卡片上的说明；失败不阻塞生成。 */
+async function loadDeckDefault(): Promise<void> {
+  deckDefaultState.value = 'loading'
+  try {
+    deckDefault.value = (await getDeckThemeDefault()).theme
+    deckDefaultState.value = 'ready'
+  } catch {
+    deckDefault.value = ''
+    deckDefaultState.value = 'error'
+  }
+}
+
+/** 全局默认对应的主题详情：清单里找不到就返回 null（说明文字仍按 id 原样显示，不静默替换）。 */
+const defaultThemeInfo = computed<DeckTheme | null>(() =>
+  deckDefault.value
+    ? themes.value.find((t) => t.id === deckDefault.value || t.name === deckDefault.value) ?? null
+    : null
+)
+
+/** 「跟随全局默认主题」卡片的副文案。 */
+const followThemeText = computed(() => {
+  if (deckDefaultState.value === 'loading') return '正在读取全局默认主题…'
+  if (deckDefaultState.value === 'error') return '全局默认主题读取失败，将使用内建默认'
+  if (!deckDefault.value) return '全局默认主题未读取到，将使用内建默认'
+  return `当前：${defaultThemeInfo.value?.name ?? deckDefault.value}`
+})
 
 async function loadGenerations(): Promise<void> {
   try {
@@ -515,8 +567,13 @@ function refresh(): void {
 }
 
 watch(() => props.taskId, refresh)
+// 切到 HTML 轨时刷新一次全局默认，反映设置页里刚改过的值（不阻塞、不报错打扰）
+watch(format, (next) => {
+  if (next === 'html') void loadDeckDefault()
+})
 onMounted(() => {
   loadThemes()
+  loadDeckDefault()
   refresh()
 })
 </script>
@@ -662,6 +719,22 @@ onMounted(() => {
   border-color: var(--brand-500);
   background: var(--brand-50);
   box-shadow: 0 0 0 2px var(--brand-50);
+}
+
+/* 「跟随全局默认」与其它主题卡同权重，只是不指定具体主题 */
+.theme-opt.is-follow .td {
+  color: var(--text-2);
+}
+.theme-chips i.void {
+  background: repeating-linear-gradient(
+    135deg,
+    var(--line-2) 0 3px,
+    var(--bg-sunken) 3px 6px
+  );
+}
+.theme-loading {
+  align-self: center;
+  padding: var(--sp-3) 0;
 }
 .theme-chips {
   display: flex;
