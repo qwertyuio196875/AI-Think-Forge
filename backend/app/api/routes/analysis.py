@@ -21,6 +21,7 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
 
+from app import config
 from app.analysis.chunking import Chunk, build_chunks
 from app.analysis.parsing import SUPPORTED_SUFFIXES, ParseError, parse_document
 from app.analysis.service import (
@@ -640,6 +641,7 @@ def generate_summary_word(
 def download_summary_word(
     deliverable_id: int,
     summary_deliverable_repository: SummaryDeliverableRepositoryDep,
+    data_dir: DataDirDep,
 ) -> FileResponse:
     """下载已生成的总结 Word 成品；记录不存在或文件已丢失均 404。"""
     record = summary_deliverable_repository.get(deliverable_id)
@@ -649,7 +651,13 @@ def download_summary_word(
             detail=f"总结成品 {deliverable_id} 不存在",
         )
 
-    path = Path(record["file_path"])
+    path = Path(record["file_path"]).resolve()
+    deliverables_root = (Path(data_dir) / config.DELIVERABLES_SUBDIR).resolve()
+    if not path.is_relative_to(deliverables_root):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"总结成品 {deliverable_id} 的路径不在允许的成品目录内",
+        )
     if not path.exists():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

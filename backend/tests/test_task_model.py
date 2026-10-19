@@ -66,6 +66,16 @@ def test_create_task_with_provider_is_returned_and_persisted(client: TestClient)
     assert plain["provider_id"] is None
 
 
+def test_create_task_with_unknown_provider_returns_400(client: TestClient) -> None:
+    """创建任务时 provider 必须存在，避免落一个悬空覆盖。"""
+    response = client.post(
+        "/api/tasks",
+        json={"kind": "creation", "title": "悬空模型", "provider_id": 999999},
+    )
+    assert response.status_code == 400
+    assert "不存在" in response.json()["detail"]
+
+
 def test_put_task_model_sets_and_clears_override(client: TestClient) -> None:
     """PUT 设置 / 清除任务级模型覆盖；null 表示回到默认。"""
     provider = _provider(client, "max")
