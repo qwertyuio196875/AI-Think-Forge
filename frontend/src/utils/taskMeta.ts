@@ -6,37 +6,15 @@
 import type { TaskKind, TaskStatus } from '../api/client'
 
 const STATUS_LABELS: Record<string, string> = {
-  draft: '草稿',
-  grilling: '拷问进行中',
-  in_progress: '拷问进行中',
-  waiting_confirm: '待方案确认',
-  pending: '待方案确认',
-  awaiting_confirm: '待方案确认',
-  confirmed: '方案已确认',
-  generating: '生成中',
-  processing: '生成中',
-  done: '已完成',
+  in_progress: '进行中',
   completed: '已完成',
-  failed: '生成失败',
-  error: '生成失败',
-  paused: '已中断',
-  interrupted: '已中断',
-  cancelled: '已取消'
+  deleted: '已删除'
 }
 
 const STATUS_DOT: Record<string, string> = {
-  grilling: 'tf-dot--run',
   in_progress: 'tf-dot--run',
-  generating: 'tf-dot--run',
-  processing: 'tf-dot--run',
-  waiting_confirm: 'tf-dot--warn',
-  pending: 'tf-dot--warn',
-  awaiting_confirm: 'tf-dot--warn',
-  confirmed: 'tf-dot--warn',
-  done: 'tf-dot--ok',
   completed: 'tf-dot--ok',
-  failed: 'tf-dot--err',
-  error: 'tf-dot--err'
+  deleted: 'tf-dot--err'
 }
 
 export function statusLabel(status: TaskStatus): string {

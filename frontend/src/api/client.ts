@@ -29,12 +29,15 @@ export class BackendUnavailableError extends Error {
 /** 任务类型：主题创作 / 资料分析。 */
 export type TaskKind = 'creation' | 'analysis'
 
-/** 任务状态。v1 后端返回字符串（如 draft / grilling / confirmed / done），前端按原样展示。 */
-export type TaskStatus = string
+/**
+ * 任务状态。以后端 `app/models/task.py::TaskStatus` 为准：
+ * in_progress / completed / deleted；保留 string 兜底以防后续扩展。
+ */
+export type TaskStatus = 'in_progress' | 'completed' | 'deleted' | (string & {})
 
-/** 任务对象（POST/GET /api/tasks 返回体）。 */
+/** 任务对象（POST/GET /api/tasks 返回体；id 为后端自增整数）。 */
 export interface Task {
-  id: string
+  id: number
   kind: TaskKind
   title: string | null
   status: TaskStatus
@@ -104,8 +107,8 @@ export function listTasks(params?: {
 }
 
 /** 按 id 读取任务：GET /api/tasks/{id}。404 会走 request 的非 2xx 抛出。 */
-export function getTask(id: string): Promise<Task> {
-  return request<Task>(`/tasks/${encodeURIComponent(id)}`)
+export function getTask(id: number): Promise<Task> {
+  return request<Task>(`/tasks/${id}`)
 }
 
 /* ============================================================
@@ -196,6 +199,75 @@ export function testProvider(id: string): Promise<ConnectionTestResult> {
   })
 }
 
+/* ============================================================
+   拷问（Grilling）—— TB-2 第一轮
+   权威来源：backend/app/models/grilling.py（逐字段对齐）。
+   前沿问题集内嵌在 assistant 消息里，但后端已在 /dialogue 的 rounds[].frontier 解析为结构；
+   前端只消费 rounds / seed_input，不自行解析 message.content。
+   ============================================================ */
+
+/** 前沿中的一个问题：标题、正文与推荐答案（推荐答案后端结构必填）。 */
+export interface FrontierQuestion {
+  title: string
+  body: string
+  recommended_answer: string
+}
+
+/** 一个轮次：该轮前沿问题集 + 用户回答（与问题一一对应）。 */
+export interface FrontierRound {
+  round_no: number
+  frontier: FrontierQuestion[]
+  answers: string[]
+}
+
+/** 对话流中的一条原始消息（role: system | assistant | user）。 */
+export interface DialogueMessage {
+  id: number
+  round_no: number
+  role: string
+  content: string
+  created_at: string
+}
+
+/** 某任务的完整对话状态：种子输入 + 各轮次 + 原始消息。 */
+export interface Dialogue {
+  task_id: number
+  seed_input: string | null
+  rounds: FrontierRound[]
+  messages: DialogueMessage[]
+}
+
+/** 发起结果：新建任务 + 第一轮前沿。 */
+export interface GrillingStartResponse {
+  task: Task
+  round: FrontierRound
+}
+
+/** 发起主题创作：POST /api/grilling/tasks（一句话 / 一段描述 → 第一轮前沿）。 */
+export function startGrillingTask(idea: string): Promise<GrillingStartResponse> {
+  return request<GrillingStartResponse>('/grilling/tasks', {
+    method: 'POST',
+    body: JSON.stringify({ idea })
+  })
+}
+
+/** 提交某轮回答：POST /api/grilling/tasks/{id}/answers（数量须与前沿问题一致），返回写后对话状态。 */
+export function submitAnswers(
+  taskId: number,
+  roundNo: number,
+  answers: string[]
+): Promise<Dialogue> {
+  return request<Dialogue>(`/grilling/tasks/${taskId}/answers`, {
+    method: 'POST',
+    body: JSON.stringify({ round_no: roundNo, answers })
+  })
+}
+
+/** 读取对话：GET /api/grilling/tasks/{id}/dialogue（复原轮次与问答顺序）。 */
+export function getDialogue(taskId: number): Promise<Dialogue> {
+  return request<Dialogue>(`/grilling/tasks/${taskId}/dialogue`)
+}
+
 export default {
   API_BASE_URL,
   checkHealth,
@@ -208,5 +280,8 @@ export default {
   updateProvider,
   deleteProvider,
   setDefaultProvider,
-  testProvider
+  testProvider,
+  startGrillingTask,
+  submitAnswers,
+  getDialogue
 }
