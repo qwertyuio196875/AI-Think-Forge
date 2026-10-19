@@ -136,14 +136,23 @@
                   :aria-expanded="isExpanded(r.round_no) ? 'true' : 'false'"
                   @click="toggleRound(r.round_no)"
                 >
-                  <el-icon class="ico ok"><CircleCheck /></el-icon>
-                  <b>第 {{ r.round_no }} 轮 · {{ r.frontier.length }} 个问题 · 全部已答</b>
+                  <el-icon v-if="!skippedCount(r)" class="ico ok"><CircleCheck /></el-icon>
+                  <el-icon v-else class="ico warn"><Warning /></el-icon>
+                  <b>第 {{ r.round_no }} 轮 · {{ r.frontier.length }} 个问题 · 已定 {{ answeredCount(r) }} · 未定 {{ skippedCount(r) }}</b>
                   <el-icon class="chev"><ArrowRight /></el-icon>
                 </button>
                 <div v-show="isExpanded(r.round_no)" class="qround-body">
-                  <div v-for="(q, qi) in r.frontier" :key="qi" class="done-qa">
+                  <div
+                    v-for="(q, qi) in r.frontier"
+                    :key="qi"
+                    class="done-qa"
+                    :class="{ 'is-skip': isSkipAnswer(r.answers[qi]) }"
+                  >
                     <b>Q{{ qi + 1 }} · {{ q.title }}</b>
-                    <span>{{ r.answers[qi] }}</span>
+                    <span v-if="isSkipAnswer(r.answers[qi])" class="muted">
+                      （暂时跳过 · 未定）该问题已进入待确认事项
+                    </span>
+                    <span v-else>{{ r.answers[qi] }}</span>
                   </div>
                 </div>
               </div>
@@ -151,10 +160,8 @@
               <div v-else-if="r === openRound" class="round">
                 <div class="qhead">
                   <h2>第 {{ r.round_no }} 轮 · 前沿问题</h2>
-                  <p>本轮只问前置条件已定的问题。每题附推荐答案，采纳或改写都行。</p>
-                  <el-tag size="small" type="warning" effect="plain">
-                    已回答 {{ r.answers.length }} / {{ r.frontier.length }}
-                  </el-tag>
+                  <p>本轮只问前置条件已定的问题。每题附推荐答案，可采纳、改写，或「暂时跳过」把该题留作待确认事项。</p>
+                  <el-tag size="small" type="warning" effect="plain">共 {{ r.frontier.length }} 题待处理</el-tag>
                 </div>
 
                 <div class="card qcards">
@@ -162,30 +169,52 @@
                     v-for="(q, qi) in r.frontier"
                     :key="qi"
                     class="qcard"
-                    :class="{ 'is-done': qi < r.answers.length }"
+                    :class="{ 'is-skip': isSkipped(qi) }"
                   >
                     <div class="q-top">
                       <span class="q-no">Q{{ qi + 1 }}</span>
                       <div class="q-main">
                         <div class="q-text">{{ q.title }}</div>
                         <p class="q-body">{{ q.body }}</p>
+                        <p v-if="q.why" class="q-why">为什么现在问：{{ q.why }}</p>
                       </div>
                     </div>
+
                     <div class="q-rec">
                       <b>→ 推荐答案</b>
                       <p>{{ q.recommended_answer }}</p>
+                      <div v-if="q.alternatives && q.alternatives.length" class="alt-row">
+                        <span class="alt-label">备选方向</span>
+                        <button
+                          v-for="(alt, ai) in q.alternatives"
+                          :key="ai"
+                          type="button"
+                          class="alt"
+                          @click="pickAlternative(qi, alt)"
+                        >
+                          {{ alt }}
+                        </button>
+                      </div>
                     </div>
-                    <div class="ans">
+
+                    <div v-if="isSkipped(qi)" class="ans ans-skipped">
+                      <span class="skip-note">已标记「暂时跳过」—— 提交后该题保持未定，并进入待确认事项</span>
+                      <div class="ans-actions">
+                        <el-button size="small" @click="undoSkip(qi)">撤销跳过</el-button>
+                      </div>
+                    </div>
+                    <div v-else class="ans">
                       <textarea
                         v-model="drafts[qi]"
                         rows="2"
                         :aria-label="`第 ${r.round_no} 轮第 ${qi + 1} 题作答`"
-                        placeholder="直接写你的答案，或点「采纳推荐答案」后修改"
+                        placeholder="直接写你的答案，或点「采纳推荐答案」/ 备选方向后修改"
                       ></textarea>
                       <div class="ans-actions">
                         <el-button size="small" type="primary" :icon="Select" @click="adopt(qi)">
                           采纳推荐答案
                         </el-button>
+                        <el-button size="small" @click="skipQuestion(qi)">暂时跳过</el-button>
                       </div>
                     </div>
                   </div>
@@ -200,7 +229,10 @@
                   >
                     提交并推进
                   </el-button>
-                  <span class="xs muted">需回答全部 {{ r.frontier.length }} 个问题，提交后据此计算下一轮或收敛</span>
+                  <el-button :loading="submitting" @click="submitSkipAll">整轮跳过</el-button>
+                  <span class="xs muted">
+                    每题作答或明确跳过后提交，据此计算下一轮或收敛；跳过项会进入待确认事项
+                  </span>
                 </div>
               </div>
             </template>
@@ -211,7 +243,7 @@
               <span class="xs muted">本轮已答完，据此重新计算前沿，或收敛为结构化方案</span>
             </div>
 
-            <!-- 收敛 + 结构化方案 + 确认闸门 -->
+            <!-- 收敛 + 结构化方案 + 待确认事项 + 修订 + 确认闸门 -->
             <template v-if="plan">
               <div class="note info converge">
                 <el-icon class="ico"><InfoFilled /></el-icon>
@@ -219,7 +251,7 @@
                   <b>拷问收敛，无下一轮</b>
                   <span>
                     关键问题已解决后主动收敛，不再为延续对话而提问；未确认的推测只作为待确认事项，不会写进成品。
-                    请审查下方结构化方案，确认之后才会进入生成。
+                    请审查下方结构化方案，处置完待确认事项后再确认，才会进入生成。
                   </span>
                 </div>
               </div>
@@ -234,10 +266,22 @@
                   >
                     {{ plan.status === 'confirmed' ? '已确认 · ' + confirmedAt : '草稿 · 未确认，不会进入生成' }}
                   </el-tag>
-                  <span class="sub">由第 {{ plan.round_no }} 轮问答生成</span>
+                  <span class="sub">由第 {{ plan.round_no }} 轮问答生成<template v-if="revisions.length"> · 已修订 {{ revisions.length }} 次</template></span>
                 </div>
 
                 <div class="card-body">
+                  <!-- 最近一次修订的变更摘要 -->
+                  <div v-if="latestRevision" class="plan-changed">
+                    <b>本次修订</b>
+                    <span class="ch-inst">「{{ latestRevision.instruction }}」· {{ formatDateTime(latestRevision.created_at) }}</span>
+                    <div class="ch-list">
+                      <span v-for="(c, ci) in latestRevision.change_summary" :key="ci" class="ch" :class="'ch-' + c.kind">
+                        {{ changeKindText(c.kind) }} · {{ c.heading }}
+                      </span>
+                      <span v-if="!latestRevision.change_summary.length" class="ch muted">未检测到章节级变化</span>
+                    </div>
+                  </div>
+
                   <div v-if="planSectioned?.title" class="plan-title">{{ planSectioned.title }}</div>
 
                   <div v-if="planSectioned && planSectioned.sections.length" class="plan-grid">
@@ -249,36 +293,127 @@
                   </div>
                   <div v-else class="fld-body muted">方案正文为空。</div>
 
-                  <!-- 待确认事项：本单只读展示 -->
+                  <!-- 待确认事项：真实清单 + 处置 -->
                   <div class="plan-pending">
-                    <h4><el-icon class="ico"><Warning /></el-icon>待确认事项</h4>
-                    <p>系统标记的未定关键信息会在此列出；你不回应不等于同意。（读写细节属 TB-4）</p>
-                    <div class="pend-empty">暂无待确认事项</div>
+                    <h4>
+                      <el-icon class="ico"><Warning /></el-icon>待确认事项
+                      <span v-if="openItemCount" class="pend-count">{{ openItemCount }} 项未处置</span>
+                    </h4>
+                    <p>系统标记的未定关键信息（多来自「暂时跳过」）。你不回应不等于同意；全部处置后才能确认方案。</p>
+                    <div v-if="!openItems.length" class="pend-empty">暂无待确认事项</div>
+                    <ul v-else class="pend-list">
+                      <li
+                        v-for="it in openItems"
+                        :key="it.id"
+                        class="pend"
+                        :class="{ 'is-decided': it.status !== 'open' }"
+                      >
+                        <div class="pend-grow">
+                          <div class="pend-name">{{ it.text }}</div>
+                          <div class="pend-sub">来源：第 {{ it.round_no }} 轮 · 暂时跳过</div>
+                        </div>
+                        <template v-if="it.status === 'open'">
+                          <el-button
+                            size="small"
+                            type="primary"
+                            :loading="resolvingId === it.id"
+                            @click="doResolve(it, 'confirmed')"
+                          >
+                            采纳推荐并定下
+                          </el-button>
+                          <el-button
+                            size="small"
+                            :loading="resolvingId === it.id"
+                            @click="doResolve(it, 'dismissed')"
+                          >
+                            驳回
+                          </el-button>
+                          <el-tag size="small" type="warning" effect="plain">未定</el-tag>
+                        </template>
+                        <el-tag
+                          v-else
+                          size="small"
+                          :type="it.status === 'confirmed' ? 'success' : 'info'"
+                          effect="plain"
+                        >
+                          {{ it.status === 'confirmed' ? '已确认' : '已驳回'
+                          }}{{ it.resolved_at ? ' · ' + formatDateTime(it.resolved_at) : '' }}
+                        </el-tag>
+                      </li>
+                    </ul>
+                  </div>
+
+                  <!-- 对话式修订 -->
+                  <div class="plan-revise">
+                    <h4>继续对话修订方案</h4>
+                    <textarea
+                      v-model="reviseText"
+                      rows="2"
+                      placeholder="例如：把目标读者改成初级工程师；补充一节「常见问题」"
+                    ></textarea>
+                    <div class="revise-actions">
+                      <el-button
+                        size="small"
+                        type="primary"
+                        :loading="revising"
+                        :disabled="!reviseText.trim()"
+                        @click="doRevise"
+                      >
+                        提交修订
+                      </el-button>
+                      <span class="xs muted">修订会更新正文并把方案带回草稿态，需再次确认</span>
+                    </div>
+                  </div>
+
+                  <!-- 修订历史（旧版本留痕） -->
+                  <div v-if="revisions.length" class="revisions">
+                    <button
+                      type="button"
+                      class="rev-toggle"
+                      :aria-expanded="showRevisions ? 'true' : 'false'"
+                      @click="showRevisions = !showRevisions"
+                    >
+                      <el-icon class="chev" :class="{ 'is-open': showRevisions }"><ArrowRight /></el-icon>
+                      <b>修订历史 · {{ revisions.length }} 条</b>
+                    </button>
+                    <ol v-show="showRevisions" class="rev-list">
+                      <li v-for="(rev, ri) in revisions" :key="rev.id" class="rev-item">
+                        <div class="rev-head">第 {{ ri + 1 }} 次修订 · {{ formatDateTime(rev.created_at) }}</div>
+                        <div class="rev-inst">对方案说：{{ rev.instruction }}</div>
+                        <div class="rev-changes">
+                          <span v-for="(c, ci) in rev.change_summary" :key="ci" class="ch" :class="'ch-' + c.kind">
+                            {{ changeKindText(c.kind) }} · {{ c.heading }}
+                          </span>
+                          <span v-if="!rev.change_summary.length" class="ch muted">无章节级变化</span>
+                        </div>
+                      </li>
+                    </ol>
                   </div>
                 </div>
 
                 <div class="plan-foot">
-                  <span v-if="plan.status === 'draft'" class="gate">
+                  <span v-if="plan.status === 'draft'" class="gate" :class="{ 'gate-block': openItemCount > 0 }">
                     <el-icon class="ico lock"><Lock /></el-icon>
-                    <span>方案确认是进入生成的唯一闸门 · 未经确认的推测不会写进任何文件</span>
+                    <span>{{ draftGateText }}</span>
                   </span>
                   <span v-else class="ok-note">
                     <el-icon class="ico"><CircleCheck /></el-icon>
                     <span>已于 {{ confirmedAt }} 由你显式确认</span>
                   </span>
 
-                  <el-button v-if="plan.status === 'draft'" type="primary" size="large" :icon="Select" @click="confirmDialog = true">
+                  <el-button
+                    v-if="plan.status === 'draft'"
+                    type="primary"
+                    size="large"
+                    :icon="Select"
+                    :disabled="!canConfirm"
+                    @click="confirmDialog = true"
+                  >
                     确认方案
                   </el-button>
                   <el-button v-else size="large" disabled>生成成品（待接入）</el-button>
 
-                  <p class="hint">
-                    {{
-                      plan.status === 'confirmed'
-                        ? '方案已确认。成品生成（Word / 单文件 HTML）由 TB-5 / TB-6 落地，此处不提供可用假象。'
-                        : '确认前不会生成任何成品；方案的修改通过继续对话进行。'
-                    }}
-                  </p>
+                  <p class="hint">{{ generationHint }}</p>
                 </div>
               </div>
             </template>
@@ -345,7 +480,7 @@
         </div>
         <div class="cf-item">
           <b>待确认事项</b>
-          <span>暂无（读写属 TB-4）</span>
+          <span>{{ openItemCount ? `还有 ${openItemCount} 项未处置` : '全部已处置' }}</span>
         </div>
         <div class="warnline">
           <el-icon class="ico"><Warning /></el-icon>
@@ -383,12 +518,21 @@ import {
   confirmPlan as confirmPlanApi,
   getDialogue,
   getPlan,
+  isSkipAnswer,
+  listOpenItems,
+  listRevisions,
   listTasks,
+  resolveOpenItem,
+  revisePlan,
   startGrillingTask,
   submitAnswers,
   type Dialogue,
   type FrontierRound,
+  type OpenItem,
   type Plan,
+  type PlanChangeKind,
+  type PlanRevision,
+  type ResolveStatus,
   type Task
 } from '../api/client'
 import { splitPlanSections } from '../utils/markdown'
@@ -407,6 +551,12 @@ const dialogue = ref<Dialogue | null>(null)
 const dialogueState = ref<ChatState>('ready')
 const dialogueError = ref('')
 const plan = ref<Plan | null>(null)
+const openItems = ref<OpenItem[]>([])
+const revisions = ref<PlanRevision[]>([])
+const showRevisions = ref(false)
+const revising = ref(false)
+const reviseText = ref('')
+const resolvingId = ref<number | null>(null)
 
 const submitting = ref(false)
 const advancing = ref(false)
@@ -417,6 +567,7 @@ const expandedIds = ref<number[]>([])
 const idea = ref('')
 const starting = ref(false)
 const drafts = ref<string[]>([])
+const skippedQ = ref<number[]>([])
 const ideaRef = ref<HTMLTextAreaElement | null>(null)
 
 const isChat = computed(() => view.value === 'chat')
@@ -434,7 +585,8 @@ const canSubmit = computed(() => {
   const r = openRound.value
   if (!r) return false
   if (drafts.value.length !== r.frontier.length) return false
-  return drafts.value.every((a) => a.trim().length > 0)
+  // 每题要么明确跳过，要么有非空作答
+  return r.frontier.every((_, qi) => skippedQ.value.includes(qi) || (drafts.value[qi] || '').trim().length > 0)
 })
 
 const showAdvance = computed(
@@ -446,15 +598,19 @@ const showAdvance = computed(
     dialogue.value.rounds.length > 0
 )
 
-const settledCount = computed(() =>
-  (dialogue.value?.rounds ?? []).reduce((n, r) => n + r.answers.length, 0)
-)
-const openCount = computed(() =>
-  (dialogue.value?.rounds ?? []).reduce(
-    (n, r) => n + Math.max(0, r.frontier.length - r.answers.length),
+const settledCount = computed(() => {
+  const answered = (dialogue.value?.rounds ?? []).reduce(
+    (n, r) => n + r.answers.filter((a) => !isSkipAnswer(a)).length,
     0
   )
-)
+  return answered + openItems.value.filter((i) => i.status === 'confirmed').length
+})
+const openCount = computed(() => {
+  const unresolved = openItems.value.filter((i) => i.status === 'open').length
+  const r = openRound.value
+  const unansweredActive = r ? Math.max(0, r.frontier.length - r.answers.length) : 0
+  return unresolved + unansweredActive
+})
 
 const askText = computed(() => {
   if (!isChat.value) return '选一个任务继续，或在下方输入想法发起'
@@ -493,6 +649,40 @@ const statusChip = computed<{ label: string; type: ChipType; dot: string } | nul
 const planSectioned = computed(() => (plan.value ? splitPlanSections(plan.value.content_md) : null))
 
 const confirmedAt = computed(() => (plan.value?.confirmed_at ? formatDateTime(plan.value.confirmed_at) : ''))
+
+const openItemCount = computed(() => openItems.value.filter((i) => i.status === 'open').length)
+const canConfirm = computed(() => plan.value?.status === 'draft' && openItemCount.value === 0)
+const latestRevision = computed<PlanRevision | null>(() =>
+  revisions.value.length ? revisions.value[revisions.value.length - 1] : null
+)
+
+const draftGateText = computed(() =>
+  openItemCount.value > 0
+    ? `还有 ${openItemCount.value} 项待确认事项未处置 · 全部处置后才能确认方案`
+    : '方案确认是进入生成的唯一闸门 · 未经确认的推测不会写进任何文件'
+)
+const generationHint = computed(() => {
+  if (!plan.value) return '尚无结构化方案'
+  if (plan.value.status === 'draft')
+    return openItemCount.value > 0
+      ? `仍有 ${openItemCount.value} 项待确认事项未处置；处置并确认后才会进入生成`
+      : '确认前不会生成任何成品；方案的修改通过上方「继续对话修订方案」进行'
+  if (openItemCount.value > 0) return `仍有 ${openItemCount.value} 项待确认事项未处置 · 生成闸门关闭`
+  return '闸门已放行 · 成品生成（Word / 单文件 HTML）由 TB-5 / TB-6 落地，此处不提供可用假象'
+})
+
+function changeKindText(kind: PlanChangeKind): string {
+  return kind === 'added' ? '新增' : kind === 'removed' ? '删除' : kind === 'modified' ? '修改' : kind
+}
+function answeredCount(r: FrontierRound): number {
+  return r.answers.filter((a) => !isSkipAnswer(a)).length
+}
+function skippedCount(r: FrontierRound): number {
+  return r.answers.filter((a) => isSkipAnswer(a)).length
+}
+function isSkipped(qi: number): boolean {
+  return skippedQ.value.includes(qi)
+}
 
 const dayLabel = computed(() => {
   const iso = activeTask.value?.created_at
@@ -550,10 +740,12 @@ function syncDrafts(d: Dialogue): void {
   for (let i = rs.length - 1; i >= 0; i--) {
     if (rs[i].frontier.length > 0 && rs[i].answers.length < rs[i].frontier.length) {
       drafts.value = rs[i].frontier.map(() => '')
+      skippedQ.value = []
       return
     }
   }
   drafts.value = []
+  skippedQ.value = []
 }
 
 async function loadTasks(): Promise<void> {
@@ -585,6 +777,10 @@ async function startIdea(): Promise<void> {
     activeTask.value = res.task
     dialogue.value = d
     plan.value = null
+    openItems.value = []
+    revisions.value = []
+    showRevisions.value = false
+    reviseText.value = ''
     expandedIds.value = []
     syncDrafts(d)
     view.value = 'chat'
@@ -601,6 +797,10 @@ async function openTask(t: Task): Promise<void> {
   activeTask.value = t
   dialogue.value = null
   plan.value = null
+  openItems.value = []
+  revisions.value = []
+  showRevisions.value = false
+  reviseText.value = ''
   expandedIds.value = []
   view.value = 'chat'
   await reloadDialogue()
@@ -610,18 +810,29 @@ async function reloadDialogue(): Promise<void> {
   if (!activeTask.value) return
   dialogueState.value = 'loading'
   try {
-    const d = await getDialogue(activeTask.value.id)
-    dialogue.value = d
-    syncDrafts(d)
-    plan.value = await fetchPlan(activeTask.value.id)
+    await refreshChat()
     dialogueState.value = 'ready'
   } catch (err) {
     dialogue.value = null
     plan.value = null
+    openItems.value = []
+    revisions.value = []
     dialogueState.value = 'error'
     dialogueError.value =
       err instanceof BackendUnavailableError ? '后端未启动，无法读取对话' : '对话读取失败'
   }
+}
+
+/** 拉齐一次任务的权威态：对话 + 待确认事项 + 方案 + 修订历史。 */
+async function refreshChat(): Promise<void> {
+  const task = activeTask.value
+  if (!task) return
+  const [d, oi] = await Promise.all([getDialogue(task.id), listOpenItems(task.id)])
+  dialogue.value = d
+  syncDrafts(d)
+  openItems.value = oi.items
+  plan.value = await fetchPlan(task.id)
+  revisions.value = plan.value ? (await listRevisions(task.id)).items : []
 }
 
 /** 取方案：404 视为「尚无方案」（正常草稿态），其它错误也按无方案处理（对话已成功加载）。 */
@@ -639,7 +850,12 @@ function backToList(): void {
   activeTask.value = null
   dialogue.value = null
   plan.value = null
+  openItems.value = []
+  revisions.value = []
+  showRevisions.value = false
+  reviseText.value = ''
   drafts.value = []
+  skippedQ.value = []
   expandedIds.value = []
   loadTasks()
 }
@@ -649,26 +865,48 @@ async function newTask(): Promise<void> {
   activeTask.value = null
   dialogue.value = null
   plan.value = null
+  openItems.value = []
+  revisions.value = []
+  showRevisions.value = false
+  reviseText.value = ''
   drafts.value = []
+  skippedQ.value = []
   idea.value = ''
   await nextTick()
   ideaRef.value?.focus()
 }
 
+function ensureNotSkipped(qi: number): void {
+  if (skippedQ.value.includes(qi)) skippedQ.value = skippedQ.value.filter((x) => x !== qi)
+}
 function adopt(qi: number): void {
   const r = openRound.value
   if (!r || !r.frontier[qi]) return
+  ensureNotSkipped(qi)
   drafts.value = drafts.value.map((v, i) => (i === qi ? r.frontier[qi].recommended_answer : v))
 }
+function pickAlternative(qi: number, alt: string): void {
+  ensureNotSkipped(qi)
+  drafts.value = drafts.value.map((v, i) => (i === qi ? alt : v))
+}
+function skipQuestion(qi: number): void {
+  drafts.value = drafts.value.map((v, i) => (i === qi ? '' : v))
+  if (!skippedQ.value.includes(qi)) skippedQ.value = [...skippedQ.value, qi]
+}
+function undoSkip(qi: number): void {
+  skippedQ.value = skippedQ.value.filter((x) => x !== qi)
+}
 
-/** 推进一次（写后刷新权威对话与方案态）；返回是否收敛。 */
+function answersForRound(r: FrontierRound): Array<string | null> {
+  return r.frontier.map((_, qi) => (skippedQ.value.includes(qi) ? null : (drafts.value[qi] || '').trim()))
+}
+
+/** 推进一次（写后刷新权威态）；返回是否收敛。 */
 async function advanceAndRefresh(): Promise<boolean> {
   const task = activeTask.value
   if (!task) return false
   const res = await advanceGrilling(task.id)
-  dialogue.value = await getDialogue(task.id)
-  syncDrafts(dialogue.value)
-  plan.value = await fetchPlan(task.id)
+  await refreshChat()
   return res.converged
 }
 
@@ -677,16 +915,37 @@ async function submitRound(): Promise<void> {
   const task = activeTask.value
   if (!r || !task) return
   if (!canSubmit.value) {
-    ElMessage.warning('请回答全部问题，或先点「采纳推荐答案」')
+    ElMessage.warning('请逐题作答，或点「暂时跳过」/ 采纳推荐答案')
     return
   }
   submitting.value = true
   try {
-    await submitAnswers(task.id, r.round_no, drafts.value.map((a) => a.trim()))
+    await submitAnswers(task.id, r.round_no, answersForRound(r))
     const converged = await advanceAndRefresh()
     // 刚答完的轮次默认展开，让「我的回答」即时可见
     expandedIds.value = [...new Set([...expandedIds.value, r.round_no])]
     ElMessage.success(converged ? '拷问已收敛，生成结构化方案草稿' : '已推进到下一轮')
+  } catch (err) {
+    ElMessage.error(describeFlowError(err, '提交'))
+  } finally {
+    submitting.value = false
+  }
+}
+
+async function submitSkipAll(): Promise<void> {
+  const r = openRound.value
+  const task = activeTask.value
+  if (!r || !task || submitting.value) return
+  submitting.value = true
+  try {
+    await submitAnswers(
+      task.id,
+      r.round_no,
+      r.frontier.map(() => null)
+    )
+    const converged = await advanceAndRefresh()
+    expandedIds.value = [...new Set([...expandedIds.value, r.round_no])]
+    ElMessage.success(converged ? '已整轮跳过并收敛' : '已整轮跳过并推进到下一轮')
   } catch (err) {
     ElMessage.error(describeFlowError(err, '提交'))
   } finally {
@@ -710,6 +969,10 @@ async function doAdvance(): Promise<void> {
 async function doConfirm(): Promise<void> {
   const task = activeTask.value
   if (!task || confirming.value) return
+  if (openItemCount.value > 0) {
+    ElMessage.warning(`还有 ${openItemCount.value} 项待确认事项未处置，无法确认`)
+    return
+  }
   confirming.value = true
   try {
     plan.value = await confirmPlanApi(task.id)
@@ -722,14 +985,47 @@ async function doConfirm(): Promise<void> {
   }
 }
 
+async function doRevise(): Promise<void> {
+  const task = activeTask.value
+  const inst = reviseText.value.trim()
+  if (!task || !inst || revising.value) return
+  revising.value = true
+  try {
+    await revisePlan(task.id, inst)
+    await refreshChat()
+    reviseText.value = ''
+    ElMessage.success('方案已更新为草稿 · 需要再次确认')
+  } catch (err) {
+    ElMessage.error(describeFlowError(err, '修订'))
+  } finally {
+    revising.value = false
+  }
+}
+
+async function doResolve(item: OpenItem, status: ResolveStatus): Promise<void> {
+  const task = activeTask.value
+  if (!task || resolvingId.value === item.id) return
+  resolvingId.value = item.id
+  try {
+    await resolveOpenItem(task.id, item.id, status)
+    openItems.value = (await listOpenItems(task.id)).items
+    ElMessage.success(status === 'confirmed' ? '已确认为已定需求' : '已搁置该待确认事项')
+  } catch (err) {
+    ElMessage.error(describeFlowError(err, '处置'))
+  } finally {
+    resolvingId.value = null
+  }
+}
+
 function describeFlowError(err: unknown, action: string): string {
   if (err instanceof BackendUnavailableError) return `后端未启动，${action}失败`
   const msg = (err as Error).message || ''
   if (msg.includes('502'))
-    return '模型无法产出可用内容（前沿或方案解析失败），请稍后重试或检查默认模型配置'
-  if (msg.includes('422')) return '回答数量与问题数量不一致，请确认每题都作答'
-  if (msg.includes('404')) return '对应的轮次或方案不存在'
-  if (msg.includes('409')) return '方案尚未确认，无法生成'
+    return '模型无法产出可用内容（前沿 / 方案 / 修订解析失败），请稍后重试或检查默认模型配置'
+  if (msg.includes('501')) return '方案已确认，但成品生成管线由 TB-5 / TB-6 落地'
+  if (msg.includes('422')) return '请求被拒绝：回答数量与问题数量不一致，或处置状态不合法'
+  if (msg.includes('404')) return '对应的轮次 / 方案 / 待确认事项不存在'
+  if (msg.includes('409')) return '生成闸门未放行：方案未确认或仍有未处置的待确认事项'
   return `${action}失败：${msg}`
 }
 
@@ -1381,6 +1677,250 @@ onMounted(loadTasks)
   margin-top: var(--sp-2);
   font-size: var(--fs-xs);
   color: var(--text-4);
+}
+
+/* 「为什么现在问」与备选方向 */
+.q-why {
+  margin: 3px 0 0;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  line-height: 1.55;
+}
+.alt-row {
+  margin-top: var(--sp-2);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+.alt-label {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+.alt {
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  background: var(--bg-surface);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-pill);
+  padding: 2px 10px;
+  cursor: pointer;
+}
+.alt:hover {
+  border-color: var(--brand-200);
+  color: var(--brand-600);
+  background: var(--brand-50);
+}
+
+/* 跳过态 */
+.qcard.is-skip {
+  background: var(--warn-bg);
+}
+.ans-skipped {
+  margin-top: var(--sp-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.skip-note {
+  font-size: var(--fs-sm);
+  color: var(--warn-fg);
+  line-height: 1.55;
+}
+
+/* 历史轮：跳过条目标为未定 */
+.done-qa.is-skip {
+  border-left-color: var(--warn-line);
+}
+.ico.warn {
+  color: var(--warn-fg);
+}
+
+/* 待确认事项清单 */
+.pend-count {
+  margin-left: var(--sp-2);
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  color: var(--warn-fg);
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-line);
+  border-radius: var(--r-pill);
+  padding: 1px 8px;
+}
+.pend-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.pend {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-3) 0;
+  border-top: 1px solid var(--line-1);
+  flex-wrap: wrap;
+}
+.pend:first-child {
+  border-top: 0;
+}
+.pend-grow {
+  flex: 1;
+  min-width: 180px;
+}
+.pend-name {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-1);
+}
+.pend-sub {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  margin-top: 2px;
+}
+.pend.is-decided .pend-name {
+  color: var(--text-3);
+}
+
+/* 最近修订的变更摘要 */
+.plan-changed {
+  border: 1px solid var(--brand-100);
+  background: var(--brand-50);
+  border-radius: var(--r-md);
+  padding: var(--sp-3) var(--sp-4);
+  margin-bottom: var(--sp-4);
+  font-size: var(--fs-sm);
+}
+.plan-changed b {
+  color: var(--brand-700);
+}
+.ch-inst {
+  display: block;
+  color: var(--text-2);
+  margin-top: 2px;
+}
+.ch-list {
+  display: flex;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  margin-top: var(--sp-2);
+}
+.ch {
+  font-size: var(--fs-xs);
+  border-radius: var(--r-xs);
+  padding: 1px 8px;
+  border: 1px solid var(--line-2);
+  background: var(--bg-surface);
+  color: var(--text-2);
+}
+.ch-added {
+  background: var(--ok-bg);
+  border-color: var(--ok-line);
+  color: var(--ok-fg);
+}
+.ch-modified {
+  background: var(--warn-bg);
+  border-color: var(--warn-line);
+  color: var(--warn-fg);
+}
+.ch-removed {
+  background: var(--err-bg);
+  border-color: var(--err-line);
+  color: var(--err-fg);
+}
+
+/* 对话式修订输入 */
+.plan-revise {
+  border-top: 1px solid var(--line-1);
+  margin-top: var(--sp-4);
+  padding-top: var(--sp-4);
+}
+.plan-revise h4 {
+  margin: 0 0 var(--sp-2);
+  font-size: var(--fs-md);
+  color: var(--text-1);
+}
+.plan-revise textarea {
+  width: 100%;
+  min-height: 56px;
+  resize: vertical;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-sm);
+  padding: var(--sp-2) var(--sp-3);
+  font: inherit;
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+  background: var(--bg-surface);
+  color: var(--text-1);
+}
+.plan-revise textarea:focus {
+  outline: none;
+  border-color: var(--brand-500);
+  box-shadow: 0 0 0 3px var(--brand-50);
+}
+.revise-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  margin-top: var(--sp-2);
+}
+
+/* 修订历史 */
+.revisions {
+  border-top: 1px solid var(--line-1);
+  margin-top: var(--sp-4);
+  padding-top: var(--sp-2);
+}
+.rev-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  border: 0;
+  background: none;
+  text-align: left;
+  padding: var(--sp-2) 0;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+.rev-toggle .chev {
+  color: var(--text-4);
+  transition: transform 0.16s;
+}
+.rev-toggle .chev.is-open {
+  transform: rotate(90deg);
+}
+.rev-list {
+  list-style: none;
+  margin: var(--sp-1) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.rev-item {
+  border-left: 2px solid var(--line-2);
+  padding-left: var(--sp-3);
+}
+.rev-head {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+.rev-inst {
+  font-size: var(--fs-sm);
+  color: var(--text-1);
+  margin-top: 2px;
+}
+.rev-changes {
+  display: flex;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  margin-top: var(--sp-1);
+}
+
+/* 闸门被未定项挡住 */
+.gate-block {
+  color: var(--warn-fg);
 }
 
 /* 响应式：对齐原型断点（1360 / 1200 / 1000 / 820 / 560），保留 960 / 1100 现有行为 */

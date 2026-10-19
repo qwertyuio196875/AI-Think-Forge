@@ -206,18 +206,38 @@ export function testProvider(id: string): Promise<ConnectionTestResult> {
    前端只消费 rounds / seed_input，不自行解析 message.content。
    ============================================================ */
 
-/** 前沿中的一个问题：标题、正文与推荐答案（推荐答案后端结构必填）。 */
+/**
+ * 前沿中的一个问题：标题、正文、推荐答案，以及 TB-4 新增的
+ * `why`（为什么现在问，缺失为 null）与 `alternatives`（备选方向，缺失为空列表）。
+ * 与 backend/app/models/grilling.py::FrontierQuestion 逐字段对齐。
+ */
 export interface FrontierQuestion {
   title: string
   body: string
   recommended_answer: string
+  why: string | null
+  alternatives: string[]
 }
 
-/** 一个轮次：该轮前沿问题集 + 用户回答（与问题一一对应）。 */
+/**
+ * 一个轮次：该轮前沿问题集 + 用户回答。
+ * 注意：后端把「暂时跳过」的答案以占位串 `（暂时跳过）` 落库以保持按位对齐，
+ * 因此这里 answers 仍是 string[]；用 SKIP_ANSWER_MARKER 判定某题是否被跳过。
+ */
 export interface FrontierRound {
   round_no: number
   frontier: FrontierQuestion[]
   answers: string[]
+}
+
+/** 「暂时跳过」在消息表中的占位串（与 backend/app/grilling/open_items.py 一致）。 */
+export const SKIP_ANSWER_MARKER = '（暂时跳过）'
+
+/** 某条回答是否为「暂时跳过」（后端把 null / 纯空白 / 占位都归为跳过）。 */
+export function isSkipAnswer(answer: string | null | undefined): boolean {
+  if (answer === null || answer === undefined) return true
+  const t = answer.trim()
+  return t === '' || t === SKIP_ANSWER_MARKER
 }
 
 /** 对话流中的一条原始消息（role: system | assistant | user）。 */
@@ -251,11 +271,14 @@ export function startGrillingTask(idea: string): Promise<GrillingStartResponse> 
   })
 }
 
-/** 提交某轮回答：POST /api/grilling/tasks/{id}/answers（数量须与前沿问题一致），返回写后对话状态。 */
+/**
+ * 提交某轮回答：POST /api/grilling/tasks/{id}/answers（数量须与前沿问题一致）。
+ * answers 项为 null（或纯空白）= 该题「暂时跳过」，入待确认事项、保持未定。返回写后对话状态。
+ */
 export function submitAnswers(
   taskId: number,
   roundNo: number,
-  answers: string[]
+  answers: Array<string | null>
 ): Promise<Dialogue> {
   return request<Dialogue>(`/grilling/tasks/${taskId}/answers`, {
     method: 'POST',
@@ -311,10 +334,102 @@ export function confirmPlan(taskId: number): Promise<Plan> {
 
 /**
  * 请求生成成品：POST /api/tasks/{id}/generations。
- * 服务端硬闸门：无方案/未确认 409；已确认 501（生成管线属 TB-5/TB-6）。当前任何调用都会抛错。
+ * 服务端硬闸门：无方案 / 未确认 → 409；仍有未处置待确认事项 → 409；
+ * 已确认且无未定条目 → 501（生成管线属 TB-5/TB-6）。当前任何调用都会抛错。
  */
 export function requestGeneration(taskId: number): Promise<void> {
   return request<void>(`/tasks/${taskId}/generations`, { method: 'POST' })
+}
+
+/* ============================================================
+   方案对话式修订 与 待确认事项 —— TB-4
+   权威来源：backend/app/models/{plan,open_items}.py、routes/grilling.py
+   ============================================================ */
+
+/** 差异提示的一条改动类型。 */
+export type PlanChangeKind = 'added' | 'removed' | 'modified'
+
+/** 差异提示的一条：被改动的章节。 */
+export interface PlanChange {
+  kind: PlanChangeKind
+  heading: string
+}
+
+/** 一次方案修订的版本记录（修订前 / 后正文 + 差异提示 + 时间）。 */
+export interface PlanRevision {
+  id: number
+  plan_id: number
+  task_id: number
+  instruction: string
+  previous_content_md: string
+  content_md: string
+  change_summary: PlanChange[]
+  created_at: string
+}
+
+/** 修订结果：更新后的方案（回到 draft）+ 本次版本记录。 */
+export interface PlanRevisionResponse {
+  plan: Plan
+  revision: PlanRevision
+}
+
+/** 方案修订历史。 */
+export interface PlanRevisionListResponse {
+  items: PlanRevision[]
+  total: number
+}
+
+/** 待确认事项状态。 */
+export type OpenItemStatus = 'open' | 'confirmed' | 'dismissed'
+
+/** 处置允许的终态（open 不是处置结果）。 */
+export type ResolveStatus = 'confirmed' | 'dismissed'
+
+/** 一条待确认事项。 */
+export interface OpenItem {
+  id: number
+  task_id: number
+  round_no: number
+  text: string
+  status: OpenItemStatus
+  created_at: string
+  resolved_at: string | null
+}
+
+/** 待确认事项清单。 */
+export interface OpenItemListResponse {
+  items: OpenItem[]
+  total: number
+}
+
+/** 对话式修订方案：POST /api/grilling/tasks/{id}/plan/revisions（body {instruction}）。 */
+export function revisePlan(taskId: number, instruction: string): Promise<PlanRevisionResponse> {
+  return request<PlanRevisionResponse>(`/grilling/tasks/${taskId}/plan/revisions`, {
+    method: 'POST',
+    body: JSON.stringify({ instruction })
+  })
+}
+
+/** 方案修订历史：GET /api/grilling/tasks/{id}/plan/revisions。 */
+export function listRevisions(taskId: number): Promise<PlanRevisionListResponse> {
+  return request<PlanRevisionListResponse>(`/grilling/tasks/${taskId}/plan/revisions`)
+}
+
+/** 待确认事项清单：GET /api/grilling/tasks/{id}/open-items。 */
+export function listOpenItems(taskId: number): Promise<OpenItemListResponse> {
+  return request<OpenItemListResponse>(`/grilling/tasks/${taskId}/open-items`)
+}
+
+/** 处置一条待确认事项：POST /api/grilling/tasks/{id}/open-items/{item_id}/resolve（body {status}）。 */
+export function resolveOpenItem(
+  taskId: number,
+  itemId: number,
+  status: ResolveStatus
+): Promise<OpenItem> {
+  return request<OpenItem>(`/grilling/tasks/${taskId}/open-items/${itemId}/resolve`, {
+    method: 'POST',
+    body: JSON.stringify({ status })
+  })
 }
 
 export default {
@@ -336,5 +451,9 @@ export default {
   advanceGrilling,
   getPlan,
   confirmPlan,
-  requestGeneration
+  requestGeneration,
+  revisePlan,
+  listRevisions,
+  listOpenItems,
+  resolveOpenItem
 }
