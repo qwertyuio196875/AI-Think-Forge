@@ -8,6 +8,8 @@ from pathlib import Path
 from docx import Document
 from fastapi.testclient import TestClient
 
+from app.db.summary_deliverable_repository import SummaryDeliverableRepository
+
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 SUMMARY_FIELDS = {
@@ -152,3 +154,26 @@ def test_generated_deliverable_can_be_downloaded(analysis_client: TestClient) ->
 
     missing = analysis_client.get("/api/analysis/summary-deliverables/9999")
     assert missing.status_code == 404
+
+
+def test_download_rejects_path_outside_deliverables(
+    analysis_client: TestClient, db_path: Path, tmp_path: Path
+) -> None:
+    """下载端点只允许 data/deliverables/ 下的产物，拒绝库内越界路径。"""
+    uploaded = _upload(analysis_client)
+    outside = tmp_path / "outside.docx"
+    outside.write_bytes(b"PK\x03\x04")
+    repository = SummaryDeliverableRepository(db_path)
+    record = repository.create(
+        uploaded["source"]["id"],
+        task_id=uploaded["source"]["task_id"],
+        file_path=str(outside),
+        template_used="outside.docx",
+    )
+
+    response = analysis_client.get(
+        f"/api/analysis/summary-deliverables/{record['id']}"
+    )
+
+    assert response.status_code == 404
+    assert "路径" in response.json()["detail"]

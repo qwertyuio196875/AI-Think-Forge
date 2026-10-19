@@ -42,8 +42,20 @@ router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=Task)
-def create_task(payload: TaskCreate, repository: TaskRepositoryDep) -> Task:
+def create_task(
+    payload: TaskCreate,
+    repository: TaskRepositoryDep,
+    provider_repository: ProviderRepositoryDep,
+) -> Task:
     """新建任务（主题创作 / 资料分析）；可带任务级模型覆盖。"""
+    if payload.provider_id is not None:
+        provider = provider_repository.get_by_id(payload.provider_id)
+        if provider is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"模型配置 {payload.provider_id} 不存在，请重新选择",
+            )
+
     record = repository.create(
         payload.kind.value, payload.title, provider_id=payload.provider_id
     )
