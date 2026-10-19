@@ -24,6 +24,9 @@ dependencies = [
     "charset-normalizer>=3.3",
     # markdown-it-py：MD 标题走 token 流，避免正则把代码围栏里的 `#` 误判为标题。
     "markdown-it-py>=3.0",
+    # pypdf / python-pptx：PDF 正文与标题、PPTX 标题 / 正文 / 表格（均不做 OCR）。
+    "pypdf>=5.0",
+    "python-pptx>=1.0",
     # python-multipart：FastAPI 解析 multipart 上传（资料文件 / 模板上传入口）。
     "python-multipart>=0.0.9",
     # trafilatura：URL 来源的正文提取（过滤导航 / 广告 / 侧栏，只留主正文）。

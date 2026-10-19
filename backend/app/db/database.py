@@ -180,7 +180,10 @@ CREATE INDEX IF NOT EXISTS idx_sources_task ON sources (task_id, id);
 -- - parse_status：pending / parsed / unrecognized / failed；
 --   失败与「未识别」都如实落库，**绝不用空字符串冒充解析成功**；
 -- - unrecognized_json / unrecognized_parts_json：未识别契约（一级输出字段）；
--- - heading_source：DOCX 标题来自内置样式（style）/ 启发式（heuristic）/ 无（none）。
+-- - parser：解析器标识（TB-8：pypdf / python-pptx / python-docx / plain-text），
+--   让「这份内容出自哪个解析器」可回溯；
+-- - heading_source：标题来源——DOCX 为内置样式（style）/ 启发式（heuristic）/ 无（none）；
+--   PDF 无样式信息，只可能出现 heuristic / none；PPTX 取标题占位符，为 style / none。
 CREATE TABLE IF NOT EXISTS documents (
     id                      INTEGER PRIMARY KEY AUTOINCREMENT,
     source_id               INTEGER NOT NULL REFERENCES sources(id),
@@ -189,6 +192,7 @@ CREATE TABLE IF NOT EXISTS documents (
                             CHECK (parse_status IN ('pending', 'parsed', 'unrecognized', 'failed')),
     parse_message           TEXT,
     heading_source          TEXT,
+    parser                  TEXT,
     encoding                TEXT,
     headings                INTEGER NOT NULL DEFAULT 0,
     images                  INTEGER NOT NULL DEFAULT 0,
@@ -275,6 +279,8 @@ def init_db(db_path: str | Path) -> None:
 # 故历史版本建的库需按列名探测后 `ALTER TABLE` 补列（幂等，不影响新库）。
 MIGRATION_COLUMNS: dict[str, dict[str, str]] = {
     "tasks": {"deleted_at": "TEXT"},
+    # TB-8：文档补「解析器标识」（pypdf / python-pptx / python-docx / plain-text）。
+    "documents": {"parser": "TEXT"},
 }
 
 

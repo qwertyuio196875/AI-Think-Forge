@@ -63,22 +63,23 @@ class AnalysisRepository:
         parse_status: str = "pending",
         parse_message: str | None = None,
         heading_source: str | None = None,
+        parser: str | None = None,
         encoding: str | None = None,
         headings: int = 0,
         images: int = 0,
         unrecognized: dict | None = None,
         unrecognized_parts: list[dict] | None = None,
     ) -> dict:
-        """登记文档；解析结果（含未识别契约）一并落库。"""
+        """登记文档；解析结果（含解析器标识与未识别契约）一并落库。"""
         now = utcnow_iso()
         with connect(self._db_path) as connection:
             cursor = connection.execute(
                 """
                 INSERT INTO documents (
                     source_id, path, parse_status, parse_message, heading_source,
-                    encoding, headings, images, unrecognized_json,
+                    parser, encoding, headings, images, unrecognized_json,
                     unrecognized_parts_json, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     source_id,
@@ -86,6 +87,7 @@ class AnalysisRepository:
                     parse_status,
                     parse_message,
                     heading_source,
+                    parser,
                     encoding,
                     headings,
                     images,
@@ -107,6 +109,7 @@ class AnalysisRepository:
         parse_status: str | None = None,
         parse_message: str | None = None,
         heading_source: str | None = None,
+        parser: str | None = None,
         encoding: str | None = None,
         headings: int | None = None,
         images: int | None = None,
@@ -121,6 +124,8 @@ class AnalysisRepository:
             fields["parse_message"] = parse_message
         if heading_source is not None:
             fields["heading_source"] = heading_source
+        if parser is not None:
+            fields["parser"] = parser
         if encoding is not None:
             fields["encoding"] = encoding
         if headings is not None:

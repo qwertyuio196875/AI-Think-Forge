@@ -226,15 +226,16 @@ def test_model_failure_keeps_uploaded_source_document_and_chunks(
 
 
 def test_upload_rejects_unsupported_extension(analysis_client: TestClient) -> None:
-    """非 TXT / MD / DOCX → 明确拒绝（不落库、不静默当作文本）。"""
+    """非 TXT / MD / DOCX / PDF / PPTX → 明确拒绝（不落库、不静默当作文本）。"""
     response = _upload(
-        analysis_client, "扫描件.pdf", b"%PDF-1.7", "application/pdf"
+        analysis_client, "表格.xlsx", b"PK\x03\x04fake", "application/vnd.ms-excel"
     )
 
     assert response.status_code == 400
     detail = response.json()["detail"]
     assert "只接受" in detail
     assert "TXT" in detail and "MD" in detail and "DOCX" in detail
+    assert "PDF" in detail and "PPTX" in detail
 
 
 def test_upload_rejects_oversized_file(

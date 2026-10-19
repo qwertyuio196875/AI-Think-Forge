@@ -53,6 +53,8 @@ class DocumentInfo(BaseModel):
     parse_status: str
     parse_message: str | None = None
     heading_source: str | None = None
+    # 解析器标识（pypdf / python-pptx / python-docx / plain-text）；解析失败时为 None。
+    parser: str | None = None
     encoding: str | None = None
     headings: int = 0
     images: int = 0
