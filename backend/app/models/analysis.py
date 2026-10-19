@@ -120,6 +120,23 @@ class AnalysisResultResponse(BaseModel):
     message: str | None = None
 
 
+class UrlSourceRequest(BaseModel):
+    """URL 来源提交：只收一个链接（安全校验在路由层，不在这里）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    url: str = Field(min_length=1, max_length=2048)
+
+    @field_validator("url")
+    @classmethod
+    def _strip_and_require(cls, value: str) -> str:
+        """去掉首尾空白；纯空白视为非法输入（不进入抓取）。"""
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("链接不能为空")
+        return stripped
+
+
 class SendToCreationRequest(BaseModel):
     """一键送入主题创作：可选标题覆盖（默认取资料文件名）。"""
 

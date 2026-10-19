@@ -11,7 +11,12 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from fakes import InMemoryKeyStore, ScriptedModelClient, ScriptedModelClientFactory
+from fakes import (
+    FakeUrlFetcher,
+    InMemoryKeyStore,
+    ScriptedModelClient,
+    ScriptedModelClientFactory,
+)
 from fastapi.testclient import TestClient
 
 from app.api.deps import get_key_store, get_model_client
@@ -120,4 +125,24 @@ def analysis_app(
 def analysis_client(analysis_app) -> Iterator[TestClient]:
     """资料分析测试用的进程内 HTTP 客户端（lifespan 会播种三档 provider）。"""
     with TestClient(analysis_app) as test_client:
+        yield test_client
+
+
+@pytest.fixture
+def url_fetcher() -> FakeUrlFetcher:
+    """URL 抓取替身（fake 注入点 2），测试按需预置页面或失败。"""
+    return FakeUrlFetcher()
+
+
+@pytest.fixture
+def url_app(analysis_app, url_fetcher: FakeUrlFetcher):
+    """在分析用 app 上把 URL 抓取器换成替身：URL 分析测试全程离线。"""
+    analysis_app.state.url_fetcher = url_fetcher
+    return analysis_app
+
+
+@pytest.fixture
+def url_client(url_app) -> Iterator[TestClient]:
+    """URL 分析测试用的进程内 HTTP 客户端。"""
+    with TestClient(url_app) as test_client:
         yield test_client

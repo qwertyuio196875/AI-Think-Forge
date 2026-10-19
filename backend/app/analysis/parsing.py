@@ -135,7 +135,28 @@ def _paragraph_blocks(text: str, file_format: str) -> list[ParsedBlock]:
     return blocks
 
 
-def _parse_markdown(text: str) -> tuple[list[ParsedBlock], int]:
+def parse_markdown_blocks(
+    text: str,
+    *,
+    format_name: str = "md",
+    locator_extra: dict[str, Any] | None = None,
+) -> tuple[list[ParsedBlock], int]:
+    """Markdown 文本 → 内容块 + 标题数（公开入口，供网页正文复用同一 token 流）。
+
+    `format_name` / `locator_extra` 让调用方把格式名与来源地址（如最终 URL）写进
+    每个块的 locator，使引用位置可回溯到具体来源。
+    """
+    return _parse_markdown(
+        text, format_name=format_name, locator_extra=locator_extra
+    )
+
+
+def _parse_markdown(
+    text: str,
+    *,
+    format_name: str = "md",
+    locator_extra: dict[str, Any] | None = None,
+) -> tuple[list[ParsedBlock], int]:
     """MD：走 token 流建块；代码围栏里的 `#` 不会被当成标题。
 
     标题级别取 `heading_open.tag`（h1..h6）；正文取 `inline`，代码取 `fence` /
@@ -152,7 +173,9 @@ def _parse_markdown(text: str) -> tuple[list[ParsedBlock], int]:
         if index in consumed:
             continue
 
-        locator = _markdown_locator(token.map, block_index)
+        locator = _markdown_locator(
+            token.map, block_index, format_name, locator_extra
+        )
         if token.type == "heading_open":
             inline = tokens[index + 1] if index + 1 < len(tokens) else None
             if inline is not None and inline.type == "inline":
@@ -199,10 +222,13 @@ def _parse_markdown(text: str) -> tuple[list[ParsedBlock], int]:
 
 
 def _markdown_locator(
-    line_map: list[int] | None, fallback_index: int
+    line_map: list[int] | None,
+    fallback_index: int,
+    format_name: str = "md",
+    locator_extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """MD 定位：优先用 token.map 的起始行号（1 起），没有则退块序号。"""
-    locator: dict[str, Any] = {"format": "md"}
+    locator: dict[str, Any] = {"format": format_name, **(locator_extra or {})}
     if line_map:
         locator["line"] = line_map[0] + 1
     else:

@@ -26,7 +26,7 @@ from app.providers.key_store import KeyringKeyStore
 from app.providers.openai_client import HttpModelClientFactory
 from app.providers.provider_backed_client import ProviderBackedModelClient
 from app.providers.tiered_client import TieredModelClient
-from app.providers.url_fetcher import UnconfiguredUrlFetcher
+from app.providers.url_fetcher import HttpUrlFetcher
 
 
 def _resolve_db_path(db_path: str | Path | None) -> str:
@@ -95,7 +95,9 @@ def create_app(
         app.state.key_store,
         app.state.model_client_factory,
     )
-    app.state.url_fetcher = UnconfiguredUrlFetcher()
+    # URL 抓取器（TB-9）：真实实现逐跳重新做 SSRF 校验、限超时 15s / 5MB / 3 次重定向。
+    # 测试经 `dependency_overrides[get_url_fetcher]` 注入替身（全程不联网）。
+    app.state.url_fetcher = HttpUrlFetcher()
 
     app.include_router(api_router, prefix=config.API_PREFIX)
 

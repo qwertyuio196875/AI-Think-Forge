@@ -1,8 +1,9 @@
-"""两个 fake 注入点的接缝 smoke 测试。
+"""(接缝 smoke 测试。
 
 证明「模型客户端」与「URL 抓取器」两个抽象都能通过 FastAPI 的
 `dependency_overrides` 被替换为测试替身（零真实花费、不联网）。
-本单不实现业务，只验证接缝可注入。
+TB-9 已把 URL 抓取器的真实实现接上，此处改为钉住「默认接线是真实实现 +
+仍可被替身覆盖」。
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from app.api.deps import ModelClientDep, UrlFetcherDep, get_model_client, get_url_fetcher
+from app.providers.url_fetcher import FetchedPage
 
 
 class _FakeModelClient:
@@ -18,8 +20,21 @@ class _FakeModelClient:
 
 
 class _FakeUrlFetcher:
-    def fetch(self, url: str, *, timeout: float = 15.0, max_bytes: int = 5 * 1024 * 1024) -> bytes:
-        return b"fake-body"
+    def fetch(
+        self,
+        url: str,
+        *,
+        timeout: float = 15.0,
+        max_bytes: int = 5 * 1024 * 1024,
+    ) -> FetchedPage:
+        return FetchedPage(
+            url=url,
+            final_url=url,
+            status=200,
+            content_type="text/html",
+            body=b"fake-body",
+            fetched_at="2026-10-19T00:00:00+00:00",
+        )
 
 
 def _add_type_probe(app) -> None:
@@ -34,8 +49,8 @@ def _add_type_probe(app) -> None:
 
 
 def test_seams_defaults_wire_real_implementations(app) -> None:
-    """未注入时：模型客户端是按 provider 配置解析的真实实现（接线缺陷修复后），
-    URL 抓取器仍为显式失败的占位实现（其实现属后续工单）。"""
+    """未注入时：模型客户端按 provider 配置解析真实实现；URL 抓取器是真实抓取器
+    （TB-9 落地：逐跳 SSRF 校验 + 超时 / 大小 / 重定向上限）。"""
     _add_type_probe(app)
 
     with TestClient(app) as client:
@@ -43,7 +58,7 @@ def test_seams_defaults_wire_real_implementations(app) -> None:
 
     assert body == {
         "model_client": "ProviderBackedModelClient",
-        "url_fetcher": "UnconfiguredUrlFetcher",
+        "url_fetcher": "HttpUrlFetcher",
     }
 
 
