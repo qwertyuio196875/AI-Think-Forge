@@ -268,6 +268,55 @@ export function getDialogue(taskId: number): Promise<Dialogue> {
   return request<Dialogue>(`/grilling/tasks/${taskId}/dialogue`)
 }
 
+/* ============================================================
+   收敛 → 结构化方案 → 确认闸门（TB-3）
+   权威来源：backend/app/models/{grilling,plan}.py、routes/{grilling,generations}.py
+   ============================================================ */
+
+/** 方案状态：草稿 / 已确认（方案确认是进入生成阶段的唯一闸门）。 */
+export type PlanStatus = 'draft' | 'confirmed'
+
+/** 结构化方案（content_md 为 Markdown 正文；confirmed_at 未确认为 null）。 */
+export interface Plan {
+  id: number
+  task_id: number
+  round_no: number
+  content_md: string
+  status: PlanStatus
+  confirmed_at: string | null
+}
+
+/** 一次推进的结果：下一轮前沿，或收敛产出的方案草稿。 */
+export interface AdvanceResponse {
+  task_id: number
+  converged: boolean
+  next_round: FrontierRound | null
+  plan: Plan | null
+}
+
+/** 推进轮次：POST /api/grilling/tasks/{id}/advance（无请求体；按上轮回答重算下一轮，收敛则出方案草稿）。 */
+export function advanceGrilling(taskId: number): Promise<AdvanceResponse> {
+  return request<AdvanceResponse>(`/grilling/tasks/${taskId}/advance`, { method: 'POST' })
+}
+
+/** 取结构化方案：GET /api/grilling/tasks/{id}/plan（尚无方案时后端 404）。 */
+export function getPlan(taskId: number): Promise<Plan> {
+  return request<Plan>(`/grilling/tasks/${taskId}/plan`)
+}
+
+/** 方案确认：POST /api/grilling/tasks/{id}/plan/confirm（draft→confirmed，幂等）。 */
+export function confirmPlan(taskId: number): Promise<Plan> {
+  return request<Plan>(`/grilling/tasks/${taskId}/plan/confirm`, { method: 'POST' })
+}
+
+/**
+ * 请求生成成品：POST /api/tasks/{id}/generations。
+ * 服务端硬闸门：无方案/未确认 409；已确认 501（生成管线属 TB-5/TB-6）。当前任何调用都会抛错。
+ */
+export function requestGeneration(taskId: number): Promise<void> {
+  return request<void>(`/tasks/${taskId}/generations`, { method: 'POST' })
+}
+
 export default {
   API_BASE_URL,
   checkHealth,
@@ -283,5 +332,9 @@ export default {
   testProvider,
   startGrillingTask,
   submitAnswers,
-  getDialogue
+  getDialogue,
+  advanceGrilling,
+  getPlan,
+  confirmPlan,
+  requestGeneration
 }

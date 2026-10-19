@@ -8,8 +8,20 @@
           <p>{{ headSubtitle }}</p>
         </div>
         <div class="head-actions">
+          <el-tag
+            v-if="statusChip"
+            size="small"
+            :type="statusChip.type"
+            effect="plain"
+            class="status-chip"
+          >
+            <i class="tf-dot" :class="statusChip.dot"></i>{{ statusChip.label }}
+          </el-tag>
+          <el-button :icon="Plus" @click="newTask">新任务</el-button>
           <el-button v-if="isChat" :icon="ArrowLeft" @click="backToList">任务列表</el-button>
-          <el-button v-else :icon="Refresh" :loading="listState === 'loading'" @click="loadTasks">刷新</el-button>
+          <el-button v-else :icon="Refresh" :loading="listState === 'loading'" @click="loadTasks">
+            刷新
+          </el-button>
         </div>
       </div>
 
@@ -27,7 +39,7 @@
     <!-- 会话流区 -->
     <div class="thread">
       <div class="thread-inner">
-        <!-- ============ 列表模式：发起入口 + 任务列表 ============ -->
+        <!-- ============ 列表模式 ============ -->
         <template v-if="!isChat">
           <div class="note info start-hint">
             <el-icon class="ico"><EditPen /></el-icon>
@@ -47,7 +59,6 @@
               <div v-if="listState === 'loading'" class="list-loading">
                 <el-skeleton v-for="n in 3" :key="n" :rows="1" animated />
               </div>
-
               <div v-else-if="listState === 'error'" class="note err" role="alert">
                 <el-icon class="ico"><WarningFilled /></el-icon>
                 <div class="note-body">
@@ -56,13 +67,11 @@
                   <div><el-button size="small" @click="loadTasks">重新加载</el-button></div>
                 </div>
               </div>
-
               <div v-else-if="items.length === 0" class="empty">
                 <el-icon class="ico-lg"><EditPen /></el-icon>
                 <b>还没有创作任务</b>
                 <p>在下方输入框写下想法并发送即可发起第一轮拷问。</p>
               </div>
-
               <ul v-else class="task-list">
                 <li v-for="t in items" :key="t.id">
                   <button class="task-item" type="button" @click="openTask(t)">
@@ -79,7 +88,7 @@
           </section>
         </template>
 
-        <!-- ============ 对话模式：对话流 + 当前轮问题卡片 ============ -->
+        <!-- ============ 对话模式 ============ -->
         <template v-else>
           <div v-if="dialogueState === 'loading'" class="list-loading">
             <el-skeleton :rows="4" animated />
@@ -98,127 +107,187 @@
           </div>
 
           <template v-else-if="dialogue">
-            <!-- 种子输入（用户想法） -->
+            <div v-if="dayLabel" class="day-sep">{{ dayLabel }}</div>
+
+            <!-- 种子输入（用户原始想法）——真实内容，不拆解成“目标/背景” -->
             <div v-if="dialogue.seed_input" class="msg-user">
               <div class="bubble"><p>{{ dialogue.seed_input }}</p></div>
               <div class="msg-meta"><span>想法发起</span></div>
             </div>
 
-            <!-- 无轮次（历史空任务） -->
-            <div
-              v-if="dialogue.rounds.length === 0"
-              class="note info"
-            >
+            <!-- 无轮次且无方案（历史空任务） -->
+            <div v-if="dialogue.rounds.length === 0 && !plan" class="note info">
               <el-icon class="ico"><InfoFilled /></el-icon>
               <div class="note-body">
-                <span>该任务还没有拷问轮次。返回列表，在输入框写一句想法即可发起第一轮。</span>
+                <span>该任务还没有拷问轮次。点「新任务」或在输入框写一句想法即可发起第一轮。</span>
               </div>
             </div>
 
-            <!-- 轮次 -->
-            <div v-for="r in dialogue.rounds" :key="r.round_no" class="round">
-              <div class="qhead">
-                <h2>第 {{ r.round_no }} 轮 · 前沿问题</h2>
-                <p>本轮只问前置条件已定的问题。每题附推荐答案，采纳或改写都行。</p>
-                <el-tag
-                  size="small"
-                  :type="r.answers.length >= r.frontier.length ? 'success' : 'warning'"
-                  effect="plain"
+            <!-- 轮次：已答完的历史轮折叠，当前轮可作答 -->
+            <template v-for="r in dialogue.rounds" :key="r.round_no">
+              <div
+                v-if="isAnsweredRound(r) && r !== openRound"
+                class="qround"
+                :class="{ 'is-open': isExpanded(r.round_no) }"
+              >
+                <button
+                  type="button"
+                  class="qround-head"
+                  :aria-expanded="isExpanded(r.round_no) ? 'true' : 'false'"
+                  @click="toggleRound(r.round_no)"
                 >
-                  已回答 {{ r.answers.length }} / {{ r.frontier.length }}
-                </el-tag>
-              </div>
-
-              <div class="card qcards">
-                <div
-                  v-for="(q, qi) in r.frontier"
-                  :key="qi"
-                  class="qcard"
-                  :class="{ 'is-done': qi < r.answers.length }"
-                >
-                  <div class="q-top">
-                    <span class="q-no">Q{{ qi + 1 }}</span>
-                    <div class="q-main">
-                      <div class="q-text">{{ q.title }}</div>
-                      <p class="q-body">{{ q.body }}</p>
-                    </div>
-                  </div>
-
-                  <div class="q-rec">
-                    <b>→ 推荐答案</b>
-                    <p>{{ q.recommended_answer }}</p>
-                  </div>
-
-                  <!-- 作答入口（仅当前可答轮的未答题） -->
-                  <div v-if="r === openRound" class="ans">
-                    <textarea
-                      v-model="drafts[qi]"
-                      rows="2"
-                      :aria-label="`第 ${r.round_no} 轮第 ${qi + 1} 题作答`"
-                      placeholder="直接写你的答案，或点「采纳推荐答案」后修改"
-                    ></textarea>
-                    <div class="ans-actions">
-                      <el-button size="small" type="primary" :icon="Select" @click="adopt(qi)">
-                        采纳推荐答案
-                      </el-button>
-                    </div>
-                  </div>
-
-                  <!-- 已回答展示 -->
-                  <div v-else-if="qi < r.answers.length" class="q-done">
-                    <div class="row">
-                      <el-icon class="ico ok"><CircleCheck /></el-icon>
-                      <b>已回答 · Q{{ qi + 1 }}</b>
-                    </div>
-                    <p>{{ r.answers[qi] }}</p>
+                  <el-icon class="ico ok"><CircleCheck /></el-icon>
+                  <b>第 {{ r.round_no }} 轮 · {{ r.frontier.length }} 个问题 · 全部已答</b>
+                  <el-icon class="chev"><ArrowRight /></el-icon>
+                </button>
+                <div v-show="isExpanded(r.round_no)" class="qround-body">
+                  <div v-for="(q, qi) in r.frontier" :key="qi" class="done-qa">
+                    <b>Q{{ qi + 1 }} · {{ q.title }}</b>
+                    <span>{{ r.answers[qi] }}</span>
                   </div>
                 </div>
               </div>
 
-              <div v-if="r === openRound" class="round-foot">
-                <el-button
-                  type="primary"
-                  :loading="submitting"
-                  :disabled="!canSubmit"
-                  @click="submitRound"
-                >
-                  提交本轮回答
-                </el-button>
-                <span class="xs muted">需回答全部 {{ r.frontier.length }} 个问题（数量须与问题一致）</span>
-              </div>
-            </div>
+              <div v-else-if="r === openRound" class="round">
+                <div class="qhead">
+                  <h2>第 {{ r.round_no }} 轮 · 前沿问题</h2>
+                  <p>本轮只问前置条件已定的问题。每题附推荐答案，采纳或改写都行。</p>
+                  <el-tag size="small" type="warning" effect="plain">
+                    已回答 {{ r.answers.length }} / {{ r.frontier.length }}
+                  </el-tag>
+                </div>
 
-            <!-- 本轮答完后如实说明（不伪造下一轮） -->
-            <div v-if="openRound === null && dialogue.rounds.length" class="note info">
-              <el-icon class="ico"><InfoFilled /></el-icon>
-              <div class="note-body">
-                <b>本轮回答已记录</b>
-                <span>
-                  下一轮会基于你的回答重新计算前沿；结构化方案与方案确认将在后续工单接入。
-                  本单不伪造后续轮次，也不提供确认或生成入口。
-                </span>
-              </div>
-            </div>
+                <div class="card qcards">
+                  <div
+                    v-for="(q, qi) in r.frontier"
+                    :key="qi"
+                    class="qcard"
+                    :class="{ 'is-done': qi < r.answers.length }"
+                  >
+                    <div class="q-top">
+                      <span class="q-no">Q{{ qi + 1 }}</span>
+                      <div class="q-main">
+                        <div class="q-text">{{ q.title }}</div>
+                        <p class="q-body">{{ q.body }}</p>
+                      </div>
+                    </div>
+                    <div class="q-rec">
+                      <b>→ 推荐答案</b>
+                      <p>{{ q.recommended_answer }}</p>
+                    </div>
+                    <div class="ans">
+                      <textarea
+                        v-model="drafts[qi]"
+                        rows="2"
+                        :aria-label="`第 ${r.round_no} 轮第 ${qi + 1} 题作答`"
+                        placeholder="直接写你的答案，或点「采纳推荐答案」后修改"
+                      ></textarea>
+                      <div class="ans-actions">
+                        <el-button size="small" type="primary" :icon="Select" @click="adopt(qi)">
+                          采纳推荐答案
+                        </el-button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
 
-            <!-- 结构化方案：占位（TB-3） -->
-            <div class="card plan-card">
-              <div class="card-head">
-                <h3>结构化方案</h3>
-                <span class="tag tag-sunken">占位 · 尚未生成</span>
-              </div>
-              <div class="card-body">
-                <div class="plan-ph">
-                  <b>方案在拷问收敛后生成</b>
-                  <p>未经你显式确认，方案不会进入生成；这里只是结构占位，暂无可用内容与确认闸门。</p>
+                <div class="round-foot">
+                  <el-button
+                    type="primary"
+                    :loading="submitting"
+                    :disabled="!canSubmit"
+                    @click="submitRound"
+                  >
+                    提交并推进
+                  </el-button>
+                  <span class="xs muted">需回答全部 {{ r.frontier.length }} 个问题，提交后据此计算下一轮或收敛</span>
                 </div>
               </div>
+            </template>
+
+            <!-- 重载后已到“全答完但未推进”的兜底入口 -->
+            <div v-if="showAdvance" class="round-advance">
+              <el-button type="primary" :loading="advancing" @click="doAdvance">推进下一轮 / 收敛</el-button>
+              <span class="xs muted">本轮已答完，据此重新计算前沿，或收敛为结构化方案</span>
             </div>
+
+            <!-- 收敛 + 结构化方案 + 确认闸门 -->
+            <template v-if="plan">
+              <div class="note info converge">
+                <el-icon class="ico"><InfoFilled /></el-icon>
+                <div class="note-body">
+                  <b>拷问收敛，无下一轮</b>
+                  <span>
+                    关键问题已解决后主动收敛，不再为延续对话而提问；未确认的推测只作为待确认事项，不会写进成品。
+                    请审查下方结构化方案，确认之后才会进入生成。
+                  </span>
+                </div>
+              </div>
+
+              <div class="card plan-card" :class="{ 'is-locked': plan.status === 'confirmed' }">
+                <div class="card-head">
+                  <h3>结构化方案</h3>
+                  <el-tag
+                    size="small"
+                    :type="plan.status === 'confirmed' ? 'success' : 'warning'"
+                    effect="plain"
+                  >
+                    {{ plan.status === 'confirmed' ? '已确认 · ' + confirmedAt : '草稿 · 未确认，不会进入生成' }}
+                  </el-tag>
+                  <span class="sub">由第 {{ plan.round_no }} 轮问答生成</span>
+                </div>
+
+                <div class="card-body">
+                  <div v-if="planSectioned?.title" class="plan-title">{{ planSectioned.title }}</div>
+
+                  <div v-if="planSectioned && planSectioned.sections.length" class="plan-grid">
+                    <div v-for="(sec, si) in planSectioned.sections" :key="si" class="fld">
+                      <h4 v-if="sec.heading">{{ sec.heading }}</h4>
+                      <!-- 方案正文为后端真实 Markdown，转义后渲染 -->
+                      <div class="fld-body" v-html="sec.body"></div>
+                    </div>
+                  </div>
+                  <div v-else class="fld-body muted">方案正文为空。</div>
+
+                  <!-- 待确认事项：本单只读展示 -->
+                  <div class="plan-pending">
+                    <h4><el-icon class="ico"><Warning /></el-icon>待确认事项</h4>
+                    <p>系统标记的未定关键信息会在此列出；你不回应不等于同意。（读写细节属 TB-4）</p>
+                    <div class="pend-empty">暂无待确认事项</div>
+                  </div>
+                </div>
+
+                <div class="plan-foot">
+                  <span v-if="plan.status === 'draft'" class="gate">
+                    <el-icon class="ico lock"><Lock /></el-icon>
+                    <span>方案确认是进入生成的唯一闸门 · 未经确认的推测不会写进任何文件</span>
+                  </span>
+                  <span v-else class="ok-note">
+                    <el-icon class="ico"><CircleCheck /></el-icon>
+                    <span>已于 {{ confirmedAt }} 由你显式确认</span>
+                  </span>
+
+                  <el-button v-if="plan.status === 'draft'" type="primary" size="large" :icon="Select" @click="confirmDialog = true">
+                    确认方案
+                  </el-button>
+                  <el-button v-else size="large" disabled>生成成品（待接入）</el-button>
+
+                  <p class="hint">
+                    {{
+                      plan.status === 'confirmed'
+                        ? '方案已确认。成品生成（Word / 单文件 HTML）由 TB-5 / TB-6 落地，此处不提供可用假象。'
+                        : '确认前不会生成任何成品；方案的修改通过继续对话进行。'
+                    }}
+                  </p>
+                </div>
+              </div>
+            </template>
           </template>
         </template>
       </div>
     </div>
 
-    <!-- 底部输入胶囊：列表模式=发起想法；对话模式=派生信息骨架 -->
+    <!-- 底部输入胶囊：列表模式=发起想法；对话模式=真实派生的信息骨架 -->
     <footer class="composer">
       <div class="composer-inner">
         <div class="composer-state">
@@ -235,6 +304,7 @@
         <div class="pill">
           <textarea
             v-if="!isChat"
+            ref="ideaRef"
             class="pill-input"
             v-model="idea"
             rows="1"
@@ -264,31 +334,64 @@
         </div>
       </div>
     </footer>
+
+    <!-- 确认方案弹层 -->
+    <el-dialog v-model="confirmDialog" title="确认结构化方案" width="520px" append-to-body>
+      <div class="confirm-body">
+        <p>确认后才会进入生成阶段。你确认的是当前这份结构化方案；未经确认的推测不会写进任何文件。</p>
+        <div class="cf-item">
+          <b>方案来源轮次</b>
+          <span>第 {{ plan?.round_no }} 轮问答之后收敛生成</span>
+        </div>
+        <div class="cf-item">
+          <b>待确认事项</b>
+          <span>暂无（读写属 TB-4）</span>
+        </div>
+        <div class="warnline">
+          <el-icon class="ico"><Warning /></el-icon>
+          <span>方案确认是进入生成的唯一闸门。确认前不会生成任何成品；确认后可继续对话进行修订。</span>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="confirmDialog = false">再想想</el-button>
+        <el-button type="primary" :loading="confirming" @click="doConfirm">确认方案</el-button>
+      </template>
+    </el-dialog>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   ArrowLeft,
+  ArrowRight,
   CircleCheck,
   EditPen,
   InfoFilled,
+  Lock,
+  Plus,
   Promotion,
   Refresh,
   Select,
+  Warning,
   WarningFilled
 } from '@element-plus/icons-vue'
 import {
+  advanceGrilling,
   BackendUnavailableError,
+  confirmPlan as confirmPlanApi,
   getDialogue,
+  getPlan,
   listTasks,
   startGrillingTask,
   submitAnswers,
   type Dialogue,
+  type FrontierRound,
+  type Plan,
   type Task
 } from '../api/client'
+import { splitPlanSections } from '../utils/markdown'
 import { formatDateTime, statusDotClass, statusLabel } from '../utils/taskMeta'
 
 type ListState = 'loading' | 'ready' | 'error'
@@ -303,15 +406,22 @@ const activeTask = ref<Task | null>(null)
 const dialogue = ref<Dialogue | null>(null)
 const dialogueState = ref<ChatState>('ready')
 const dialogueError = ref('')
+const plan = ref<Plan | null>(null)
+
 const submitting = ref(false)
+const advancing = ref(false)
+const confirming = ref(false)
+const confirmDialog = ref(false)
+const expandedIds = ref<number[]>([])
 
 const idea = ref('')
 const starting = ref(false)
 const drafts = ref<string[]>([])
+const ideaRef = ref<HTMLTextAreaElement | null>(null)
 
 const isChat = computed(() => view.value === 'chat')
 
-const openRound = computed(() => {
+const openRound = computed<FrontierRound | null>(() => {
   const rs = dialogue.value?.rounds ?? []
   for (let i = rs.length - 1; i >= 0; i--) {
     const r = rs[i]
@@ -327,6 +437,15 @@ const canSubmit = computed(() => {
   return drafts.value.every((a) => a.trim().length > 0)
 })
 
+const showAdvance = computed(
+  () =>
+    dialogueState.value === 'ready' &&
+    !!dialogue.value &&
+    !openRound.value &&
+    !plan.value &&
+    dialogue.value.rounds.length > 0
+)
+
 const settledCount = computed(() =>
   (dialogue.value?.rounds ?? []).reduce((n, r) => n + r.answers.length, 0)
 )
@@ -341,18 +460,45 @@ const askText = computed(() => {
   if (!isChat.value) return '选一个任务继续，或在下方输入想法发起'
   const r = openRound.value
   if (r) return `第 ${r.round_no} 轮 · ${r.frontier.length} 个前沿问题待答`
+  if (plan.value) return `已收敛 · 第 ${plan.value.round_no} 轮之后`
   const rs = dialogue.value?.rounds ?? []
   if (rs.length) {
     const last = rs[rs.length - 1]
-    if (last.answers.length >= last.frontier.length)
-      return `第 ${last.round_no} 轮已答完 · 等待下一轮重算`
+    if (last.answers.length >= last.frontier.length) return '本轮已答完 · 等待推进下一轮'
   }
   return '尚无进行中的拷问轮次'
 })
 
 const headSubtitle = computed(() => {
-  if (isChat.value) return '按轮次作答，每轮把当前可决的问题一次问完；系统查事实、决策归你'
+  if (isChat.value && activeTask.value) {
+    return `创建于 ${formatDateTime(activeTask.value.created_at)} · 状态每轮自动保存，重启后可继续`
+  }
   return '把模糊想法经拷问收敛为确认后的结构化方案，再生成成品'
+})
+
+type ChipType = 'primary' | 'success' | 'info' | 'warning'
+const statusChip = computed<{ label: string; type: ChipType; dot: string } | null>(() => {
+  if (!isChat.value || !dialogue.value) return null
+  if (plan.value?.status === 'confirmed')
+    return { label: '已确认', type: 'success', dot: 'tf-dot--ok' }
+  if (plan.value) return { label: '已收敛 · 待确认', type: 'warning', dot: 'tf-dot--warn' }
+  if (openRound.value)
+    return { label: `拷问进行中 · 第 ${openRound.value.round_no} 轮`, type: 'primary', dot: 'tf-dot--run' }
+  const rs = dialogue.value.rounds
+  if (rs.length && rs.every((r) => r.frontier.length > 0 && r.answers.length >= r.frontier.length))
+    return { label: '已回答 · 待推进', type: 'info', dot: '' }
+  return null
+})
+
+const planSectioned = computed(() => (plan.value ? splitPlanSections(plan.value.content_md) : null))
+
+const confirmedAt = computed(() => (plan.value?.confirmed_at ? formatDateTime(plan.value.confirmed_at) : ''))
+
+const dayLabel = computed(() => {
+  const iso = activeTask.value?.created_at
+  if (!iso) return ''
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? '' : `${d.getMonth() + 1} 月 ${d.getDate()} 日`
 })
 
 const steps = computed(() => {
@@ -364,12 +510,40 @@ const steps = computed(() => {
       no: 2,
       label: '拷问收敛',
       state: started ? 'now' : 'todo',
-      note: started && r ? `第 ${r.round_no} 轮 · ${r.frontier.length} 问待答` : started ? '本轮已答' : '未开始'
+      note: !started
+        ? '未开始'
+        : plan.value
+          ? '已收敛 · 待确认'
+          : r
+            ? `第 ${r.round_no} 轮 · ${r.frontier.length} 问待答`
+            : '本轮已答'
     },
-    { no: 3, label: '方案确认', state: 'todo', note: '未开始' },
-    { no: 4, label: '生成成品', state: 'todo', note: '未开始' }
+    {
+      no: 3,
+      label: '方案确认',
+      state: plan.value?.status === 'confirmed' ? 'done' : plan.value ? 'now' : 'todo',
+      note: plan.value?.status === 'confirmed' ? '已确认' : plan.value ? '等待你显式批准' : '未开始'
+    },
+    {
+      no: 4,
+      label: '生成成品',
+      state: plan.value?.status === 'confirmed' ? 'now' : 'todo',
+      note: plan.value?.status === 'confirmed' ? '待 TB-5 / TB-6' : '未开始'
+    }
   ]
 })
+
+function isAnsweredRound(r: FrontierRound): boolean {
+  return r.frontier.length > 0 && r.answers.length >= r.frontier.length
+}
+function isExpanded(n: number): boolean {
+  return expandedIds.value.includes(n)
+}
+function toggleRound(n: number): void {
+  expandedIds.value = expandedIds.value.includes(n)
+    ? expandedIds.value.filter((x) => x !== n)
+    : [...expandedIds.value, n]
+}
 
 function syncDrafts(d: Dialogue): void {
   const rs = d.rounds
@@ -402,7 +576,6 @@ async function startIdea(): Promise<void> {
   starting.value = true
   try {
     const res = await startGrillingTask(text)
-    // 用发起返回真实构造对话态（seed = 我发送的想法，round = 后端第一轮前沿）。
     const d: Dialogue = {
       task_id: res.task.id,
       seed_input: text,
@@ -411,27 +584,24 @@ async function startIdea(): Promise<void> {
     }
     activeTask.value = res.task
     dialogue.value = d
+    plan.value = null
+    expandedIds.value = []
     syncDrafts(d)
     view.value = 'chat'
     idea.value = ''
     ElMessage.success('已发起第一轮拷问')
   } catch (err) {
-    ElMessage.error(describeStartError(err))
+    ElMessage.error(describeFlowError(err, '发起'))
   } finally {
     starting.value = false
   }
 }
 
-function describeStartError(err: unknown): string {
-  if (err instanceof BackendUnavailableError) return '后端未启动，无法发起拷问'
-  const msg = (err as Error).message || ''
-  if (msg.includes('502')) return '模型输出无法解析为前沿问题，请稍后重试或检查默认模型配置'
-  return '发起失败：' + msg
-}
-
 async function openTask(t: Task): Promise<void> {
   activeTask.value = t
   dialogue.value = null
+  plan.value = null
+  expandedIds.value = []
   view.value = 'chat'
   await reloadDialogue()
 }
@@ -443,12 +613,24 @@ async function reloadDialogue(): Promise<void> {
     const d = await getDialogue(activeTask.value.id)
     dialogue.value = d
     syncDrafts(d)
+    plan.value = await fetchPlan(activeTask.value.id)
     dialogueState.value = 'ready'
   } catch (err) {
     dialogue.value = null
+    plan.value = null
     dialogueState.value = 'error'
     dialogueError.value =
       err instanceof BackendUnavailableError ? '后端未启动，无法读取对话' : '对话读取失败'
+  }
+}
+
+/** 取方案：404 视为「尚无方案」（正常草稿态），其它错误也按无方案处理（对话已成功加载）。 */
+async function fetchPlan(taskId: number): Promise<Plan | null> {
+  try {
+    return await getPlan(taskId)
+  } catch (err) {
+    if (err instanceof BackendUnavailableError) throw err
+    return null
   }
 }
 
@@ -456,14 +638,38 @@ function backToList(): void {
   view.value = 'list'
   activeTask.value = null
   dialogue.value = null
+  plan.value = null
   drafts.value = []
+  expandedIds.value = []
   loadTasks()
+}
+
+async function newTask(): Promise<void> {
+  view.value = 'list'
+  activeTask.value = null
+  dialogue.value = null
+  plan.value = null
+  drafts.value = []
+  idea.value = ''
+  await nextTick()
+  ideaRef.value?.focus()
 }
 
 function adopt(qi: number): void {
   const r = openRound.value
   if (!r || !r.frontier[qi]) return
   drafts.value = drafts.value.map((v, i) => (i === qi ? r.frontier[qi].recommended_answer : v))
+}
+
+/** 推进一次（写后刷新权威对话与方案态）；返回是否收敛。 */
+async function advanceAndRefresh(): Promise<boolean> {
+  const task = activeTask.value
+  if (!task) return false
+  const res = await advanceGrilling(task.id)
+  dialogue.value = await getDialogue(task.id)
+  syncDrafts(dialogue.value)
+  plan.value = await fetchPlan(task.id)
+  return res.converged
 }
 
 async function submitRound(): Promise<void> {
@@ -476,29 +682,72 @@ async function submitRound(): Promise<void> {
   }
   submitting.value = true
   try {
-    const d = await submitAnswers(task.id, r.round_no, drafts.value.map((a) => a.trim()))
-    dialogue.value = d
-    syncDrafts(d)
-    ElMessage.success('本轮回答已提交')
+    await submitAnswers(task.id, r.round_no, drafts.value.map((a) => a.trim()))
+    const converged = await advanceAndRefresh()
+    // 刚答完的轮次默认展开，让「我的回答」即时可见
+    expandedIds.value = [...new Set([...expandedIds.value, r.round_no])]
+    ElMessage.success(converged ? '拷问已收敛，生成结构化方案草稿' : '已推进到下一轮')
   } catch (err) {
-    ElMessage.error(describeSubmitError(err))
+    ElMessage.error(describeFlowError(err, '提交'))
   } finally {
     submitting.value = false
   }
 }
 
-function describeSubmitError(err: unknown): string {
-  if (err instanceof BackendUnavailableError) return '后端未启动，提交失败'
+async function doAdvance(): Promise<void> {
+  if (advancing.value) return
+  advancing.value = true
+  try {
+    const converged = await advanceAndRefresh()
+    ElMessage.success(converged ? '拷问已收敛' : '已推进到下一轮')
+  } catch (err) {
+    ElMessage.error(describeFlowError(err, '推进'))
+  } finally {
+    advancing.value = false
+  }
+}
+
+async function doConfirm(): Promise<void> {
+  const task = activeTask.value
+  if (!task || confirming.value) return
+  confirming.value = true
+  try {
+    plan.value = await confirmPlanApi(task.id)
+    confirmDialog.value = false
+    ElMessage.success('方案已确认')
+  } catch (err) {
+    ElMessage.error(describeFlowError(err, '确认'))
+  } finally {
+    confirming.value = false
+  }
+}
+
+function describeFlowError(err: unknown, action: string): string {
+  if (err instanceof BackendUnavailableError) return `后端未启动，${action}失败`
   const msg = (err as Error).message || ''
+  if (msg.includes('502'))
+    return '模型无法产出可用内容（前沿或方案解析失败），请稍后重试或检查默认模型配置'
   if (msg.includes('422')) return '回答数量与问题数量不一致，请确认每题都作答'
-  if (msg.includes('404')) return '该轮次不存在或尚无前沿问题'
-  return '提交失败：' + msg
+  if (msg.includes('404')) return '对应的轮次或方案不存在'
+  if (msg.includes('409')) return '方案尚未确认，无法生成'
+  return `${action}失败：${msg}`
 }
 
 onMounted(loadTasks)
 </script>
 
 <style scoped>
+/* 页眉 */
+.head-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+.status-chip .tf-dot {
+  margin-right: 5px;
+}
+
 /* 步骤条 */
 .steps {
   list-style: none;
@@ -597,7 +846,11 @@ onMounted(loadTasks)
 .thread-inner > .card {
   width: 100%;
 }
-
+.day-sep {
+  text-align: center;
+  font-size: var(--fs-xs);
+  color: var(--text-4);
+}
 .start-hint .note-body b {
   color: var(--text-1);
 }
@@ -644,7 +897,6 @@ onMounted(loadTasks)
   padding-left: 16px;
   margin-top: 3px;
 }
-
 .list-loading {
   display: flex;
   flex-direction: column;
@@ -682,7 +934,7 @@ onMounted(loadTasks)
   color: var(--text-4);
 }
 
-/* 轮次 / 问题卡片 */
+/* 当前轮 / 问题卡片 */
 .qhead {
   display: flex;
   align-items: baseline;
@@ -794,32 +1046,6 @@ onMounted(loadTasks)
   align-items: center;
   gap: var(--sp-2);
 }
-.q-done {
-  margin-top: var(--sp-3);
-  padding: var(--sp-3);
-  border: 1px solid var(--line-1);
-  border-radius: var(--r-sm);
-  background: var(--bg-sunken);
-}
-.q-done .row {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-}
-.q-done .row b {
-  font-size: var(--fs-sm);
-  color: var(--text-1);
-}
-.q-done .ico.ok {
-  color: var(--ok-fg);
-}
-.q-done p {
-  font-size: var(--fs-sm);
-  color: var(--text-2);
-  margin: var(--sp-2) 0 0;
-  line-height: 1.6;
-  white-space: pre-wrap;
-}
 .round-foot {
   display: flex;
   align-items: center;
@@ -827,36 +1053,257 @@ onMounted(loadTasks)
   flex-wrap: wrap;
   margin-top: var(--sp-3);
 }
-
-/* 方案占位 */
-.plan-card {
-  border-color: var(--line-2);
-}
-.tag-sunken {
-  display: inline-flex;
+.round-advance {
+  display: flex;
   align-items: center;
-  padding: 2px 9px;
-  border-radius: var(--r-pill);
-  font-size: var(--fs-xs);
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+}
+
+/* 可折叠历史轮次 */
+.qround {
+  background: var(--bg-surface);
   border: 1px solid var(--line-1);
-  background: var(--bg-sunken);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+.qround-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+  padding: var(--sp-3) var(--sp-4);
+  border: 0;
+  background: none;
+  text-align: left;
+  font-size: var(--fs-sm);
   color: var(--text-2);
 }
-.plan-ph {
-  padding: var(--sp-3) var(--sp-4);
-  border-radius: var(--r-md);
-  background: var(--bg-sunken);
+.qround-head:hover {
+  background: var(--bg-hover);
 }
-.plan-ph b {
-  display: block;
+.qround-head .ico.ok {
+  color: var(--ok-fg);
+}
+.qround .chev {
+  margin-left: auto;
+  color: var(--text-4);
+  transition: transform 0.16s;
+}
+.qround.is-open .chev {
+  transform: rotate(90deg);
+}
+.qround-body {
+  padding: 0 var(--sp-4) var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.done-qa {
+  border-left: 2px solid var(--line-2);
+  padding-left: var(--sp-3);
+}
+.done-qa b {
   font-size: var(--fs-sm);
+  font-weight: 600;
+  display: block;
   color: var(--text-1);
 }
-.plan-ph p {
+.done-qa span {
   font-size: var(--fs-sm);
   color: var(--text-3);
-  margin: var(--sp-1) 0 0;
+  display: block;
+  margin-top: 2px;
+  white-space: pre-wrap;
+}
+
+/* 结构化方案卡 */
+.plan-card {
+  border-color: var(--brand-200);
+  box-shadow: 0 1px 3px rgba(20, 28, 46, 0.05);
+}
+.plan-card.is-locked {
+  border-color: var(--line-1);
+  box-shadow: none;
+}
+.converge .note-body b {
+  color: var(--text-1);
+}
+.plan-title {
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  color: var(--text-1);
+  margin-bottom: var(--sp-4);
+}
+.plan-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--sp-6);
+}
+.fld {
+  padding: 0 0 var(--sp-4);
+  min-width: 0;
+}
+.fld h4 {
+  margin: 0 0 var(--sp-1);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text-3);
+  letter-spacing: 0.5px;
+}
+.fld-body {
+  font-size: var(--fs-sm);
+  color: var(--text-1);
+  line-height: 1.65;
+}
+.fld-body :deep(p) {
+  margin: 0 0 var(--sp-2);
+}
+.fld-body :deep(p:last-child) {
+  margin-bottom: 0;
+}
+.fld-body :deep(ul),
+.fld-body :deep(ol) {
+  margin: 0 0 var(--sp-2);
+  padding-left: var(--sp-4);
+}
+.fld-body :deep(li) {
+  margin: 2px 0;
   line-height: 1.6;
+}
+.fld-body :deep(code) {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  background: var(--bg-sunken);
+  border-radius: var(--r-xs);
+  padding: 1px 5px;
+}
+.fld-body :deep(a) {
+  color: var(--brand-600);
+  text-underline-offset: 2px;
+}
+.fld-body :deep(blockquote) {
+  margin: 0 0 var(--sp-2);
+  padding-left: var(--sp-3);
+  border-left: 2px solid var(--line-2);
+  color: var(--text-3);
+}
+.fld-body :deep(hr) {
+  border: 0;
+  border-top: 1px solid var(--line-1);
+  margin: var(--sp-3) 0;
+}
+.fld-body :deep(strong) {
+  color: var(--text-1);
+}
+
+/* 待确认事项（只读） */
+.plan-pending {
+  border-top: 1px solid var(--line-1);
+  margin-top: var(--sp-2);
+  padding-top: var(--sp-4);
+}
+.plan-pending h4 {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: 0 0 var(--sp-1);
+  font-size: var(--fs-md);
+  color: var(--warn-fg);
+}
+.plan-pending h4 .ico {
+  color: var(--warn-fg);
+}
+.plan-pending p {
+  margin: 0 0 var(--sp-3);
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+.pend-empty {
+  border: 1px dashed var(--line-3);
+  border-radius: var(--r-sm);
+  background: var(--bg-sunken);
+  padding: var(--sp-3);
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+  text-align: center;
+}
+
+/* 方案脚：闸门 / 确认 / 生成 */
+.plan-foot {
+  border-top: 1px solid var(--line-1);
+  padding: var(--sp-4) var(--sp-5);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  flex-wrap: wrap;
+}
+.gate {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  flex: 1;
+  min-width: 220px;
+}
+.gate .lock {
+  color: var(--warn-fg);
+}
+.ok-note {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-sm);
+  color: var(--ok-fg);
+  flex: 1;
+  min-width: 220px;
+}
+.plan-foot .hint {
+  width: 100%;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  margin: 0;
+}
+
+/* 确认弹层 */
+.confirm-body p {
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  margin: 0 0 var(--sp-3);
+  line-height: 1.6;
+}
+.cf-item {
+  display: flex;
+  gap: var(--sp-3);
+  padding: var(--sp-2) 0;
+  border-bottom: 1px solid var(--line-1);
+  font-size: var(--fs-sm);
+}
+.cf-item b {
+  color: var(--text-3);
+  min-width: 96px;
+  font-weight: 600;
+}
+.cf-item span {
+  color: var(--text-1);
+}
+.warnline {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: flex-start;
+  color: var(--warn-fg);
+  font-size: var(--fs-sm);
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-line);
+  border-radius: var(--r-sm);
+  padding: var(--sp-3);
+  margin-top: var(--sp-4);
+  line-height: 1.55;
+}
+.warnline .ico {
+  margin-top: 2px;
+  flex: none;
 }
 
 /* 底部胶囊 */
@@ -936,6 +1383,28 @@ onMounted(loadTasks)
   color: var(--text-4);
 }
 
+/* 响应式：对齐原型断点（1360 / 1200 / 1000 / 820 / 560），保留 960 / 1100 现有行为 */
+@media (max-width: 1360px) {
+  .steps {
+    gap: var(--sp-1);
+  }
+}
+@media (max-width: 1200px) {
+  .plan-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+  .plan-grid > .fld + .fld {
+    margin-top: var(--sp-3);
+    padding-top: var(--sp-3);
+    border-top: 1px solid var(--line-1);
+  }
+}
+@media (max-width: 1000px) {
+  .steps {
+    gap: 0;
+  }
+}
 @media (max-width: 960px) {
   .composer {
     padding-left: var(--sp-4);
@@ -944,9 +1413,25 @@ onMounted(loadTasks)
   .thread {
     padding: var(--sp-5) var(--sp-4) var(--sp-8);
   }
-  .qcard {
+}
+@media (max-width: 820px) {
+  .step-txt em {
+    display: none;
+  }
+  .card-body,
+  .qcard,
+  .plan-pending,
+  .plan-foot {
     padding-left: var(--sp-4);
     padding-right: var(--sp-4);
+  }
+}
+@media (max-width: 560px) {
+  .pill textarea {
+    min-height: 44px;
+  }
+  .composer-hint {
+    display: none;
   }
 }
 </style>
