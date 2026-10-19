@@ -81,7 +81,12 @@ def chat_completions_url(base_url: str) -> str:
 
 
 class UnconfiguredModelClient:
-    """未配置模型时的占位实现：显式失败，避免静默返回空结果。"""
+    """未配置模型时的占位实现：显式失败，避免静默返回空结果。
+
+    保留作**文档性 fallback**（说明「未配置」应如何显式失败），
+    **不再是 `app.state.model_client` 的生产默认**——生产默认是
+    `app.providers.provider_backed_client.ProviderBackedModelClient`。
+    """
 
     def complete(self, messages: list[dict], *, model: str | None = None) -> str:
         raise NotImplementedError("模型客户端尚未配置（TB-1 落地真实实现）")

@@ -20,10 +20,11 @@ from fastapi.staticfiles import StaticFiles
 from app import config
 from app.api.router import api_router
 from app.db.database import init_db
+from app.db.provider_repository import ProviderRepository
 from app.db.seed import seed_default_providers
 from app.providers.key_store import KeyringKeyStore
-from app.providers.model_client import UnconfiguredModelClient
 from app.providers.openai_client import HttpModelClientFactory
+from app.providers.provider_backed_client import ProviderBackedModelClient
 from app.providers.url_fetcher import UnconfiguredUrlFetcher
 
 
@@ -63,9 +64,16 @@ def create_app(db_path: str | Path | None = None, *, mount_frontend: bool = True
     )
 
     app.state.db_path = resolved_db_path
-    app.state.model_client = UnconfiguredModelClient()
     app.state.model_client_factory = HttpModelClientFactory()
     app.state.key_store = KeyringKeyStore()
+    # 生产默认模型客户端按「当前默认 provider + 凭据管理器 + 工厂」解析真实客户端，
+    # 而不是恒为未配置占位实现（否则拷问／方案／修订主链路永远调不到模型）。
+    # 测试仍经 `dependency_overrides[get_model_client]` 覆盖该接缝。
+    app.state.model_client = ProviderBackedModelClient(
+        ProviderRepository(app.state.db_path),
+        app.state.key_store,
+        app.state.model_client_factory,
+    )
     app.state.url_fetcher = UnconfiguredUrlFetcher()
 
     app.include_router(api_router, prefix=config.API_PREFIX)

@@ -33,15 +33,16 @@ def _add_type_probe(app) -> None:
         }
 
 
-def test_seams_default_to_unconfigured_stubs(app) -> None:
-    """未注入时，两个依赖给出显式失败的占位实现（不静默返回空结果）。"""
+def test_seams_defaults_wire_real_implementations(app) -> None:
+    """未注入时：模型客户端是按 provider 配置解析的真实实现（接线缺陷修复后），
+    URL 抓取器仍为显式失败的占位实现（其实现属后续工单）。"""
     _add_type_probe(app)
 
     with TestClient(app) as client:
         body = client.get("/api/_seam_probe").json()
 
     assert body == {
-        "model_client": "UnconfiguredModelClient",
+        "model_client": "ProviderBackedModelClient",
         "url_fetcher": "UnconfiguredUrlFetcher",
     }
 
