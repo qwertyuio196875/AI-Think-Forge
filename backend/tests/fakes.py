@@ -4,11 +4,17 @@
 - `InMemoryKeyStore` 保证测试永不触碰 Windows 凭据管理器；
 - `ScriptedModelClient(Factory)` 让连接测试在不联网、零花费的前提下覆盖
   成功与三类失败路径（网络异常 / 鉴权失败 / 模型名无效）；
-- `FakeUrlFetcher`（fake 注入点 2）返回预置网页或预置失败，**绝不发起真实请求**。
+- `FakeUrlFetcher`（fake 注入点 2）返回预置网页或预置失败，**绝不发起真实请求**；
+- `FakeEmbeddingClient`（fake 注入点 3，工单 20）返回确定性假向量：同一文本
+  永远得到同一向量，**绝不真调百炼**；也能预置嵌入失败或维度不一致。
 """
 
 from __future__ import annotations
 
+import hashlib
+from collections.abc import Sequence
+
+from app.providers.embedding_client import VECTOR_FORMAT_VERSION
 from app.providers.model_client import ModelClientConfig
 from app.providers.url_fetcher import (
     DEFAULT_MAX_BYTES,
@@ -108,6 +114,70 @@ class ScriptedModelClientFactory:
         self.configs.append(config)
         self.create_count += 1
         return self._client
+
+
+class FakeEmbeddingClient:
+    """嵌入客户端替身（fake 注入点 3，工单 20）：确定性假向量，全程不联网。
+
+    同一文本永远得到同一向量（用 `sha256(模型名 + 文本)` 展开成固定维度的
+    浮点数组），因此「换模型后重建索引，向量确实变了」「同一段文字两次入库
+    得到同一向量」都能被断言。另可预置三类失败，覆盖降级路径：
+    - `set_error`：调用直接抛错（模拟未配置 / 服务不可用）；
+    - `set_ragged`：返回一条少一维的向量（模拟模型维度不一致）；
+    - `set_model`：换模型名与维度（模拟用户切换嵌入模型）。
+    """
+
+    def __init__(
+        self,
+        *,
+        dimensions: int = 8,
+        model_name: str = "fake-embedding",
+        error: BaseException | None = None,
+    ) -> None:
+        self.dimensions = dimensions
+        self.model_name = model_name
+        self.version = VECTOR_FORMAT_VERSION
+        self._error = error
+        self._ragged = False
+        self.calls: list[list[str]] = []
+
+    def embed(
+        self, texts: Sequence[str], *, timeout: float | None = None
+    ) -> list[list[float]]:
+        self.calls.append(list(texts))
+        if self._error is not None:
+            raise self._error
+        vectors = [self._vector(text) for text in texts]
+        if self._ragged and vectors:
+            vectors[-1] = vectors[-1][:-1]
+        return vectors
+
+    def _vector(self, text: str) -> list[float]:
+        """把文本散列成 `dimensions` 个 `[-1, 1]` 浮点（同一文本恒定不变）。"""
+        digest = b""
+        counter = 0
+        while len(digest) < self.dimensions * 2:
+            material = f"{self.model_name}:{counter}:{text}".encode()
+            digest += hashlib.sha256(material).digest()
+            counter += 1
+        return [
+            int.from_bytes(digest[index * 2 : index * 2 + 2], "big") / 32767.5 - 1.0
+            for index in range(self.dimensions)
+        ]
+
+    def set_error(self, error: BaseException | None) -> None:
+        """预置嵌入失败（未配置 / 网络 / 服务端错误）。"""
+        self._error = error
+
+    def set_ragged(self, ragged: bool = True) -> None:
+        """预置「最后一条向量维度与其余不一致」的坏响应。"""
+        self._ragged = ragged
+
+    def set_model(self, model_name: str, *, dimensions: int | None = None) -> None:
+        """换成另一个嵌入模型（名与维度），用于验证重建索引不混存旧向量。"""
+        self.model_name = model_name
+        if dimensions is not None:
+            self.dimensions = dimensions
 
 
 class FakeUrlFetcher:

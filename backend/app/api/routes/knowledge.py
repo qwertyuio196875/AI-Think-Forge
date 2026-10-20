@@ -1,4 +1,4 @@
-"""知识库路由（工单 19）：上传即入库、清单、删除、重建索引。
+"""知识库路由（工单 19 入库与清单；工单 20 嵌入写入）。
 
 术语（GLOSSARY）：**知识库** = 用户显式添加的本地资料集合，含分块与检索索引。
 归属约定（ADR-0005）：知识库资料复用 `sources` / `documents` / `document_chunks`，
@@ -7,11 +7,12 @@
 纪律：
 - 分块复用资料分析同一条管线（`analysis/chunking.py`：目标 1200 / 上限 1800，
   按标题边界切），本模块不另造分块器；
-- 上传即入库：解析 + 建分块一次完成，成功为「已入库」；
+- 上传即入库：解析 + 建分块 + 写向量一次完成，全成功为「已入库」；
 - **解析或索引失败不丢资料**：文件已落盘、来源与文档已入库，状态置「索引失败」
   并附可读原因，返回 201 让用户看得到、读得到，绝不静默吞掉（验收②）；
-- 嵌入与检索不在本单（工单 20 / 21）：本模块只维护索引状态，不写 `embeddings`。
-  重建索引因此只做「重解析 + 重切块」，把嵌入留给后续按状态字段接入。
+- 嵌入失败同样只是「索引失败」：分块与原文保留，向量一条不写（工单 20）；
+  检索的降级由工单 21 / 22 负责，本模块不实现检索；
+- 重建索引 = 重解析 + 重切块 + **整份替换向量**，因此换嵌入模型后不会新旧混存。
 """
 
 from __future__ import annotations
@@ -24,7 +25,13 @@ from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 from app.analysis.chunking import build_chunks
 from app.analysis.parsing import SUPPORTED_SUFFIXES, ParseError, parse_document
 from app.analysis.service import primary_unrecognized, unrecognized_parts
-from app.api.deps import AnalysisRepositoryDep, DataDirDep, KnowledgeRepositoryDep
+from app.api.deps import (
+    AnalysisRepositoryDep,
+    DataDirDep,
+    EmbeddingClientDep,
+    EmbeddingRepositoryDep,
+    KnowledgeRepositoryDep,
+)
 from app.db.knowledge_repository import (
     INDEX_STATUS_FAILED,
     INDEX_STATUS_INDEXING,
@@ -40,6 +47,7 @@ from app.models.knowledge import (
     KnowledgeSourceListResponse,
     KnowledgeUploadResponse,
 )
+from app.providers.embedding_client import EmbeddingError
 from app.security.uploads import (
     UploadError,
     read_upload,
@@ -95,15 +103,59 @@ def _load_record(knowledge_repository: KnowledgeRepositoryDep, source_id: int) -
     return knowledge_repository.get_record(source_id)
 
 
+def _write_embeddings(
+    *,
+    embedding_client: EmbeddingClientDep,
+    embedding_repository: EmbeddingRepositoryDep,
+    document_id: int,
+    texts: list[str],
+    chunk_ids: list[int],
+) -> str | None:
+    """把分块写成向量；成功返回 `None`，失败返回可读原因（不抛异常）。
+
+    嵌入是**可降级的外部依赖**：任何失败都只意味着「这份资料暂时没有向量」，
+    资料与分块必须原样保留，索引状态如实记成「索引失败」——绝不为了向量把
+    已经入库的资料回滚掉（验收：失败资料仍可读）。
+    """
+    try:
+        vectors = embedding_client.embed(texts)
+    except EmbeddingError as exc:
+        return f"向量索引失败：{exc}"
+    except Exception as exc:  # noqa: BLE001 - 嵌入的任何异常都只影响索引状态
+        return f"向量索引失败：{exc}"
+
+    if len(vectors) != len(texts):
+        return f"向量索引失败：返回 {len(vectors)} 条向量，与 {len(texts)} 个分块不符"
+
+    try:
+        embedding_repository.replace_document_vectors(
+            document_id,
+            list(zip(chunk_ids, vectors, strict=True)),
+            model_name=embedding_client.model_name,
+            version=embedding_client.version,
+        )
+    except EmbeddingError as exc:
+        return f"向量索引失败：{exc}"
+    except ValueError as exc:
+        return f"向量索引失败：{exc}"
+    return None
+
+
 def _persist_parsed(
     *,
     knowledge_repository: KnowledgeRepositoryDep,
     analysis_repository: AnalysisRepositoryDep,
+    embedding_client: EmbeddingClientDep,
+    embedding_repository: EmbeddingRepositoryDep,
     source_id: int,
     relative: str,
     parsed,
 ) -> dict:
-    """把解析结果落成文档 + 分块，并把索引状态置为「已入库」。"""
+    """把解析结果落成文档 + 分块 + 向量，并把索引状态置为「已入库」。
+
+    向量写入失败时**不回滚分块**：状态置「索引失败」并附原因，资料照旧可读；
+    重建索引会整份替换向量，所以下次重试不会残留半份。
+    """
     headings = sum(1 for block in parsed.blocks if block.heading_level is not None)
     chunks = build_chunks(parsed.blocks, parsed.format)
 
@@ -143,6 +195,21 @@ def _persist_parsed(
         document["id"],
         [{"seq": chunk.seq, "text": chunk.text, "locator": chunk.locator} for chunk in chunks],
     )
+
+    # 以落库后的分块为准（id 与 text 都来自库里），避免内存对象与库不一致。
+    stored_chunks = analysis_repository.list_chunks(document["id"])
+    if stored_chunks:
+        reason = _write_embeddings(
+            embedding_client=embedding_client,
+            embedding_repository=embedding_repository,
+            document_id=document["id"],
+            texts=[chunk["text"] for chunk in stored_chunks],
+            chunk_ids=[chunk["id"] for chunk in stored_chunks],
+        )
+        if reason is not None:
+            knowledge_repository.set_index_status(source_id, INDEX_STATUS_FAILED, message=reason)
+            return knowledge_repository.get_record(source_id)
+
     knowledge_repository.set_index_status(source_id, INDEX_STATUS_STORED)
     return knowledge_repository.get_record(source_id)
 
@@ -195,13 +262,16 @@ def _persist_failure(
 def upload_source(
     knowledge_repository: KnowledgeRepositoryDep,
     analysis_repository: AnalysisRepositoryDep,
+    embedding_client: EmbeddingClientDep,
+    embedding_repository: EmbeddingRepositoryDep,
     data_dir: DataDirDep,
     file: Annotated[UploadFile, File()],
 ) -> KnowledgeUploadResponse:
     """上传一份资料并入知识库（TXT / MD / DOCX / PDF / PPTX，50MB 上限）。
 
     解析失败同样返回 201：文件与来源已入库，状态为「索引失败」并带可读原因，
-    用户可以删掉重传，资料本身不会凭空消失。
+    用户可以删掉重传，资料本身不会凭空消失。嵌入失败同理——分块保留、向量不写，
+    状态如实标「索引失败」，检索走降级（降级检索属工单 21 / 22）。
     """
     try:
         filename = safe_filename(file.filename or "")
@@ -254,6 +324,8 @@ def upload_source(
         record = _persist_parsed(
             knowledge_repository=knowledge_repository,
             analysis_repository=analysis_repository,
+            embedding_client=embedding_client,
+            embedding_repository=embedding_repository,
             source_id=source["id"],
             relative=relative,
             parsed=parsed,
@@ -271,7 +343,9 @@ def upload_source(
         )
         return KnowledgeUploadResponse(item=_item(record), message=message)
 
-    return KnowledgeUploadResponse(item=_item(record))
+    # 已入库但向量没写成（通常是嵌入模型没配）：把原因一并回给前端，别让用户
+    # 只看到「已入库」却检索不到东西。
+    return KnowledgeUploadResponse(item=_item(record), message=record["source"]["index_message"])
 
 
 @router.get("/sources", response_model=KnowledgeSourceListResponse)
@@ -328,13 +402,17 @@ def delete_source(
 def reindex(
     knowledge_repository: KnowledgeRepositoryDep,
     analysis_repository: AnalysisRepositoryDep,
+    embedding_client: EmbeddingClientDep,
+    embedding_repository: EmbeddingRepositoryDep,
     data_dir: DataDirDep,
     request: KnowledgeReindexRequest | None = None,
 ) -> KnowledgeReindexResponse:
-    """重建知识库索引（换分块参数或换嵌入模型后使用；本单只重切块）。
+    """重建知识库索引（重解析 + 重切块 + 整份替换向量）。
 
-    逐份处理、单份失败不中断整批：失败的资料状态置「索引失败」并保留原文，
-    结果里逐条可见，绝不整体 500 掩盖部分失败。
+    典型用途是换了分块参数或**换了嵌入模型**：旧向量随旧分块一并删除，新向量
+    按新模型写入，因此不会新旧混存（验收④）。逐份处理、单份失败不中断整批：
+    失败的资料状态置「索引失败」并保留原文，结果里逐条可见，绝不整体 500 掩盖
+    部分失败。
     """
     payload = request or KnowledgeReindexRequest()
     if payload.source_id is not None:
@@ -376,19 +454,23 @@ def reindex(
                     )
                 )
                 continue
-            _persist_parsed(
+            record = _persist_parsed(
                 knowledge_repository=knowledge_repository,
                 analysis_repository=analysis_repository,
+                embedding_client=embedding_client,
+                embedding_repository=embedding_repository,
                 source_id=source_id,
                 relative=source["ref"],
                 parsed=parsed,
             )
+            # 以落库后的真实状态回报：向量没写成同样是「索引失败」，不能硬写已入库。
+            index_status = record["source"]["index_status"]
             items.append(
                 KnowledgeReindexItem(
                     source_id=source_id,
-                    index_status=INDEX_STATUS_STORED,
-                    index_status_label=_label(INDEX_STATUS_STORED),
-                    message=None,
+                    index_status=index_status,
+                    index_status_label=_label(index_status),
+                    message=record["source"]["index_message"],
                 )
             )
         except (ParseError, ValueError, OSError) as exc:

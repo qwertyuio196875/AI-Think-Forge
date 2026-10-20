@@ -14,7 +14,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# 索引状态取值域：`indexing` 由后续的嵌入写入（工单 20）使用，本单只产出首尾两态。
+# 索引状态取值域：`indexing` 由嵌入与向量写入（工单 20）产生——上传/重建索引期间短暂出现，
+# `failed` 也可能是「分块成功但向量没写成」（此时资料仍可读，检索层降级）。
 INDEX_STATUS_LABELS: dict[str, str] = {
     "stored": "已入库",
     "indexing": "索引中",

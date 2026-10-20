@@ -1,0 +1,168 @@
+{
+  "version": 1,
+  "description": "知识库夹具语料清单：既是 RAG 验收夹具，也是检索质量回归测试集的判据。修改语料正文会使其失效。",
+  "categories": {
+    "tech": "技术文档",
+    "product": "产品说明",
+    "research": "调研摘要",
+    "interview": "访谈笔记"
+  },
+  "retrieval": {
+    "top_k": 6,
+    "min_similarity": 0.3,
+    "max_inject_hanzi": 3000,
+    "note": "参数来自 docs/adr/0005-adopt-minimal-rag.md；回归时按此核对命中数与丢弃行为。"
+  },
+  "files": [
+    {
+      "file": "01-tech-streaming-generation.md",
+      "category": "tech",
+      "topic": "流式生成的工程取舍：首字延迟、取消顺序、背压缓冲，以及哪些环节刻意不走流式",
+      "queries": [
+        "流式返回时首字延迟从多少降到多少",
+        "用户中断填充时服务端先做什么",
+        "为什么页面规划和前情提要不用流式"
+      ]
+    },
+    {
+      "file": "02-tech-document-chunking.md",
+      "category": "tech",
+      "topic": "文档分块策略：目标 1200 上限 1800 字符、按标题边界切、位置元数据与改参数要重建索引",
+      "queries": [
+        "文档分块的目标字符数和上限是多少",
+        "分块时切点优先落在哪里",
+        "改分块参数之后要做什么"
+      ]
+    },
+    {
+      "file": "03-tech-prompt-versioning.md",
+      "category": "tech",
+      "topic": "提示词版本管理：版本号进三处、破坏性变更要钉住旧版本、灰度与不为提示词做在线热更新",
+      "queries": [
+        "提示词版本号写在哪里、会出现在哪些地方",
+        "改了提示词行为要不要升版本",
+        "提示词怎么做灰度发布"
+      ]
+    },
+    {
+      "file": "04-tech-hanzi-counting.md",
+      "category": "tech",
+      "topic": "汉字字数口径：只数 CJK 字形、不含标点英文数字，与 Word 字数存在差异，且有全仓唯一实现的守卫",
+      "queries": [
+        "字数是怎么算的、标点算不算",
+        "为什么我们的字数和 Word 对不上",
+        "英文和数字算不算字数"
+      ]
+    },
+    {
+      "file": "05-product-word-count.md",
+      "category": "product",
+      "topic": "写作助手字数控制说明：档位与 300-20000 范围、按章分摊、余量反馈、偏差重写与中断续写",
+      "queries": [
+        "目标字数可以填多少、超出范围会怎样",
+        "每章的建议字数是怎么分出来的",
+        "实际字数和目标差太多会怎么处理"
+      ]
+    },
+    {
+      "file": "06-product-ppt-export.md",
+      "category": "product",
+      "topic": "演示文稿导出：截图版 PPT 的文字不可编辑、页数是硬约束、字体与出图失败提示",
+      "queries": [
+        "导出的 PPT 能不能在 PowerPoint 里改字",
+        "截图版 PPT 的图片尺寸是多少",
+        "PPT 页数能不能正好指定为 16 页"
+      ]
+    },
+    {
+      "file": "07-product-knowledge-base.md",
+      "category": "product",
+      "topic": "知识库功能说明：上传即入库、三种索引状态、检索参数、引用卡片可取消与降级提示",
+      "queries": [
+        "上传资料后怎么知道有没有入库成功",
+        "索引失败时资料还能不能看",
+        "检索最多给几条片段、相关度低于多少丢掉"
+      ]
+    },
+    {
+      "file": "08-product-outline-export.md",
+      "category": "product",
+      "topic": "模板与大纲导出：outline- 前缀区分大纲与正文、模板只套用不联网、跳过填充就没有页面规划",
+      "queries": [
+        "导出的文件怎么看出是大纲还是正文",
+        "跳过填充还能不能控制 PPT 页数",
+        "模板是系统提供的还是自己上传的"
+      ]
+    },
+    {
+      "file": "09-research-ai-writing-adoption.md",
+      "category": "research",
+      "topic": "AI 写作工具接受度调研：场景决定满意度、字数失控是高频抱怨、模板态度分裂、出处核对率低",
+      "queries": [
+        "用户对 AI 写作工具的接受度怎么样",
+        "用户最常抱怨 AI 写作的哪一点",
+        "有多少人会去核对 AI 写的句子的出处"
+      ]
+    },
+    {
+      "file": "10-research-template-writing-pain.md",
+      "category": "research",
+      "topic": "模板化写作的收益与痛点：上手快但填空感重、模板与字数打架、模板不迭代，并收录反方观点",
+      "queries": [
+        "模板化写作有哪些痛点",
+        "模板对内容团队到底有没有用",
+        "为什么套模板写出来的稿子读起来都一样"
+      ]
+    },
+    {
+      "file": "11-research-citation-trust.md",
+      "category": "research",
+      "topic": "引用可信度研究：来源标注越细核对正确率越高、但也更容易被跳过核对，用户希望可取消与降级明示",
+      "queries": [
+        "引用标注到段落级对用户判断有没有帮助",
+        "用户为什么想取消某条引用",
+        "检索降级时用户希望被告知吗"
+      ]
+    },
+    {
+      "file": "12-interview-content-team-lead.md",
+      "category": "interview",
+      "topic": "内容团队负责人访谈：字数分配的痛、模板在上游有用下游锁思路、引用错一次就永久失信",
+      "queries": [
+        "内容团队是怎么分配每章字数的",
+        "内容负责人怎么看模板的作用",
+        "引用指错了会发生什么"
+      ]
+    },
+    {
+      "file": "13-interview-technical-writer.md",
+      "category": "interview",
+      "topic": "技术写作者访谈：分段字数心里有杆秤、分块必须切在标题上、关心提示词版本是为了可追溯",
+      "queries": [
+        "技术写作者对分块边界有什么要求",
+        "为什么写作者会在意提示词版本号",
+        "技术文档每节一般写多少字"
+      ]
+    },
+    {
+      "file": "14-interview-freelance-writer.md",
+      "category": "interview",
+      "topic": "自由撰稿人访谈：明确反对把模板当答案、认为字数配额奖励注水，与企业内容团队立场相反",
+      "queries": [
+        "有没有人认为模板会把文章写死",
+        "自由撰稿人怎么看硬性字数要求",
+        "模板适合用在哪类写作上"
+      ]
+    },
+    {
+      "file": "15-interview-support-lead.md",
+      "category": "interview",
+      "topic": "客户支持负责人访谈：检索要给原文不要摘要、降级必须可见、引用要能区分文档避免跨文档拼接",
+      "queries": [
+        "支持团队为什么更想要原文而不是摘要",
+        "检索降级不告诉用户会有什么后果",
+        "不同文档里的说法能不能混在一起用"
+      ]
+    }
+  ]
+}
