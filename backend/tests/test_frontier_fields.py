@@ -14,10 +14,12 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from fakes import ScriptedModelClient
 from fastapi.testclient import TestClient
 
 from app.grilling import prompts
+from app.grilling.frontier import FrontierParseError, parse_frontier
 
 IDEA = "帮我准备一份面向新员工的产品培训"
 
@@ -54,6 +56,17 @@ def test_previous_prompt_version_is_kept() -> None:
 
     assert "frontier" in v1
     assert "why" not in v1  # v1 的输出契约尚无该字段
+
+
+def test_truncated_frontier_json_reports_truncation_hint() -> None:
+    """输出被长度上限截断时，错误文案提示截断而不是只报 JSON 语法错。"""
+    raw = (
+        '{"frontier": [{"title": "目标", "body": "第一题完整"},'
+        ' {"title": "第二题", "body": "写到一半'
+    )
+
+    with pytest.raises(FrontierParseError, match="截断"):
+        parse_frontier(raw)
 
 
 # --- 解析与返回：新增字段 -------------------------------------------------------

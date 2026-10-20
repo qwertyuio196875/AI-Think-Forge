@@ -30,16 +30,20 @@ def _extract_json_object(text: str) -> str:
     start = text.find("{")
     end = text.rfind("}")
     if start == -1 or end <= start:
-        raise FrontierParseError("输出中找不到 JSON 对象")
+        raise FrontierParseError("输出中找不到完整的 JSON 对象（可能被截断）")
     return text[start : end + 1]
 
 
 def parse_frontier(text: str) -> list[FrontierQuestion]:
     """把模型输出解析为前沿问题集；超过每轮上限时按上限截断。"""
+    payload = _extract_json_object(text)
     try:
-        data = json.loads(_extract_json_object(text))
+        data = json.loads(payload)
     except json.JSONDecodeError as exc:
-        raise FrontierParseError(f"JSON 解析失败：{exc}") from exc
+        # 截断的 JSON 往往在最后一个字符附近报「Expecting ',' delimiter」；
+        # 明确提示截断，避免用户误以为是模型“不会写 JSON”。
+        hint = "（模型输出可能被长度上限截断，请重试）" if exc.pos >= len(payload) - 2 else ""
+        raise FrontierParseError(f"JSON 解析失败：{exc}{hint}") from exc
 
     if not isinstance(data, dict) or "frontier" not in data:
         raise FrontierParseError("输出缺少 frontier 字段")

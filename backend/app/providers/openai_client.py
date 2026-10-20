@@ -15,15 +15,22 @@ import logging
 
 import httpx
 
-from app.providers.model_client import ModelClient, ModelClientConfig, chat_completions_url
+from app.providers.model_client import (
+    ModelCallError,
+    ModelClient,
+    ModelClientConfig,
+    chat_completions_url,
+)
 from app.security.redaction import redact
 
 logger = logging.getLogger(__name__)
 
 # 连接测试与常规调用共用；长生成的更大超时由后续工单按需覆盖。
 DEFAULT_TIMEOUT_SECONDS = 60.0
-# 保守输出上限，避免探测性调用意外产生大额输出。
-DEFAULT_MAX_TOKENS = 1024
+# 输出上限：前沿问题集含 body / why / alternatives，实测 5 题的中文 JSON 可到
+# 1.5k~2k tokens；1024 会把 JSON 截断成半截（表现为「Expecting ',' delimiter」）。
+# 4096 给前沿与方案留出余量；连接测试仍只发最小探针，不会因此产生额外费用。
+DEFAULT_MAX_TOKENS = 4096
 
 
 class OpenAICompatibleClient:
@@ -83,7 +90,15 @@ class OpenAICompatibleClient:
             if self._http_client is None:
                 http.close()
 
-        return data["choices"][0]["message"]["content"]
+        choice = data["choices"][0]
+        content = choice["message"]["content"]
+        # 不把「被长度上限截断」伪装成内容问题：显式失败，提示可重试 / 换模型。
+        if choice.get("finish_reason") == "length":
+            raise ModelCallError(
+                "模型输出达到长度上限被截断，未生成完整结果；请重试，"
+                "若反复出现请换用输出上限更高的模型"
+            )
+        return content
 
 
 class HttpModelClientFactory:

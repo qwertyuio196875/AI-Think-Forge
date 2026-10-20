@@ -13,7 +13,7 @@ from typing import Any
 import httpx
 import pytest
 
-from app.providers.model_client import ModelClient, ModelClientConfig
+from app.providers.model_client import ModelCallError, ModelClient, ModelClientConfig
 from app.providers.openai_client import HttpModelClientFactory, OpenAICompatibleClient
 
 
@@ -63,6 +63,8 @@ def test_complete_posts_openai_path_with_thinking_disabled() -> None:
     assert captured["body"]["model"] == "deepseek-flash"
     assert captured["body"]["messages"] == [{"role": "user", "content": "hi"}]
     assert captured["body"]["thinking"] == {"type": "disabled"}
+    # 前沿 JSON 可到 1.5k~2k tokens；1024 会截断成半截 JSON。
+    assert captured["body"]["max_tokens"] == 4096
     assert captured["auth"] == "Bearer sk-x"
 
 
@@ -90,6 +92,27 @@ def test_complete_honours_model_override() -> None:
     _make_client(handler).complete([{"role": "user", "content": "hi"}], model="deepseek-v4-pro")
 
     assert captured["body"]["model"] == "deepseek-v4-pro"
+
+
+def test_length_finish_reason_is_reported_as_truncation() -> None:
+    """`finish_reason=length` 明确报「截断」，不让上层误判成 JSON 结构写错。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {"content": '{"frontier": [{"title": "半截'},
+                        "finish_reason": "length",
+                    }
+                ]
+            },
+            request=request,
+        )
+
+    with pytest.raises(ModelCallError, match="长度上限"):
+        _make_client(handler).complete([{"role": "user", "content": "hi"}])
 
 
 def test_http_error_is_raised_not_swallowed() -> None:

@@ -113,8 +113,8 @@
             <div v-if="awaiting" class="note resume" :class="awaiting === 'deleted' ? 'warn' : 'info'">
               <el-icon class="ico"><InfoFilled /></el-icon>
               <div class="note-body">
-                <b>续作 · {{ awaitingLabel(awaiting) }}</b>
-                <span>{{ awaitingResumeHint(awaiting) }}</span>
+                <b>续作 · {{ resumeLabel }}</b>
+                <span>{{ resumeHint }}</span>
               </div>
             </div>
 
@@ -128,7 +128,11 @@
             <div v-if="dialogue.rounds.length === 0 && !plan" class="note info">
               <el-icon class="ico"><InfoFilled /></el-icon>
               <div class="note-body">
-                <span>该任务还没有拷问轮次。点「新任务」或在输入框写一句想法即可发起第一轮。</span>
+                <b>该任务还没有拷问轮次</b>
+                <span v-if="dialogue.seed_input">
+                  首轮提问没有成功生成（模型调用失败或输出被截断）；种子输入已保留，可直接重试发起第一轮。
+                </span>
+                <span v-else>点「新任务」或在输入框写一句想法即可发起第一轮。</span>
               </div>
             </div>
 
@@ -248,8 +252,10 @@
 
             <!-- 重载后已到“全答完但未推进”的兜底入口 -->
             <div v-if="showAdvance" class="round-advance">
-              <el-button type="primary" :loading="advancing" @click="doAdvance">推进下一轮 / 收敛</el-button>
-              <span class="xs muted">本轮已答完，据此重新计算前沿，或收敛为结构化方案</span>
+              <el-button type="primary" :loading="advancing" @click="doAdvance">
+                {{ advanceActionLabel }}
+              </el-button>
+              <span class="xs muted">{{ advanceActionHint }}</span>
             </div>
 
             <!-- 收敛 + 结构化方案 + 待确认事项 + 修订 + 确认闸门 -->
@@ -639,13 +645,33 @@ const canSubmit = computed(() => {
   return r.frontier.every((_, qi) => skippedQ.value.includes(qi) || (drafts.value[qi] || '').trim().length > 0)
 })
 
+const canRetryFirstRound = computed(
+  () =>
+    isChat.value &&
+    dialogueState.value === 'ready' &&
+    !!dialogue.value &&
+    !plan.value &&
+    dialogue.value.rounds.length === 0 &&
+    !!(dialogue.value.seed_input || '').trim()
+)
+
 const showAdvance = computed(
   () =>
     dialogueState.value === 'ready' &&
     !!dialogue.value &&
     !openRound.value &&
     !plan.value &&
-    dialogue.value.rounds.length > 0
+    (dialogue.value.rounds.length > 0 || canRetryFirstRound.value)
+)
+
+/** 首轮失败（只有种子、没有轮次）时，推进语义是「重试发起第一轮」。 */
+const advanceActionLabel = computed(() =>
+  canRetryFirstRound.value ? '重试发起第一轮' : '推进下一轮 / 收敛'
+)
+const advanceActionHint = computed(() =>
+  canRetryFirstRound.value
+    ? '种子输入已保留；上次首轮提问没有成功生成，点此重新生成前沿问题'
+    : '本轮已答完，据此重新计算前沿，或收敛为结构化方案'
 )
 
 const settledCount = computed(() => {
@@ -680,6 +706,22 @@ const headSubtitle = computed(() => {
     return `创建于 ${formatDateTime(activeTask.value.created_at)} · 状态每轮自动保存，重启后可继续`
   }
   return '把模糊想法经拷问收敛为确认后的结构化方案，再生成成品'
+})
+
+/** 续作提示：只有种子、没有轮次时不能说「本轮已答」，要如实指向重试。 */
+const resumeLabel = computed(() => {
+  if (!awaiting.value) return ''
+  if (awaiting.value === 'advance' && (dialogue.value?.rounds.length ?? 0) === 0) {
+    return '首轮未生成 · 待重试'
+  }
+  return awaitingLabel(awaiting.value)
+})
+const resumeHint = computed(() => {
+  if (!awaiting.value) return ''
+  if (awaiting.value === 'advance' && (dialogue.value?.rounds.length ?? 0) === 0) {
+    return '种子输入已保留；点下方「重试发起第一轮」重新生成前沿问题。'
+  }
+  return awaitingResumeHint(awaiting.value)
 })
 
 /** 模型选择器旁的一句说明：只讲已实现的覆盖范围。 */
@@ -1101,12 +1143,15 @@ async function submitSkipAll(): Promise<void> {
 
 async function doAdvance(): Promise<void> {
   if (advancing.value) return
+  const retryingFirstRound = canRetryFirstRound.value
   advancing.value = true
   try {
     const converged = await advanceAndRefresh()
-    ElMessage.success(converged ? '拷问已收敛' : '已推进到下一轮')
+    ElMessage.success(
+      converged ? '拷问已收敛' : retryingFirstRound ? '已生成第一轮前沿问题' : '已推进到下一轮'
+    )
   } catch (err) {
-    ElMessage.error(describeFlowError(err, '推进'))
+    ElMessage.error(describeFlowError(err, retryingFirstRound ? '重试首轮' : '推进'))
   } finally {
     advancing.value = false
   }
