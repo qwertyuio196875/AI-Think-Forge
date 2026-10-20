@@ -75,7 +75,14 @@ class _ScriptedClient:
         self.chunk_calls = 0
         self.reduce_calls = 0
 
-    def complete(self, messages: list[dict], *, model: str | None = None) -> str:
+    def complete(
+        self,
+        messages: list[dict],
+        *,
+        model: str | None = None,
+        max_tokens: int | None = None,
+        timeout: float | None = None,
+    ) -> str:
         user_content = messages[-1]["content"]
         if "这是第" in user_content:
             self.chunk_calls += 1
