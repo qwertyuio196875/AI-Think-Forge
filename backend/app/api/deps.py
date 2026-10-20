@@ -12,6 +12,7 @@ from fastapi import Depends, Request
 
 from app.db.analysis_repository import AnalysisRepository
 from app.db.generation_repository import GenerationRepository
+from app.db.knowledge_repository import KnowledgeRepository
 from app.db.message_repository import MessageRepository
 from app.db.open_item_repository import OpenItemRepository
 from app.db.plan_repository import PlanRepository
@@ -94,6 +95,11 @@ def get_summary_deliverable_repository(
     return SummaryDeliverableRepository(db_path)
 
 
+def get_knowledge_repository(db_path: str = Depends(get_db_path)) -> KnowledgeRepository:
+    """知识库仓库依赖（复用来源 / 文档 / 分块三表，只认不隶属任务的资料）。"""
+    return KnowledgeRepository(db_path)
+
+
 def get_settings_repository(db_path: str = Depends(get_db_path)) -> SettingsRepository:
     """应用设置仓库依赖（key-value）。"""
     return SettingsRepository(db_path)
@@ -141,6 +147,7 @@ AnalysisRepositoryDep = Annotated[AnalysisRepository, Depends(get_analysis_repos
 SummaryDeliverableRepositoryDep = Annotated[
     SummaryDeliverableRepository, Depends(get_summary_deliverable_repository)
 ]
+KnowledgeRepositoryDep = Annotated[KnowledgeRepository, Depends(get_knowledge_repository)]
 SettingsRepositoryDep = Annotated[SettingsRepository, Depends(get_settings_repository)]
 DataDirDep = Annotated[str, Depends(get_data_dir)]
 TemplatesDirDep = Annotated[str, Depends(get_templates_dir)]
