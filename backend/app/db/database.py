@@ -88,6 +88,36 @@ CREATE TABLE IF NOT EXISTS plans (
 
 CREATE INDEX IF NOT EXISTS idx_plans_task ON plans (task_id, id);
 
+-- 成品章节（规格 §4；工单 7 / ADR-0006）：成品正文的章，一章一行。
+-- 唯一真源：只从方案「章节」一节的条目切分而来（`app.grilling.plan_sections`），
+-- **不是**方案里的 `##` 分节——方案分节 ≠ 成品章节（GLOSSARY 与 ADR-0006）。
+-- - seq：序号（按方案条目行序，从 1 开始）；与 plan_id 组成唯一键「方案 + 序号」；
+-- - target_length：方案给的建议字数（旧格式方案可能为 NULL，下游按缺省权重处理）；
+-- - content_md：已写正文（填充阶段写入）；字数**不落列**，读时用 `app.hanzi.count_hanzi`
+--   现算——落一份缓存列就等于多一套口径，违反「计量函数是唯一入口」；
+-- - status：pending（待写）/ completed（已完成）/ failed（失败）；
+-- - completed_at：该章完成时刻（未完成为 NULL）。
+-- 纪律：清单只读，**不提供**改名 / 排序 / 增删章节（ADR-0006 的决定，不是遗漏）；
+-- 方案修订或重复确认后按标题匹配重建，匹配不上的旧章节一律废弃。
+CREATE TABLE IF NOT EXISTS plan_sections (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id       INTEGER NOT NULL REFERENCES tasks(id),
+    plan_id       INTEGER NOT NULL REFERENCES plans(id),
+    seq           INTEGER NOT NULL,
+    title         TEXT NOT NULL,
+    key_points    TEXT NOT NULL DEFAULT '',
+    target_length INTEGER,
+    content_md    TEXT NOT NULL DEFAULT '',
+    status        TEXT NOT NULL DEFAULT 'pending'
+                  CHECK (status IN ('pending', 'completed', 'failed')),
+    completed_at  TEXT,
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_sections_seq ON plan_sections (plan_id, seq);
+CREATE INDEX IF NOT EXISTS idx_plan_sections_task ON plan_sections (task_id, seq);
+
 -- 待确认事项（规格 §4 术语「待确认事项」；工单 13）：系统标记的、尚未决定的关键信息清单。
 -- - round_no：来源轮次（该条目由哪一轮的「暂时跳过」产生），供前端回指；
 -- - text：条目内容（跳过的前沿问题标题）；
@@ -275,6 +305,35 @@ CREATE TABLE IF NOT EXISTS summary_deliverables (
 
 CREATE INDEX IF NOT EXISTS idx_summary_deliverables_source
     ON summary_deliverables (source_id, id);
+
+-- 成品章节（规格 §4；工单 7 / ADR-0006）：一章一行，是填充、字数控制、页面规划共同
+-- 依赖的唯一真源。切分来源只有方案「章节」那一节的条目——方案分节 ≠ 成品章节。
+-- - 唯一键（plan_id, seq）：章节的一等身份是「哪份方案的哪一章」，对外寻址不用自增 id，
+--   故方案修订重建时序号可以整体搬迁；
+-- - target_length：方案给的建议字数（v3 方案才有；旧格式方案为 NULL，不猜默认值）；
+-- - content_md：本章已写正文；字数**不落列**，读时按唯一入口 app.hanzi.count_hanzi 现算，
+--   避免「改正文忘了改字数列」的死数据；
+-- - status：待写 / 已完成 / 失败（机器值 pending / completed / failed）；
+-- - title 不设唯一：方案里允许两章重名（真实场景有），键只有（方案 + 序号）。
+CREATE TABLE IF NOT EXISTS plan_sections (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id       INTEGER NOT NULL REFERENCES tasks(id),
+    plan_id       INTEGER NOT NULL REFERENCES plans(id),
+    seq           INTEGER NOT NULL,
+    title         TEXT NOT NULL,
+    key_points    TEXT NOT NULL DEFAULT '',
+    target_length INTEGER,
+    content_md    TEXT NOT NULL DEFAULT '',
+    status        TEXT NOT NULL DEFAULT 'pending'
+                  CHECK (status IN ('pending', 'completed', 'failed')),
+    completed_at  TEXT,
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    UNIQUE (plan_id, seq)
+);
+
+CREATE INDEX IF NOT EXISTS idx_plan_sections_plan ON plan_sections (plan_id, seq);
+CREATE INDEX IF NOT EXISTS idx_plan_sections_task ON plan_sections (task_id, plan_id, seq);
 """
 
 
