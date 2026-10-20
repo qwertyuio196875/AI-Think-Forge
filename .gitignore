@@ -1,0 +1,21 @@
+# 运行时数据（SQLite、上传件、生成产物）—— 不入库
+/data/
+/templates/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Node / 前端构建兜底（frontend/.gitignore 已覆盖大部分）
+node_modules/
+dist/
+
+# 工具与本地环境
+.openchamber/
+.slim/
+.env
+*.local

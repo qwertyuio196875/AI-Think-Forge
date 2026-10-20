@@ -1,0 +1,54 @@
+# ThinkForge 本地工作台 —— 项目与工具配置（唯一依赖来源）
+#
+# 依赖只在此处记录，不另建 requirements.txt，避免两套并存。
+# 运行时依赖在 [project].dependencies，开发/测试依赖在 [project.optional-dependencies].dev。
+
+[project]
+name = "thinkforge"
+version = "0.1.0"
+description = "运行在个人 Windows 上的 AI 阅读与内容创作工作台（本地 FastAPI 后端）"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    # httpx 由 TB-1 的真实 OpenAI 兼容客户端使用（httpx 直连，不引入 openai SDK）。
+    "httpx>=0.27",
+    # keyring：密钥存 Windows 凭据管理器，SQLite 不落密钥。
+    "keyring>=25.4",
+    # langgraph：拷问流程的状态机（规格 §2）。
+    "langgraph>=1.2",
+    # python-docx：Word 成品（读取用户模板 + 写入 + 回读完整性检查，见 ADR-0003）。
+    "python-docx>=1.1",
+    # charset-normalizer：TXT/MD 编码兜底探测（先严格解码 utf-8-sig / gb18030）。
+    "charset-normalizer>=3.3",
+    # markdown-it-py：MD 标题走 token 流，避免正则把代码围栏里的 `#` 误判为标题。
+    "markdown-it-py>=3.0",
+    # pypdf / python-pptx：PDF 正文与标题、PPTX 标题 / 正文 / 表格（均不做 OCR）。
+    "pypdf>=5.0",
+    "python-pptx>=1.0",
+    # python-multipart：FastAPI 解析 multipart 上传（资料文件 / 模板上传入口）。
+    "python-multipart>=0.0.9",
+    # trafilatura：URL 来源的正文提取（过滤导航 / 广告 / 侧栏，只留主正文）。
+    "trafilatura>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.7",
+]
+
+[tool.pytest.ini_options]
+# 让 `import app.*` 可用：把 backend/ 加入导入路径，测试可从仓库根直接运行。
+pythonpath = ["backend"]
+testpaths = ["backend/tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint.isort]
+# `app` 是后端应用包（位于 backend/），按第一方导入排序。
+known-first-party = ["app"]
