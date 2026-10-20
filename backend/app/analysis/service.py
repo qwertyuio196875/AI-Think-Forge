@@ -21,6 +21,7 @@ from app.analysis.prompts import (
     render_chunk_messages,
     render_summary_messages,
 )
+from app.hanzi import count_hanzi, is_hanzi
 from app.providers.model_client import complete_text
 from app.providers.tiered_client import (
     SUMMARY_PROVIDER_KIND,
@@ -141,22 +142,6 @@ def analyze_chunks(
         chunk_count=total,
         truncated=truncated,
         resolved=resolved,
-    )
-
-
-def count_hanzi(text: str) -> int:
-    """统计汉字数量（含扩展 A / 兼容区 / 扩展 B+；不含标点与西文）。"""
-    return sum(1 for character in text if is_hanzi(character))
-
-
-def is_hanzi(character: str) -> bool:
-    """单个字符是否为汉字。"""
-    codepoint = ord(character)
-    return (
-        0x3400 <= codepoint <= 0x4DBF
-        or 0x4E00 <= codepoint <= 0x9FFF
-        or 0xF900 <= codepoint <= 0xFAFF
-        or 0x20000 <= codepoint <= 0x2FA1F
     )
 
 
