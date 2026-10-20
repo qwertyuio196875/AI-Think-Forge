@@ -312,34 +312,6 @@ CREATE TABLE IF NOT EXISTS summary_deliverables (
 CREATE INDEX IF NOT EXISTS idx_summary_deliverables_source
     ON summary_deliverables (source_id, id);
 
--- 成品章节（规格 §4；工单 7 / ADR-0006）：一章一行，是填充、字数控制、页面规划共同
--- 依赖的唯一真源。切分来源只有方案「章节」那一节的条目——方案分节 ≠ 成品章节。
--- - 唯一键（plan_id, seq）：章节的一等身份是「哪份方案的哪一章」，对外寻址不用自增 id，
---   故方案修订重建时序号可以整体搬迁；
--- - target_length：方案给的建议字数（v3 方案才有；旧格式方案为 NULL，不猜默认值）；
--- - content_md：本章已写正文；字数**不落列**，读时按唯一入口 app.hanzi.count_hanzi 现算，
---   避免「改正文忘了改字数列」的死数据；
--- - status：待写 / 已完成 / 失败（机器值 pending / completed / failed）；
--- - title 不设唯一：方案里允许两章重名（真实场景有），键只有（方案 + 序号）。
-CREATE TABLE IF NOT EXISTS plan_sections (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    task_id       INTEGER NOT NULL REFERENCES tasks(id),
-    plan_id       INTEGER NOT NULL REFERENCES plans(id),
-    seq           INTEGER NOT NULL,
-    title         TEXT NOT NULL,
-    key_points    TEXT NOT NULL DEFAULT '',
-    target_length INTEGER,
-    content_md    TEXT NOT NULL DEFAULT '',
-    status        TEXT NOT NULL DEFAULT 'pending'
-                  CHECK (status IN ('pending', 'completed', 'failed')),
-    completed_at  TEXT,
-    created_at    TEXT NOT NULL,
-    updated_at    TEXT NOT NULL,
-    UNIQUE (plan_id, seq)
-);
-
-CREATE INDEX IF NOT EXISTS idx_plan_sections_plan ON plan_sections (plan_id, seq);
-CREATE INDEX IF NOT EXISTS idx_plan_sections_task ON plan_sections (task_id, plan_id, seq);
 """
 
 
