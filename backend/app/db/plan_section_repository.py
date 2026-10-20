@@ -46,12 +46,15 @@ class PlanSectionRepository:
         完整的某一版目录。
         """
         now = utcnow_iso()
-        # 同名多行时只保留第一条：唯一键是「方案 + 序号」，标题不是键，避免二选一的歧义。
-        keep: dict[str, dict] = {}
-        for row in self.list_for_plan(plan_id):
-            keep.setdefault(str(row["title"]), row)
-
         with connect(self._db_path) as connection:
+            # 旧行在同一连接里读，避免「读旧行」与「整表替换」之间被别人插进一次写入。
+            # 同名多行时只保留第一条：唯一键是「方案 + 序号」，标题不是键，避免二选一的歧义。
+            keep: dict[str, dict] = {}
+            for row in connection.execute(
+                "SELECT * FROM plan_sections WHERE plan_id = ? ORDER BY seq ASC", (plan_id,)
+            ).fetchall():
+                keep.setdefault(str(row["title"]), dict(row))
+
             connection.execute("DELETE FROM plan_sections WHERE plan_id = ?", (plan_id,))
             for item in sections:
                 matched = keep.get(str(item["title"]))
