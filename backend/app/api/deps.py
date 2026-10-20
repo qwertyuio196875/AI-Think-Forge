@@ -18,6 +18,7 @@ from app.db.message_repository import MessageRepository
 from app.db.open_item_repository import OpenItemRepository
 from app.db.plan_repository import PlanRepository
 from app.db.plan_revision_repository import PlanRevisionRepository
+from app.db.plan_section_repository import PlanSectionRepository
 from app.db.provider_repository import ProviderRepository
 from app.db.settings_repository import SettingsRepository
 from app.db.summary_deliverable_repository import SummaryDeliverableRepository
@@ -73,6 +74,13 @@ def get_open_item_repository(db_path: str = Depends(get_db_path)) -> OpenItemRep
 def get_plan_revision_repository(db_path: str = Depends(get_db_path)) -> PlanRevisionRepository:
     """方案版本记录仓库依赖（对话式修订留痕，旧版本不可丢）。"""
     return PlanRevisionRepository(db_path)
+
+
+def get_plan_section_repository(
+    db_path: str = Depends(get_db_path),
+) -> PlanSectionRepository:
+    """成品章节仓库依赖（一章一行，唯一键「方案 + 序号」）。"""
+    return PlanSectionRepository(db_path)
 
 
 def get_generation_repository(db_path: str = Depends(get_db_path)) -> GenerationRepository:
@@ -154,6 +162,9 @@ PlanRepositoryDep = Annotated[PlanRepository, Depends(get_plan_repository)]
 OpenItemRepositoryDep = Annotated[OpenItemRepository, Depends(get_open_item_repository)]
 PlanRevisionRepositoryDep = Annotated[
     PlanRevisionRepository, Depends(get_plan_revision_repository)
+]
+PlanSectionRepositoryDep = Annotated[
+    PlanSectionRepository, Depends(get_plan_section_repository)
 ]
 GenerationRepositoryDep = Annotated[
     GenerationRepository, Depends(get_generation_repository)
