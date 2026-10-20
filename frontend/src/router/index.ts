@@ -21,6 +21,13 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '资料分析' }
       },
       {
+        // 知识库（工单 19）：跨任务复用的长期资料，上传即入库。
+        path: 'knowledge',
+        name: 'knowledge',
+        component: () => import('../views/KnowledgeView.vue'),
+        meta: { title: '知识库' }
+      },
+      {
         path: 'history',
         name: 'history',
         component: () => import('../views/HistoryView.vue'),

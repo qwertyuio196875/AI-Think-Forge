@@ -62,10 +62,18 @@ class ProviderBackedModelClient:
             provider_id=provider_id,
         )
 
-    def complete(self, messages: list[dict], *, model: str | None = None) -> str:
+    def complete(
+        self,
+        messages: list[dict],
+        *,
+        model: str | None = None,
+        max_tokens: int | None = None,
+        timeout: float | None = None,
+    ) -> str:
         """解析 provider 配置与密钥，构造真实客户端并委托调用。
 
         `model` 显式传入时以调用方为准，否则用 provider 的 `model_name`。
+        `max_tokens` / `timeout` 原样透传给真实客户端（`None` 即其默认值）。
         """
         if self.provider_id is not None:
             provider = self.provider_repository.get_by_id(self.provider_id)
@@ -83,4 +91,6 @@ class ProviderBackedModelClient:
             model_name=model or provider["model_name"],
         )
         client = self.factory.create(config, api_key=self.key_store.get_key(provider["name"]))
-        return client.complete(messages, model=model)
+        return client.complete(
+            messages, model=model, max_tokens=max_tokens, timeout=timeout
+        )

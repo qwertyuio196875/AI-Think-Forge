@@ -51,8 +51,22 @@ class ScriptedModelClient:
         self._sequence_index = 0
         self.calls: list[dict] = []
 
-    def complete(self, messages: list[dict], *, model: str | None = None) -> str:
-        self.calls.append({"messages": messages, "model": model})
+    def complete(
+        self,
+        messages: list[dict],
+        *,
+        model: str | None = None,
+        max_tokens: int | None = None,
+        timeout: float | None = None,
+    ) -> str:
+        self.calls.append(
+            {
+                "messages": messages,
+                "model": model,
+                "max_tokens": max_tokens,
+                "timeout": timeout,
+            }
+        )
         if self._error is not None:
             raise self._error
         if self._sequence:

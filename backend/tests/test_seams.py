@@ -15,7 +15,14 @@ from app.providers.url_fetcher import FetchedPage
 
 
 class _FakeModelClient:
-    def complete(self, messages: list[dict], *, model: str | None = None) -> str:
+    def complete(
+        self,
+        messages: list[dict],
+        *,
+        model: str | None = None,
+        max_tokens: int | None = None,
+        timeout: float | None = None,
+    ) -> str:
         return "fake-model-response"
 
 
@@ -82,3 +89,13 @@ def test_url_fetcher_can_be_overridden(app) -> None:
         body = client.get("/api/_seam_probe").json()
 
     assert body["url_fetcher"] == "_FakeUrlFetcher"
+
+
+def test_seam_fake_model_client_accepts_per_call_parameters() -> None:
+    """协议扩容后，接缝替身也得接受按次参数，否则替身会先在测试里崩掉（#3）。"""
+    assert (
+        _FakeModelClient().complete(
+            [{"role": "user", "content": "hi"}], max_tokens=8192, timeout=180.0
+        )
+        == "fake-model-response"
+    )

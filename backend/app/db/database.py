@@ -163,14 +163,22 @@ CREATE TABLE IF NOT EXISTS templates (
 -- - kind：file（本地上传）/ url（TB-9；本单只落 file）；
 -- - ref：文件类为 `data/` 下的相对路径（带唯一前缀），URL 类为原始地址；
 -- - meta_json：原始文件名 / 大小 / 扩展名等非结构化元信息；
--- - task_id：该来源所属的资料分析任务（任务状态与历史列表复用既有 `tasks`）。
+-- - task_id：该来源所属的资料分析任务（任务状态与历史列表复用既有 `tasks`）；
+--   **为空即知识库资料**（工单 19 / ADR-0005：复用本表族，不建平行表）；
+-- - index_status / index_message / indexed_at：知识库资料的索引状态
+--   （stored 已入库 / indexing 索引中 / failed 索引失败）与失败原因。
+--   分析管线的来源也带默认值，但知识库接口只读 `task_id IS NULL`，两边不串味。
 CREATE TABLE IF NOT EXISTS sources (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    kind       TEXT NOT NULL CHECK (kind IN ('file', 'url')),
-    ref        TEXT NOT NULL,
-    meta_json  TEXT NOT NULL DEFAULT '{}',
-    task_id    INTEGER REFERENCES tasks(id),
-    created_at TEXT NOT NULL
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind          TEXT NOT NULL CHECK (kind IN ('file', 'url')),
+    ref           TEXT NOT NULL,
+    meta_json     TEXT NOT NULL DEFAULT '{}',
+    task_id       INTEGER REFERENCES tasks(id),
+    index_status  TEXT NOT NULL DEFAULT 'stored'
+                  CHECK (index_status IN ('stored', 'indexing', 'failed')),
+    index_message TEXT,
+    indexed_at    TEXT,
+    created_at    TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_sources_task ON sources (task_id, id);
@@ -205,8 +213,9 @@ CREATE TABLE IF NOT EXISTS documents (
 
 CREATE INDEX IF NOT EXISTS idx_documents_source ON documents (source_id, id);
 
--- 文本分块（规格 §4；工单 16）：分析管线的分块，含位置 locator。
--- 注意：这是「分块 → 逐块分析 → 综合」的分析管线数据，**不是 RAG 索引**（ADR-0002）。
+-- 文本分块（规格 §4；工单 16 / 19）：分析管线与知识库共用的分块，含位置 locator。
+-- 注意：ADR-0005 起分块**同时**是知识库检索的粒度（`embeddings.chunk_id` 指向本表），
+-- 分块参数只有一套（`analysis/chunking.py`：1200 / 1800，按标题边界），不另造分块器。
 CREATE TABLE IF NOT EXISTS document_chunks (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     document_id  INTEGER NOT NULL REFERENCES documents(id),
@@ -301,6 +310,12 @@ MIGRATION_COLUMNS: dict[str, dict[str, str]] = {
     "tasks": {"deleted_at": "TEXT", "provider_id": "INTEGER"},
     # TB-8：文档补「解析器标识」（pypdf / python-pptx / python-docx / plain-text）。
     "documents": {"parser": "TEXT"},
+    # 工单 19：知识库资料的索引状态（来源表复用，靠 task_id 为空判定归属）。
+    "sources": {
+        "index_status": "TEXT NOT NULL DEFAULT 'stored'",
+        "index_message": "TEXT",
+        "indexed_at": "TEXT",
+    },
 }
 
 

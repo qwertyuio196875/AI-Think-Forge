@@ -1113,6 +1113,150 @@ export function sendToCreation(
   })
 }
 
+/* ============================================================
+   知识库（工单 19 / ADR-0005）—— 上传即入库、清单、删除、重建索引
+   权威来源：backend/app/models/knowledge.py、routes/knowledge.py。
+   术语：知识库 / 索引状态（已入库 / 索引中 / 索引失败）。
+   归属约定：知识库资料复用资料分析的来源 / 文档 / 分块三表，以「不隶属任何任务」
+   （task_id IS NULL）表示；因此这里没有 task_id 字段，也不会出现在资料分析清单里。
+   嵌入与检索属工单 20 / 21：本层只读状态，状态本身已经能表达「索引中」。
+   ============================================================ */
+
+/**
+ * 知识库资料（清单条目）。
+ * - index_status：`stored` 已入库 / `indexing` 索引中 / `failed` 索引失败；
+ * - index_message：失败原因（解析失败、未识别到文本、重建索引失败等），成功时为 null；
+ * - chunk_count 为真实落库分块数，0 表示没有切出可用内容（配合状态一起看）。
+ */
+export interface KnowledgeSourceItem {
+  source_id: number
+  name: string
+  kind: string
+  ref: string
+  size: number | null
+  document_id: number | null
+  parse_status: string | null
+  parse_message: string | null
+  chunk_count: number
+  index_status: string
+  index_status_label: string
+  index_message: string | null
+  indexed_at: string | null
+  created_at: string
+}
+
+/** GET /api/knowledge/sources 返回体（按 id 倒序）。 */
+export interface KnowledgeSourceListResponse {
+  items: KnowledgeSourceItem[]
+  total: number
+  limit: number
+  offset: number
+}
+
+/** 上传结果：失败（解析不出内容）同样是 201，item.index_status 为 failed。 */
+export interface KnowledgeUploadResponse {
+  item: KnowledgeSourceItem
+  message: string | null
+}
+
+/** 删除结果：连带清掉的分块数，供界面回显真实影响。 */
+export interface KnowledgeDeleteResponse {
+  source_id: number
+  deleted_chunk_count: number
+}
+
+/** 重建索引的单条结果（逐条回报，单份失败不影响其他资料）。 */
+export interface KnowledgeReindexItem {
+  source_id: number
+  index_status: string
+  index_status_label: string
+  message: string | null
+}
+
+/** POST /api/knowledge/reindex 返回体。 */
+export interface KnowledgeReindexResponse {
+  items: KnowledgeReindexItem[]
+  total: number
+}
+
+/**
+ * 上传资料入知识库（multipart 字段 file）：走 XHR 以便回报真实上传进度。
+ * 支持 TXT / MD / DOCX / PDF / PPTX（与资料分析同一白名单 + 50MB 上限）。
+ * 失败语义与 request() 一致：网络失败 → BackendUnavailableError；非 2xx → ApiHttpError。
+ */
+export function uploadKnowledgeSource(
+  file: File,
+  onProgress?: (percent: number) => void
+): Promise<KnowledgeUploadResponse> {
+  return new Promise((resolve, reject) => {
+    const body = new FormData()
+    body.append('file', file, file.name)
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', `${API_BASE_URL}/knowledge/sources`)
+    xhr.responseType = 'text'
+    xhr.upload.onprogress = (event) => {
+      if (onProgress && event.lengthComputable) {
+        onProgress(Math.min(100, Math.round((event.loaded / event.total) * 100)))
+      }
+    }
+    xhr.onerror = () => reject(new BackendUnavailableError())
+    xhr.ontimeout = () => reject(new Error('上传超时，请检查后端是否在运行后重试'))
+    xhr.onload = () => {
+      let payload: unknown = null
+      try {
+        payload = JSON.parse(xhr.responseText)
+      } catch {
+        /* 非 JSON 响应体，保持 null */
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(payload as KnowledgeUploadResponse)
+        return
+      }
+      const detail =
+        payload &&
+        typeof payload === 'object' &&
+        'detail' in payload &&
+        typeof (payload as { detail?: unknown }).detail === 'string'
+          ? (payload as { detail: string }).detail
+          : ''
+      reject(new ApiHttpError(xhr.status, xhr.statusText || '', detail))
+    }
+    xhr.send(body)
+  })
+}
+
+/** 知识库清单：GET /api/knowledge/sources?limit=&offset=（按 id 倒序）。 */
+export function listKnowledgeSources(params: {
+  limit?: number
+  offset?: number
+} = {}): Promise<KnowledgeSourceListResponse> {
+  const query = new URLSearchParams()
+  if (params.limit != null) query.set('limit', String(params.limit))
+  if (params.offset != null) query.set('offset', String(params.offset))
+  const qs = query.toString()
+  return request<KnowledgeSourceListResponse>(
+    qs ? `/knowledge/sources?${qs}` : '/knowledge/sources'
+  )
+}
+
+/** 删除知识库资料：DELETE /api/knowledge/sources/{id}（连带清掉文档、分块与嵌入）。 */
+export function deleteKnowledgeSource(sourceId: number): Promise<KnowledgeDeleteResponse> {
+  return request<KnowledgeDeleteResponse>(`/knowledge/sources/${sourceId}`, {
+    method: 'DELETE'
+  })
+}
+
+/**
+ * 重建索引：POST /api/knowledge/reindex（不传 source_id 表示全部资料）。
+ * 逐条回报状态；单份失败不影响其他资料。
+ */
+export function reindexKnowledge(sourceId?: number): Promise<KnowledgeReindexResponse> {
+  return request<KnowledgeReindexResponse>('/knowledge/reindex', {
+    method: 'POST',
+    body: JSON.stringify(sourceId != null ? { source_id: sourceId } : {})
+  })
+}
+
 export default {
   API_BASE_URL,
   checkHealth,
@@ -1161,5 +1305,9 @@ export default {
   getAnalysisSummary,
   createSummaryWord,
   summaryWordDownloadUrl,
-  sendToCreation
+  sendToCreation,
+  uploadKnowledgeSource,
+  listKnowledgeSources,
+  deleteKnowledgeSource,
+  reindexKnowledge
 }
