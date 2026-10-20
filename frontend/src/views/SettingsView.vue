@@ -353,12 +353,13 @@
     </div>
 
     <!-- ============ 新增 / 编辑 对话框 ============ -->
-    <el-dialog
+    <ParamDialog
       v-model="dialogVisible"
       :title="editingId ? '编辑模型配置' : '新增模型配置'"
       width="560px"
-      :close-on-click-modal="false"
-      append-to-body
+      confirm-text="保存配置"
+      :loading="formSaving"
+      @confirm="saveProvider"
     >
       <el-form label-position="top" @submit.prevent>
         <p class="hint" style="margin-top: 0">
@@ -400,11 +401,7 @@
           </p>
         </el-form-item>
       </el-form>
-      <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="formSaving" @click="saveProvider">保存配置</el-button>
-      </template>
-    </el-dialog>
+    </ParamDialog>
   </section>
 </template>
 
@@ -445,6 +442,7 @@ import {
   type Template
 } from '../api/client'
 import { describeConnection, kindLabel, type ConnectionReport } from '../utils/providerMeta'
+import ParamDialog from '../components/ParamDialog.vue'
 
 type ListState = 'loading' | 'ready' | 'error'
 const providers = ref<Provider[]>([])
