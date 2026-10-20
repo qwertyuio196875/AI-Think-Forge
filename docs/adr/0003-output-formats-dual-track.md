@@ -1,6 +1,8 @@
 # 0003. 输出格式双轨：首版 Word + 单文件 HTML，PPTX 推迟且与 OpenDesign 分道
 
-- 状态：已接受
+> **本决策的「PPTX 推迟至 v1.1」与「HTML deck 与 PPTX 分轨，互不转换」两条已被 [ADR-0004](0004-ppt-via-html-page-screenshots.md) 取代**：PPT 改走「HTML deck 逐页截图装配 .pptx」。其余结论（HTML 为一等产物、从 OpenDesign 主题族适配、内联字体换离线）继续有效。以下内容保留为历史记录。
+
+- 状态：部分被 ADR-0004 取代
 - 日期：2026-10-19
 
 ## 背景
