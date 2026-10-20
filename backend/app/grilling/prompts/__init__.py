@@ -24,7 +24,10 @@ from app.grilling.open_items import SKIP_ANSWER_MARKER
 MAX_FRONTIER_QUESTIONS = 5
 
 GRILLING_PROMPT_VERSION = "grilling-v2"
-PLAN_PROMPT_VERSION = "plan-v2"
+# plan-v3（工单 6 / ADR-0006）：把「章节」一节固定为机器可解析的条目格式
+# （每章一行：标题 + 要点 + 建议字数），成品章节据此确定性切分。
+# 旧格式方案不会被拒——解析方在 `app.grilling.plan_sections` 里降级处理。
+PLAN_PROMPT_VERSION = "plan-v3"
 REVISION_PROMPT_VERSION = "revision-v1"
 
 # 版本 → 资产文件名。旧版本保留可读（版本化资产是「旧版本不丢」的留痕），
@@ -33,7 +36,8 @@ _ASSET_BY_VERSION = {
     "grilling-v1": "grilling_v1.md",
     GRILLING_PROMPT_VERSION: "grilling_v2.md",
     "plan-v1": "plan_v1.md",
-    PLAN_PROMPT_VERSION: "plan_v2.md",
+    "plan-v2": "plan_v2.md",
+    PLAN_PROMPT_VERSION: "plan_v3.md",
     REVISION_PROMPT_VERSION: "revision_v1.md",
 }
 
