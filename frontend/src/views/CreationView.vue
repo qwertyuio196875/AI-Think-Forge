@@ -479,9 +479,21 @@
           </button>
         </div>
 
-        <div v-if="!isChat" class="composer-opts">
-          <ModelSelect v-model="ideaProviderId" label="模型" default-label="跟随默认模型" />
-          <span class="xs muted">{{ ideaProviderHint }}</span>
+        <div class="composer-opts">
+          <ModelSelect
+            v-if="!isChat"
+            v-model="ideaProviderId"
+            label="模型"
+            default-label="跟随默认模型"
+          />
+          <ModelSelect
+            v-else
+            :model-value="chatProviderId"
+            label="本任务模型"
+            default-label="跟随默认模型"
+            @update:model-value="saveChatProvider"
+          />
+          <span class="xs muted">{{ isChat ? chatProviderHint : ideaProviderHint }}</span>
         </div>
 
         <div class="composer-hint">
@@ -535,6 +547,7 @@ import {
 } from '@element-plus/icons-vue'
 import {
   advanceGrilling,
+  ApiHttpError,
   BackendUnavailableError,
   confirmPlan as confirmPlanApi,
   getDialogue,
@@ -549,6 +562,7 @@ import {
   revisePlan,
   startGrillingTask,
   submitAnswers,
+  updateTaskModel,
   type Dialogue,
   type FrontierRound,
   type OpenItem,
@@ -597,6 +611,9 @@ const idea = ref('')
 const starting = ref(false)
 /** 发起创作时选定的任务级模型覆盖：null = 跟随默认档位（拷问 / 方案 / 修订都按它解析）。 */
 const ideaProviderId = ref<number | null>(null)
+/** 聊天态的任务级模型覆盖：与 `activeTask.provider_id` 同步，改这里只影响本任务。 */
+const chatProviderId = ref<number | null>(null)
+const savingChatProvider = ref(false)
 const drafts = ref<string[]>([])
 const skippedQ = ref<number[]>([])
 const ideaRef = ref<HTMLTextAreaElement | null>(null)
@@ -670,6 +687,22 @@ const ideaProviderHint = computed(() =>
   ideaProviderId.value === null
     ? '不指定模型：拷问、方案与修订按默认档位解析'
     : '本任务全程用这一个配置：拷问、方案与修订都读它，不改变设置页的全局默认'
+)
+
+/** 聊天态模型说明：讲清覆盖范围与「改这里不动全局默认」。 */
+const chatProviderHint = computed(() =>
+  chatProviderId.value === null
+    ? '不指定模型：本任务的拷问、方案与修订按默认档位解析'
+    : '本任务后续的拷问、方案与修订都读这个配置；不改变设置页的全局默认'
+)
+
+// 打开 / 切回任务时，用后端已保存的覆盖值回填；保存成功后也用响应同步。
+watch(
+  activeTask,
+  (task) => {
+    chatProviderId.value = task?.provider_id ?? null
+  },
+  { immediate: true }
 )
 
 type ChipType = 'primary' | 'success' | 'info' | 'warning'
@@ -843,6 +876,31 @@ async function startIdea(): Promise<void> {
     ElMessage.error(describeFlowError(err, '发起'))
   } finally {
     starting.value = false
+  }
+}
+
+/**
+ * 聊天态切换本任务模型（US23）。
+ *
+ * pin 的 provider 被删除后，这里仍可选「跟随默认模型」把覆盖清空，避免任务永久 502；
+ * 保存失败回退到上一个已确认值，不谎报已生效。
+ */
+async function saveChatProvider(providerId: number | null): Promise<void> {
+  const task = activeTask.value
+  if (!task || savingChatProvider.value) return
+  const previous = chatProviderId.value
+  chatProviderId.value = providerId
+  savingChatProvider.value = true
+  try {
+    const updated = await updateTaskModel(task.id, providerId)
+    activeTask.value = updated
+    items.value = items.value.map((item) => (item.id === updated.id ? updated : item))
+    ElMessage.success(providerId === null ? '已改为跟随默认模型' : '已切换本任务模型')
+  } catch (err) {
+    chatProviderId.value = previous
+    ElMessage.error(describeFlowError(err, '切换模型'))
+  } finally {
+    savingChatProvider.value = false
   }
 }
 
@@ -1109,13 +1167,14 @@ async function doResolve(item: OpenItem, status: ResolveStatus): Promise<void> {
 function describeFlowError(err: unknown, action: string): string {
   if (err instanceof BackendUnavailableError) return `后端未启动，${action}失败`
   const msg = (err as Error).message || ''
+  const detail = err instanceof ApiHttpError ? err.detail : ''
   if (isApiStatus(err, 502))
-    return '模型无法产出可用内容（前沿 / 方案 / 修订解析失败），请稍后重试或检查默认模型配置'
+    return detail || '模型无法产出可用内容（前沿 / 方案 / 修订解析失败），请稍后重试或检查模型配置'
   if (isApiStatus(err, 501)) return '方案已确认，但成品生成管线由 TB-5 / TB-6 落地'
-  if (isApiStatus(err, 422)) return '请求被拒绝：回答数量与问题数量不一致，或处置状态不合法'
-  if (isApiStatus(err, 404)) return '对应的轮次 / 方案 / 待确认事项不存在'
-  if (isApiStatus(err, 409)) return '生成闸门未放行：方案未确认或仍有未处置的待确认事项'
-  return `${action}失败：${msg}`
+  if (isApiStatus(err, 422)) return detail || '请求被拒绝：回答数量与问题数量不一致，或处置状态不合法'
+  if (isApiStatus(err, 404)) return detail || '对应的轮次 / 方案 / 待确认事项不存在'
+  if (isApiStatus(err, 409)) return detail || '生成闸门未放行：方案未确认或仍有未处置的待确认事项'
+  return detail ? `${action}失败：${detail}` : `${action}失败：${msg}`
 }
 
 function taskIdFromQuery(): number | null {
@@ -1786,7 +1845,7 @@ onMounted(() => {
   color: var(--text-4);
 }
 
-/* 发起创想旁的次级控件行（模型选择）：窄屏自动换行 */
+/* 底部次级控件行（发起态 / 聊天态的模型选择）：窄屏自动换行 */
 .composer-opts {
   display: flex;
   align-items: center;

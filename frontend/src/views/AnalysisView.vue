@@ -100,7 +100,7 @@
               <div class="url-row">
                 <el-input
                   v-model="urlInput"
-                  :disabled="uploading || fetching || analyzing"
+                  :disabled="uploading || fetching || analyzing || restoring"
                   placeholder="粘贴公开网页 URL，抓取正文后分析"
                   aria-label="公开网页 URL 地址"
                   @keydown.enter.prevent="submitUrl"
@@ -111,7 +111,7 @@
                   type="primary"
                   plain
                   :loading="fetching"
-                  :disabled="uploading || analyzing || !urlInput.trim()"
+                  :disabled="uploading || analyzing || restoring || !urlInput.trim()"
                   @click="submitUrl"
                 >
                   抓取
@@ -415,7 +415,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -749,7 +749,8 @@ function sourceIdFromQuery(): number | null {
 let restoreToken = 0
 
 async function restoreSource(sourceId: number): Promise<void> {
-  if (analyzing.value) return
+  // 上传 / 抓取 / 分析进行中不切回看：这两条管线没有 token，交叉回填会互相覆盖。
+  if (analyzing.value || uploading.value || fetching.value) return
   const token = ++restoreToken
   restoring.value = true
   restoredNote.value = ''
@@ -821,6 +822,9 @@ async function restoreSource(sourceId: number): Promise<void> {
 
 /** 离开回看态：清掉 query，回到可发起新分析的空态。 */
 function leaveRestore(): void {
+  // 让仍在途的回看响应失效：否则慢响应会在用户离开后把来源 / 总结重新写回界面。
+  restoreToken += 1
+  restoring.value = false
   restoredNote.value = ''
   current.value = null
   result.value = null
@@ -866,7 +870,7 @@ function openRecent(sourceId: number): void {
 /* ---------- 上传 ---------- */
 
 function openPicker(): void {
-  if (uploading.value || fetching.value || analyzing.value) return
+  if (uploading.value || fetching.value || analyzing.value || restoring.value) return
   fileRef.value?.click()
 }
 
@@ -877,7 +881,7 @@ function onPick(event: Event): void {
 }
 
 function onDragOver(): void {
-  if (!uploading.value && !fetching.value && !analyzing.value) dragging.value = true
+  if (!uploading.value && !fetching.value && !analyzing.value && !restoring.value) dragging.value = true
 }
 
 function onDrop(event: DragEvent): void {
@@ -887,7 +891,7 @@ function onDrop(event: DragEvent): void {
 
 async function handleFiles(files: FileList | File[]): Promise<void> {
   const list = Array.from(files)
-  if (!list.length || uploading.value || fetching.value || analyzing.value) return
+  if (!list.length || uploading.value || fetching.value || analyzing.value || restoring.value) return
   rejectNote.value = ''
 
   const file = list[0]
@@ -933,7 +937,7 @@ async function handleFiles(files: FileList | File[]): Promise<void> {
 /* ---------- URL 抓取（TB-9） ---------- */
 
 async function submitUrl(): Promise<void> {
-  if (uploading.value || fetching.value || analyzing.value) return
+  if (uploading.value || fetching.value || analyzing.value || restoring.value) return
   rejectNote.value = ''
 
   const value = urlInput.value.trim()
@@ -1168,6 +1172,11 @@ onMounted(() => {
   const id = sourceIdFromQuery()
   if (id !== null) void restoreSource(id)
   else void loadRecent()
+})
+
+// 离开页面时让在途回看失效，避免卸载后仍回填已不存在的视图状态。
+onBeforeUnmount(() => {
+  restoreToken += 1
 })
 </script>
 

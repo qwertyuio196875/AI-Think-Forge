@@ -468,6 +468,20 @@ def analyze_source(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"来源 {source_id} 不存在"
         )
 
+    task = (
+        task_repository.get(source["task_id"])
+        if source["task_id"] is not None
+        else None
+    )
+    if task is not None and task["status"] == "deleted":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"所属任务 {task['id']} 已删除，无法再执行分析"
+                "（删除是留痕的终态，不会因重新分析而复活）"
+            ),
+        )
+
     document = analysis_repository.get_document_for_source(source_id)
     if document is None:
         raise HTTPException(
@@ -505,11 +519,6 @@ def analyze_source(
         )
 
     try:
-        task = (
-            task_repository.get(source["task_id"])
-            if source["task_id"] is not None
-            else None
-        )
         outcome = analyze_chunks(
             chunks,
             source_name=_original_name(source),

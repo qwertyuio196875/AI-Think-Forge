@@ -85,6 +85,31 @@ def test_source_list_paginates_and_validates_parameters(
     assert analysis_client.get("/api/analysis/sources", params={"offset": -1}).status_code == 422
 
 
+def test_deleted_task_source_is_hidden_and_cannot_be_reanalyzed(
+    analysis_client: TestClient,
+) -> None:
+    """软删除是留痕终态：来源不再出现在最近资料，也不能靠重新分析把任务改回 completed。"""
+    uploaded = _upload(analysis_client, "已删除任务的资料.docx")
+    source_id = uploaded["source"]["id"]
+    task_id = uploaded["source"]["task_id"]
+
+    deleted = analysis_client.delete(
+        f"/api/tasks/{task_id}", params={"confirm": True}
+    )
+    assert deleted.status_code == 200
+
+    listed = analysis_client.get("/api/analysis/sources").json()
+    assert listed["total"] == 0
+    assert all(item["source"]["id"] != source_id for item in listed["items"])
+
+    analyzed = analysis_client.post(f"/api/analysis/sources/{source_id}/analyze")
+    assert analyzed.status_code == 409
+    assert "已删除" in analyzed.json()["detail"]
+
+    # 状态没有因分析请求被改写
+    assert analysis_client.get(f"/api/tasks/{task_id}").json()["status"] == "deleted"
+
+
 def test_history_analysis_item_carries_latest_source_id(
     client: TestClient, db_path
 ) -> None:

@@ -152,7 +152,7 @@ cd backend
 | POST | `/api/tasks` | 创建任务，body `{"kind":"creation"\|"analysis","title":string?,"provider_id":int?}` → 201；`provider_id` 不存在 → 400 |
 | GET | `/api/tasks?kind=&status=` | 任务列表 `{"items":[...],"total":n}` |
 | GET | `/api/tasks/{id}` | 单个任务；不存在返回 404 |
-| PUT | `/api/tasks/{id}/model` | **任务级模型切换（US23）**：body `{"provider_id":int\|null}` → `{"id","provider_id"}`；`null` 清除覆盖，未知 provider → 400。只影响该任务的拷问 / 方案 / 修订 / 分析总结 |
+| PUT | `/api/tasks/{id}/model` | **任务级模型切换（US23）**：body `{"provider_id":int\|null}`，返回更新后的完整 Task；`null` 清除覆盖，未知 provider → 400，已删除任务 → 409。只影响该任务的拷问 / 方案 / 修订 / 分析总结 |
 | GET | `/api/providers` | 模型配置列表（**不含密钥**，含 `has_key`） |
 | POST | `/api/providers` | 新建模型配置，body `{"name","base_url","model_name","kind?","api_key?"}` → 201 |
 | PUT | `/api/providers/{id}` | 编辑；`api_key` 可选，**传了才更新凭据**，否则保留 |
@@ -181,9 +181,9 @@ cd backend
 | PUT | `/api/templates/{name}/default` | 设为该格式的**全局默认模板**（同格式至多一个） |
 | POST | `/api/analysis/sources` | **资料分析上传 + 解析**（multipart，字段 `file`）：收 TXT / MD / DOCX / PDF / PPTX，扩展名 + 50MB 校验，文件落 `data/uploads/`；建来源 / 文档 / 分块（长文按约 1200 字切块），`document.parser` 记录实际解析器。解析失败仍 201 且 `document.parse_status="failed"` + 可读 `message`（来源与文件保留，不丢已存数据）；无文本层 → `parse_status="unrecognized"` + 一级 `unrecognized` 契约（`reason` / `locator` / `needs_ocr`），不返回空总结冒充成功 |
 | POST | `/api/analysis/sources/url` | **URL 来源 + 抓取解析**：body `{"url":string}` → 安全校验 → 抓取 → 正文提取 → 建来源 / 文档 / 分块（201）。安全拒绝（非法协议 / 内嵌凭据 / 环回 / 私网 / 链路本地 / 云元数据等）→ 400 + 可读原因，**不落库、不抓取**；抓取失败 / 需登录 / 超时 / 超限 → 201 + `parse_status="failed"` + 可读 `message`（与上传失败同口径）；无正文 → `unrecognized`（`no_main_text` / `empty_page`）。`source.meta` 记 `url` / `final_url` / `fetched_at` / `status` / `content_type` / `size` / `redirects` |
-| GET | `/api/analysis/sources?limit=&offset=` | **最近资料列表（US16/US26）**：按最近更新倒序返回来源、最新文档（`parse_status` / 分块数 / 文件名）与总结标记；供分析页「最近资料」与历史回看 |
+| GET | `/api/analysis/sources?limit=&offset=` | **最近资料列表（US16/US26）**：按登记顺序倒序返回来源、最新文档（`parse_status` / 分块数 / 文件名）与总结标记；已软删除任务的资料不出现；供分析页「最近资料」与历史回看 |
 | GET | `/api/analysis/sources/{id}` | 来源 + 文档解析结果（`parser` / `parse_status` / `heading_source` / `encoding` / `headings` / `chunks` / `unrecognized` / `unrecognized_parts`），供分析页展示与重试 |
-| POST | `/api/analysis/sources/{id}/analyze` | **分析**：分块 → 逐块分析 → 综合（N 块 = N 次逐块 + 1 次综合，**分析管线不是 RAG**）→ 保存 ≤500 汉字总结并返回引用位置与实际档位（`provider_kind` / `provider_used` / `model_used` / `provider_fallback` / `provider_note`）。总结走 **turbo** 档；该档缺失 → 回退默认 provider 并如实记录。未识别 → 200 + `summary:null` + 显式契约、**不调用模型**；解析失败 → 409；模型失败 → 502（已存来源 / 文档 / 分块保留） |
+| POST | `/api/analysis/sources/{id}/analyze` | **分析**：分块 → 逐块分析 → 综合（N 块 = N 次逐块 + 1 次综合，**分析管线不是 RAG**）→ 保存 ≤500 汉字总结并返回引用位置与实际档位（`provider_kind` / `provider_used` / `model_used` / `provider_fallback` / `provider_note`）。总结走 **turbo** 档；该档缺失 → 回退默认 provider 并如实记录。未识别 → 200 + `summary:null` + 显式契约、**不调用模型**；解析失败或所属任务已软删除 → 409；模型失败 → 502（已存来源 / 文档 / 分块保留） |
 | GET | `/api/analysis/sources/{id}/summary` | 读取该来源最新总结（保存即落库，可查看 / 复制 / 导出 Word）；尚无总结 → 404 |
 | POST | `/api/analysis/sources/{id}/summary/word` | **总结导出 Word（US16）**：body 可选 `{"template":string?}` → 200，用已保存总结 + 模板生成 `.docx` 并写入 `summary_deliverables`；无总结 → 409；模板缺失 / 损坏 / 非 `.docx` → 400。**不创建方案、不写 `generations`**，避免把资料总结冒充方案成品 |
 | GET | `/api/analysis/summary-deliverables/{id}` | 下载总结 Word 成品；只投递 `data/deliverables/` 内真实文件，越界 / 缺失 / 未知 id → 404 |
@@ -326,6 +326,7 @@ npm run build
 - **分析**：按约 1200 字切块（超长单块按句读二次切分），逐块分析后再综合成 **≤500 汉字**的总结，提炼主题 / 核心观点 / 关键内容 / 重要数据 / 结论；模型给长了按句读收敛并记 `truncated`。
 - **未识别是一级输出字段**：统一契约 `{unrecognized, reason, locator, needs_ocr}`。无文本层（典型：扫描件 / 图片型文件）→ `reason="no_text_layer"`、`needs_ocr=true`，**短路不调用模型**、不返回空总结；有正文但含图片 / 图表 / 组合形状时用 `unrecognized_parts` 逐项明示，不伪装成完整分析。
 - **失败不丢数据**：解析失败 → 文档 `parse_status="failed"` + 可读提示，来源 / 文件仍在；模型失败 → 502 可读错误，已入库的来源 / 文档 / 分块保留，可安全重试。
-- **档位**：总结固定走 **turbo** 档（规格：主流程 plus、总结流程 turbo），由 `TieredModelClient` 按档位解析 provider；该档不存在时回退当前默认 provider，并在总结记录与 API 结果里写明 `provider_fallback` / `provider_used` / `provider_note`（不静默）。主流程（拷问 / 方案 / 修订）仍走原默认 provider 客户端，行为不变。
+- **删除是留痕终态**：任务软删除后，其资料不再出现在「最近资料」，直接调用分析返回 409；分析请求不会把任务状态改回 `completed`。若任务 pin 的模型配置已被删除，任务页会明确提示“当前绑定的模型配置已不存在”，并允许改回「跟随默认模型」；不静默降级。
+- **档位**：总结固定走 **turbo** 档（规格：主流程 plus、总结流程 turbo），由 `TieredModelClient` 按档位解析 provider；该档不存在时回退当前默认 provider，并在总结记录与 API 结果里写明 `provider_fallback` / `provider_used` / `provider_note`（不静默）。主流程（拷问 / 方案 / 修订）默认仍走原默认 provider 客户端；任务级覆盖存在时按 `tasks.provider_id` 解析（US23）。
 - **一键送入主题创作**：`POST /api/analysis/sources/{id}/send-to-creation` 新建 `creation` 任务，把总结作为第 0 轮种子输入预填；**不调用模型**，首轮问题等用户下次推进 / 发起时才产生。
 - **可复现演示记录**：`backend\scripts\demo_analysis_long_docx.py`（320 段长 DOCX：分块数、调用次数、总结汉字数、引用位置、档位证据、未识别提示）；`backend\scripts\demo_analysis_layout.py`（PDF / PPTX 页与幻灯片 locator、扫描件与损坏文件路径）。两者都走进程内 HTTP + 脚本化模型，不联网、零花费。

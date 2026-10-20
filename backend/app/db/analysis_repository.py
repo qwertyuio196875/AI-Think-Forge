@@ -59,13 +59,20 @@ class AnalysisRepository:
         返回 `(items, total)`；每项含 `source` / `document`（可为 None）/
         `has_summary` / `summary_id` / `summary_created_at`。
         """
+        # 已软删除任务（留痕终态）的资料不再出现在「最近资料」里；
+        # 任务缺失（历史脏数据）或未挂任务的来源仍然保留，避免读列表整体丢数据。
+        visible = """
+            FROM sources s
+            LEFT JOIN tasks t ON t.id = s.task_id
+            WHERE t.status IS NULL OR t.status <> 'deleted'
+        """
         with connect(self._db_path) as connection:
             rows = connection.execute(
-                "SELECT * FROM sources ORDER BY id DESC LIMIT ? OFFSET ?",
+                f"SELECT s.* {visible} ORDER BY s.id DESC LIMIT ? OFFSET ?",
                 (limit, offset),
             ).fetchall()
             total_row = connection.execute(
-                "SELECT COUNT(*) AS total FROM sources"
+                f"SELECT COUNT(*) AS total {visible}"
             ).fetchone()
 
         items: list[dict] = []

@@ -19,15 +19,21 @@
       <el-button link type="primary" size="small" @click="load">重试</el-button>
     </template>
 
-    <!-- 读到了但一条配置也没有：只有一个「跟随默认」可选，不必摆出下拉 -->
-    <span v-else-if="providers.length === 0" class="ms-note">
+    <!-- 读到了但一条配置也没有，且当前未绑定任何配置：不必摆出下拉 -->
+    <span v-else-if="providers.length === 0 && modelValue === null" class="ms-note">
       还没有模型配置，将按默认档位解析
     </span>
 
-    <el-select v-else class="ms-select" size="small" :model-value="current" @change="onChange">
-      <el-option :label="defaultLabel" :value="sentinel" />
-      <el-option v-for="p in providers" :key="p.id" :label="providerOptionLabel(p)" :value="p.id" />
-    </el-select>
+    <!-- 有配置，或任务仍 pin 着一个已被删除的配置：保留下拉，让用户能改为跟随默认 -->
+    <template v-else>
+      <el-select class="ms-select" size="small" :model-value="current" @change="onChange">
+        <el-option :label="defaultLabel" :value="sentinel" />
+        <el-option v-for="p in providers" :key="p.id" :label="providerOptionLabel(p)" :value="p.id" />
+      </el-select>
+      <span v-if="missingCurrent" class="ms-note is-warn">
+        当前绑定的模型配置已不存在，请重新选择或改为跟随默认
+      </span>
+    </template>
   </div>
 </template>
 
@@ -62,6 +68,13 @@ const state = ref<State>('loading')
 const providers = ref<Provider[]>([])
 
 const current = computed(() => props.modelValue ?? sentinel)
+/** 任务 pin 的 provider 已被删除：仍显示原选择，但明确告知需要重选，避免静默降级。 */
+const missingCurrent = computed(
+  () =>
+    state.value === 'ready' &&
+    props.modelValue !== null &&
+    !providers.value.some((p) => p.id === props.modelValue)
+)
 
 async function load(): Promise<void> {
   state.value = 'loading'
@@ -114,5 +127,8 @@ defineExpose({ reload: load })
 .ms-note {
   font-size: var(--fs-xs);
   color: var(--text-3);
+}
+.ms-note.is-warn {
+  color: var(--warn-fg);
 }
 </style>
