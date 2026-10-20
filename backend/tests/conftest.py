@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 from fakes import (
+    FakeEmbeddingClient,
     FakeUrlFetcher,
     InMemoryKeyStore,
     ScriptedModelClient,
@@ -50,11 +51,24 @@ def templates_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def app(db_path: Path, key_store: InMemoryKeyStore, data_dir: Path, templates_dir: Path):
+def embedding_client() -> FakeEmbeddingClient:
+    """嵌入客户端替身（fake 注入点 3）：确定性假向量，测试绝不真调百炼。"""
+    return FakeEmbeddingClient()
+
+
+@pytest.fixture
+def app(
+    db_path: Path,
+    key_store: InMemoryKeyStore,
+    data_dir: Path,
+    templates_dir: Path,
+    embedding_client: FakeEmbeddingClient,
+):
     """按可配置库路径构建应用实例（同一进程内多次重建，用于续作语义验证）。
 
     密钥存储接缝经 `dependency_overrides` 注入内存替身（与 TB-0 的接缝风格一致）；
     数据目录与模板目录指向 pytest 临时目录，测试不写仓库 `data/`、`templates/`。
+    嵌入客户端默认也换成替身：任何测试都不该真的连上百炼（离线、零费用）。
     """
     application = create_app(
         db_path=db_path,
@@ -63,6 +77,7 @@ def app(db_path: Path, key_store: InMemoryKeyStore, data_dir: Path, templates_di
         templates_dir=templates_dir,
     )
     application.dependency_overrides[get_key_store] = lambda: key_store
+    application.state.embedding_client = embedding_client
     return application
 
 
