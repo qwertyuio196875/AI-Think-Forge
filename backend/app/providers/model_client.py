@@ -21,9 +21,21 @@ from app.providers.errors import classify_exception
 
 @runtime_checkable
 class ModelClient(Protocol):
-    """OpenAI 兼容的对话补全客户端抽象。"""
+    """OpenAI 兼容的对话补全客户端抽象。
 
-    def complete(self, messages: list[dict], *, model: str | None = None) -> str:
+    `max_tokens` / `timeout` 是**按次覆盖**的可选参数（#3）：长章节需要更高的
+    输出上限与更长的超时，而短调用仍走既有默认值。两者缺省为 `None`，语义是
+    「沿用本实现的默认值」——因此既有调用点一行不改，行为与超时完全不变。
+    """
+
+    def complete(
+        self,
+        messages: list[dict],
+        *,
+        model: str | None = None,
+        max_tokens: int | None = None,
+        timeout: float | None = None,
+    ) -> str:
         """对一组对话消息求补全文本。"""
         ...
 
@@ -33,7 +45,12 @@ class ModelCallError(RuntimeError):
 
 
 def complete_text(
-    client: ModelClient, messages: list[dict], *, model: str | None = None
+    client: ModelClient,
+    messages: list[dict],
+    *,
+    model: str | None = None,
+    max_tokens: int | None = None,
+    timeout: float | None = None,
 ) -> str:
     """调用模型并统一把「调用失败」收敛为 `ModelCallError`。
 
@@ -43,9 +60,13 @@ def complete_text(
 
     只包「调用侧失败」：网络与 HTTP 异常、以及未配置的占位客户端；
     其它异常照旧抛出，避免把程序缺陷伪装成模型故障。
+
+    按次参数原样透传（`None` 表示由客户端回落到自己的默认值）。
     """
     try:
-        return client.complete(messages, model=model)
+        return client.complete(
+            messages, model=model, max_tokens=max_tokens, timeout=timeout
+        )
     except (httpx.HTTPError, OSError) as exc:
         _, message = classify_exception(exc)
         raise ModelCallError(message) from exc
@@ -88,5 +109,12 @@ class UnconfiguredModelClient:
     `app.providers.provider_backed_client.ProviderBackedModelClient`。
     """
 
-    def complete(self, messages: list[dict], *, model: str | None = None) -> str:
+    def complete(
+        self,
+        messages: list[dict],
+        *,
+        model: str | None = None,
+        max_tokens: int | None = None,
+        timeout: float | None = None,
+    ) -> str:
         raise NotImplementedError("模型客户端尚未配置（TB-1 落地真实实现）")

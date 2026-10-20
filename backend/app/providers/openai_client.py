@@ -54,25 +54,45 @@ class OpenAICompatibleClient:
         # 注入 httpx.Client 仅用于测试（MockTransport）；生产代码自建短生命周期客户端。
         self._http_client = http_client
 
-    def _build_payload(self, messages: list[dict], model: str | None) -> dict:
+    def _build_payload(
+        self, messages: list[dict], model: str | None, max_tokens: int | None = None
+    ) -> dict:
         return {
             "model": model or self.model_name,
             "messages": messages,
-            "max_tokens": self._max_tokens,
+            "max_tokens": max_tokens if max_tokens is not None else self._max_tokens,
             # 显式关闭思考模式（DeepSeek 默认开启，思维链按输出计费）。
             "thinking": {"type": "disabled"},
         }
 
-    def complete(self, messages: list[dict], *, model: str | None = None) -> str:
-        """发起一次非流式 Chat Completions 调用并返回首个候选文本。"""
+    def complete(
+        self,
+        messages: list[dict],
+        *,
+        model: str | None = None,
+        max_tokens: int | None = None,
+        timeout: float | None = None,
+    ) -> str:
+        """发起一次非流式 Chat Completions 调用并返回首个候选文本。
+
+        `max_tokens` / `timeout` 是**按次覆盖**：缺省时沿用构造期的默认值，
+        使既有调用点一行不改；`timeout` 走 httpx 的请求级超时，因此短于
+        构造期默认值时同样生效（共享 http 客户端时不会被实例超时盖掉）。
+        """
         url = chat_completions_url(self.base_url)
         headers = {"Content-Type": "application/json"}
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
 
-        http = self._http_client or httpx.Client(timeout=self.timeout_seconds)
+        call_timeout = timeout if timeout is not None else self.timeout_seconds
+        http = self._http_client or httpx.Client(timeout=call_timeout)
         try:
-            response = http.post(url, json=self._build_payload(messages, model), headers=headers)
+            response = http.post(
+                url,
+                json=self._build_payload(messages, model, max_tokens),
+                headers=headers,
+                timeout=call_timeout,
+            )
             response.raise_for_status()
             data = response.json()
         except httpx.HTTPStatusError as exc:
