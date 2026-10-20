@@ -24,16 +24,6 @@
           </el-button>
         </div>
       </div>
-
-      <ol class="steps" aria-label="任务流程">
-        <li v-for="s in steps" :key="s.label" class="step" :class="'is-' + s.state">
-          <span class="step-ico">
-            <el-icon v-if="s.state === 'done'"><Select /></el-icon>
-            <template v-else>{{ s.no }}</template>
-          </span>
-          <span class="step-txt"><b>{{ s.label }}</b><em>{{ s.note }}</em></span>
-        </li>
-      </ol>
     </header>
 
     <!-- 会话流区 -->
@@ -499,11 +489,6 @@
             default-label="跟随默认模型"
             @update:model-value="saveChatProvider"
           />
-          <span class="xs muted">{{ isChat ? chatProviderHint : ideaProviderHint }}</span>
-        </div>
-
-        <div class="composer-hint">
-          {{ isChat ? '当前轮次的作答请在上方问题卡片中完成' : '输入想法并发送，即可发起第一轮拷问' }}
         </div>
       </div>
     </footer>
@@ -724,20 +709,6 @@ const resumeHint = computed(() => {
   return awaitingResumeHint(awaiting.value)
 })
 
-/** 模型选择器旁的一句说明：只讲已实现的覆盖范围。 */
-const ideaProviderHint = computed(() =>
-  ideaProviderId.value === null
-    ? '不指定模型：拷问、方案与修订按默认档位解析'
-    : '本任务全程用这一个配置：拷问、方案与修订都读它，不改变设置页的全局默认'
-)
-
-/** 聊天态模型说明：讲清覆盖范围与「改这里不动全局默认」。 */
-const chatProviderHint = computed(() =>
-  chatProviderId.value === null
-    ? '不指定模型：本任务的拷问、方案与修订按默认档位解析'
-    : '本任务后续的拷问、方案与修订都读这个配置；不改变设置页的全局默认'
-)
-
 // 打开 / 切回任务时，用后端已保存的覆盖值回填；保存成功后也用响应同步。
 watch(
   activeTask,
@@ -816,38 +787,6 @@ const dayLabel = computed(() => {
   if (!iso) return ''
   const d = new Date(iso)
   return Number.isNaN(d.getTime()) ? '' : `${d.getMonth() + 1} 月 ${d.getDate()} 日`
-})
-
-const steps = computed(() => {
-  const started = isChat.value && !!dialogue.value
-  const r = openRound.value
-  return [
-    { no: 1, label: '想法发起', state: started ? 'done' : 'now', note: started ? '已发起' : '输入一句话开始' },
-    {
-      no: 2,
-      label: '拷问收敛',
-      state: started ? 'now' : 'todo',
-      note: !started
-        ? '未开始'
-        : plan.value
-          ? '已收敛 · 待确认'
-          : r
-            ? `第 ${r.round_no} 轮 · ${r.frontier.length} 问待答`
-            : '本轮已答'
-    },
-    {
-      no: 3,
-      label: '方案确认',
-      state: plan.value?.status === 'confirmed' ? 'done' : plan.value ? 'now' : 'todo',
-      note: plan.value?.status === 'confirmed' ? '已确认' : plan.value ? '等待你显式批准' : '未开始'
-    },
-    {
-      no: 4,
-      label: '生成成品',
-      state: plan.value?.status === 'confirmed' ? 'now' : 'todo',
-      note: plan.value?.status === 'confirmed' ? 'Word / 单文件 HTML 均可' : '未开始'
-    }
-  ]
 })
 
 function isAnsweredRound(r: FrontierRound): boolean {
@@ -1253,87 +1192,6 @@ onMounted(() => {
 }
 .status-chip .tf-dot {
   margin-right: 5px;
-}
-
-/* 步骤条 */
-.steps {
-  list-style: none;
-  display: flex;
-  align-items: stretch;
-  gap: var(--sp-2);
-  margin: 0;
-  padding: var(--sp-2) 0 var(--sp-3);
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.steps::-webkit-scrollbar {
-  display: none;
-}
-.step {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  flex: none;
-}
-.step + .step {
-  padding-left: var(--sp-2);
-}
-.step + .step::before {
-  content: "";
-  width: 20px;
-  height: 1px;
-  background: var(--line-2);
-  margin-right: var(--sp-2);
-  flex: none;
-}
-.step-ico {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--line-3);
-  background: var(--bg-surface);
-  color: var(--text-4);
-  font-size: 11px;
-  flex: none;
-}
-.step-ico .el-icon {
-  font-size: 11px;
-}
-.step.is-done .step-ico {
-  background: var(--ok-bg);
-  border-color: var(--ok-line);
-  color: var(--ok-fg);
-}
-.step.is-done .step-txt b {
-  color: var(--text-2);
-}
-.step.is-now .step-ico {
-  background: var(--brand-500);
-  border-color: var(--brand-500);
-  color: #fff;
-}
-.step.is-now .step-txt b {
-  color: var(--brand-700);
-  font-weight: 600;
-}
-.step.is-now .step-txt em {
-  color: var(--brand-600);
-}
-.step-txt b {
-  display: block;
-  font-size: var(--fs-sm);
-  font-weight: 500;
-  color: var(--text-3);
-  white-space: nowrap;
-}
-.step-txt em {
-  display: block;
-  font-style: normal;
-  font-size: var(--fs-xs);
-  color: var(--text-4);
-  white-space: nowrap;
 }
 
 /* thread 内容 */
@@ -1884,11 +1742,6 @@ onMounted(() => {
   box-shadow: inset 0 0 0 1px var(--line-3);
   cursor: not-allowed;
 }
-.composer-hint {
-  margin-top: var(--sp-2);
-  font-size: var(--fs-xs);
-  color: var(--text-4);
-}
 
 /* 底部次级控件行（发起态 / 聊天态的模型选择）：窄屏自动换行 */
 .composer-opts {
@@ -1897,9 +1750,6 @@ onMounted(() => {
   gap: var(--sp-2) var(--sp-3);
   flex-wrap: wrap;
   margin-top: var(--sp-2);
-}
-.composer-opts > .xs {
-  line-height: 1.55;
 }
 
 /* 「为什么现在问」与备选方向 */
@@ -2146,12 +1996,7 @@ onMounted(() => {
   color: var(--warn-fg);
 }
 
-/* 响应式：对齐原型断点（1360 / 1200 / 1000 / 820 / 560），保留 960 / 1100 现有行为 */
-@media (max-width: 1360px) {
-  .steps {
-    gap: var(--sp-1);
-  }
-}
+/* 响应式：对齐原型断点（1200 / 820 / 560），保留 960 / 1100 现有行为 */
 @media (max-width: 1200px) {
   .plan-grid {
     grid-template-columns: minmax(0, 1fr);
@@ -2161,11 +2006,6 @@ onMounted(() => {
     margin-top: var(--sp-3);
     padding-top: var(--sp-3);
     border-top: 1px solid var(--line-1);
-  }
-}
-@media (max-width: 1000px) {
-  .steps {
-    gap: 0;
   }
 }
 @media (max-width: 960px) {
@@ -2178,9 +2018,6 @@ onMounted(() => {
   }
 }
 @media (max-width: 820px) {
-  .step-txt em {
-    display: none;
-  }
   .card-body,
   .qcard,
   .plan-pending,
@@ -2192,9 +2029,6 @@ onMounted(() => {
 @media (max-width: 560px) {
   .pill textarea {
     min-height: 44px;
-  }
-  .composer-hint {
-    display: none;
   }
 }
 </style>
