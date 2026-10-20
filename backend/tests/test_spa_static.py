@@ -38,3 +38,7 @@ def test_spa_deep_link_falls_back_to_index(
         missing_api = client.get("/api/no-such")
         assert missing_api.status_code == 404
         assert missing_api.headers["content-type"].startswith("application/json")
+
+        api_root = client.get("/api")
+        assert api_root.status_code == 404
+        assert api_root.headers["content-type"].startswith("application/json")

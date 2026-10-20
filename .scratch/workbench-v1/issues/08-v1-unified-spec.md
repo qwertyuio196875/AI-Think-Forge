@@ -1,5 +1,7 @@
 # ThinkForge 工作台 v1 —— 拷问驱动的阅读与创作闭环
 
+> 文档布局说明（2026-10-19 评审）：本文件是 01–07 的合并规格视图，保留 `08-` 编号仅为兼容既有工单引用；按 `docs/agents/issue-tracker.md`，规格主文件仍是 `../spec.md`，本文件不新增工单。后续整理时应迁移到 `../spec.md` 或独立规格文件，并统一更新引用。
+
 Status: ready-for-agent
 
 ## Background / Context

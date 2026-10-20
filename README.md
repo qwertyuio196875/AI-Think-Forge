@@ -185,7 +185,7 @@ cd backend
 | GET | `/api/analysis/sources/{id}` | 来源 + 文档解析结果（`parser` / `parse_status` / `heading_source` / `encoding` / `headings` / `chunks` / `unrecognized` / `unrecognized_parts`），供分析页展示与重试 |
 | POST | `/api/analysis/sources/{id}/analyze` | **分析**：分块 → 逐块分析 → 综合（N 块 = N 次逐块 + 1 次综合，**分析管线不是 RAG**）→ 保存 ≤500 汉字总结并返回引用位置与实际档位（`provider_kind` / `provider_used` / `model_used` / `provider_fallback` / `provider_note`）。总结走 **turbo** 档；该档缺失 → 回退默认 provider 并如实记录。未识别 → 200 + `summary:null` + 显式契约、**不调用模型**；解析失败 → 409；模型失败 → 502（已存来源 / 文档 / 分块保留） |
 | GET | `/api/analysis/sources/{id}/summary` | 读取该来源最新总结（保存即落库，可查看 / 复制 / 导出 Word）；尚无总结 → 404 |
-| POST | `/api/analysis/sources/{id}/summary/word` | **总结导出 Word（US16）**：body 可选 `{"template":string?}` → 201，用已保存总结 + 模板生成 `.docx` 并写入 `summary_deliverables`；无总结 → 409；模板缺失 / 损坏 / 非 `.docx` → 400。**不创建方案、不写 `generations`**，避免把资料总结冒充方案成品 |
+| POST | `/api/analysis/sources/{id}/summary/word` | **总结导出 Word（US16）**：body 可选 `{"template":string?}` → 200，用已保存总结 + 模板生成 `.docx` 并写入 `summary_deliverables`；无总结 → 409；模板缺失 / 损坏 / 非 `.docx` → 400。**不创建方案、不写 `generations`**，避免把资料总结冒充方案成品 |
 | GET | `/api/analysis/summary-deliverables/{id}` | 下载总结 Word 成品；只投递 `data/deliverables/` 内真实文件，越界 / 缺失 / 未知 id → 404 |
 | POST | `/api/analysis/sources/{id}/send-to-creation` | **一键送入主题创作**：新建 `creation` 任务，把该来源的总结预填为第 0 轮种子输入（已知信息）→ 201；**不调用模型**（首轮问题等用户下次推进时才需要模型）；可选 body `{"title":string?}` |
 

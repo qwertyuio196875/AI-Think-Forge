@@ -566,7 +566,13 @@ function refresh(): void {
   }
 }
 
-watch(() => props.taskId, refresh)
+// 切换任务时清掉上一个任务的临时选择，避免把 A 任务的主题 / 模板带到 B 任务，
+// 使「跟随全局默认」在新任务上仍然是真正的默认值。
+watch(() => props.taskId, () => {
+  templateSel.value = TEMPLATE_DEFAULT
+  theme.value = ''
+  refresh()
+})
 // 切到 HTML 轨时刷新一次全局默认，反映设置页里刚改过的值（不阻塞、不报错打扰）
 watch(format, (next) => {
   if (next === 'html') void loadDeckDefault()

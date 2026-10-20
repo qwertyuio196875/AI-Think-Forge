@@ -43,7 +43,8 @@ class SPAStaticFiles(StaticFiles):
         normalized = path.replace("\\", "/")
         last_segment = normalized.rsplit("/", 1)[-1]
         return (
-            not normalized.startswith(("api/", "assets/"))
+            normalized not in {"api", "assets"}
+            and not normalized.startswith(("api/", "assets/"))
             and "." not in last_segment
         )
 

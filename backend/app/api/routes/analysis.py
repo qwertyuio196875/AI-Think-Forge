@@ -661,7 +661,7 @@ def download_summary_word(
     if not path.exists():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"总结成品 {deliverable_id} 的文件已不存在：{path}",
+            detail=f"总结成品 {deliverable_id} 的文件已不存在",
         )
     return FileResponse(path, media_type=DOCX_MEDIA_TYPE, filename=path.name)
 
