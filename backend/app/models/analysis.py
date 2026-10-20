@@ -30,7 +30,12 @@ class UnrecognizedContent(BaseModel):
 
 
 class SourceInfo(BaseModel):
-    """来源（资料登记）。"""
+    """来源（资料登记）。
+
+    `index_status` / `index_message` / `indexed_at` 是知识库（工单 19）接入后
+    挂在同一张表上的索引状态；资料分析来源带默认值（`stored`），这里如实透出，
+    避免仓储层多出的列把响应模型打穿。
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -39,6 +44,9 @@ class SourceInfo(BaseModel):
     ref: str
     meta: dict[str, Any] = Field(default_factory=dict)
     task_id: int | None = None
+    index_status: str = "stored"
+    index_message: str | None = None
+    indexed_at: str | None = None
     created_at: str
 
 
