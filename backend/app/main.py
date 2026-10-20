@@ -23,6 +23,7 @@ from app.api.router import api_router
 from app.db.database import init_db
 from app.db.provider_repository import ProviderRepository
 from app.db.seed import seed_default_providers
+from app.providers.embedding_client import ConfiguredEmbeddingClient
 from app.providers.key_store import KeyringKeyStore
 from app.providers.openai_client import HttpModelClientFactory
 from app.providers.provider_backed_client import ProviderBackedModelClient
@@ -129,6 +130,11 @@ def create_app(
     # URL 抓取器（TB-9）：真实实现逐跳重新做 SSRF 校验、限超时 15s / 5MB / 3 次重定向。
     # 测试经 `dependency_overrides[get_url_fetcher]` 注入替身（全程不联网）。
     app.state.url_fetcher = HttpUrlFetcher()
+    # 嵌入客户端（工单 20）：默认百炼 text-embedding-v4，配置走环境变量
+    # （THINKFORGE_EMBEDDING_API_KEY / _BASE_URL / _MODEL）。**构造期不校验密钥**：
+    # 没配嵌入模型时资料照样入库，只把索引状态记为「索引失败」，检索层据此降级。
+    # 测试经 `dependency_overrides[get_embedding_client]` 注入确定性假向量。
+    app.state.embedding_client = ConfiguredEmbeddingClient()
 
     app.include_router(api_router, prefix=config.API_PREFIX)
 

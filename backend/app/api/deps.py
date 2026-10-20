@@ -1,7 +1,7 @@
 """FastAPI 依赖注入位置。
 
-业务依赖（任务仓库、模型配置仓库、密钥库、模型客户端、URL 抓取器）集中在此
-声明，测试用 `app.dependency_overrides[<函数>]` 替换即可注入替身。
+业务依赖（任务仓库、模型配置仓库、密钥库、模型客户端、URL 抓取器、嵌入客户端）
+集中在此声明，测试用 `app.dependency_overrides[<函数>]` 替换即可注入替身。
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ from typing import Annotated
 from fastapi import Depends, Request
 
 from app.db.analysis_repository import AnalysisRepository
+from app.db.embedding_repository import EmbeddingRepository
 from app.db.generation_repository import GenerationRepository
 from app.db.knowledge_repository import KnowledgeRepository
 from app.db.message_repository import MessageRepository
@@ -22,6 +23,7 @@ from app.db.settings_repository import SettingsRepository
 from app.db.summary_deliverable_repository import SummaryDeliverableRepository
 from app.db.task_repository import TaskRepository
 from app.db.template_repository import TemplateRepository
+from app.providers.embedding_client import EmbeddingClient
 from app.providers.key_store import KeyStore
 from app.providers.model_client import ModelClient, ProviderModelClientFactory
 from app.providers.tiered_client import TieredModelClient
@@ -100,6 +102,11 @@ def get_knowledge_repository(db_path: str = Depends(get_db_path)) -> KnowledgeRe
     return KnowledgeRepository(db_path)
 
 
+def get_embedding_repository(db_path: str = Depends(get_db_path)) -> EmbeddingRepository:
+    """向量仓库依赖（`embeddings` 表的唯一写入 / 校验读取入口）。"""
+    return EmbeddingRepository(db_path)
+
+
 def get_settings_repository(db_path: str = Depends(get_db_path)) -> SettingsRepository:
     """应用设置仓库依赖（key-value）。"""
     return SettingsRepository(db_path)
@@ -130,6 +137,15 @@ def get_url_fetcher(request: Request) -> UrlFetcher:
     return request.app.state.url_fetcher
 
 
+def get_embedding_client(request: Request) -> EmbeddingClient:
+    """嵌入客户端依赖（fake 注入点 3）。
+
+    生产默认是按环境变量构造的百炼客户端；测试注入确定性假向量，
+    **绝不让普通测试真的调外部嵌入服务**。
+    """
+    return request.app.state.embedding_client
+
+
 # Annotated 别名：路由以类型标注声明依赖，避免在参数默认值里调用 Depends。
 TaskRepositoryDep = Annotated[TaskRepository, Depends(get_task_repository)]
 ProviderRepositoryDep = Annotated[ProviderRepository, Depends(get_provider_repository)]
@@ -148,6 +164,7 @@ SummaryDeliverableRepositoryDep = Annotated[
     SummaryDeliverableRepository, Depends(get_summary_deliverable_repository)
 ]
 KnowledgeRepositoryDep = Annotated[KnowledgeRepository, Depends(get_knowledge_repository)]
+EmbeddingRepositoryDep = Annotated[EmbeddingRepository, Depends(get_embedding_repository)]
 SettingsRepositoryDep = Annotated[SettingsRepository, Depends(get_settings_repository)]
 DataDirDep = Annotated[str, Depends(get_data_dir)]
 TemplatesDirDep = Annotated[str, Depends(get_templates_dir)]
@@ -156,3 +173,4 @@ ModelClientDep = Annotated[ModelClient, Depends(get_model_client)]
 ModelClientFactoryDep = Annotated[ProviderModelClientFactory, Depends(get_model_client_factory)]
 TieredModelClientDep = Annotated[TieredModelClient, Depends(get_tiered_model_client)]
 UrlFetcherDep = Annotated[UrlFetcher, Depends(get_url_fetcher)]
+EmbeddingClientDep = Annotated[EmbeddingClient, Depends(get_embedding_client)]

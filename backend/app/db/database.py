@@ -248,8 +248,12 @@ CREATE TABLE IF NOT EXISTS summaries (
 
 CREATE INDEX IF NOT EXISTS idx_summaries_source ON summaries (source_id, id);
 
--- 嵌入（规格 §4 预留；ADR-0002）：v1 **不填充**，v1.1 检索层追加时再加索引与写入。
--- 保留本表是为了让 v1.1 的跨文档检索不重构既有资料 / 分块 / 总结路径。
+-- 嵌入（规格 §4；ADR-0005；工单 20 起写入）：分块粒度是检索单位，一行 = 一个分块的向量。
+-- - `vector_json` 是**固定格式**的紧凑 JSON 浮点数组（写入端 `embedding_repository.dump_vector`），
+--   读取端必须校验维度：同文档内维度不一致 / `model_name` 不一致即报错，绝不当成可比较的相似度；
+-- - `model_name` / `version` 随向量落库，重建索引时整份替换（先删后插，同一事务），
+--   因此换嵌入模型后不会出现新旧向量混存；
+-- - v1 用文本存向量 + 内存 numpy 暴力余弦，不引入向量库（零新增服务）。
 CREATE TABLE IF NOT EXISTS embeddings (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     chunk_id       INTEGER NOT NULL REFERENCES document_chunks(id),
@@ -258,6 +262,8 @@ CREATE TABLE IF NOT EXISTS embeddings (
     vector_json    TEXT,
     created_at     TEXT
 );
+
+CREATE INDEX IF NOT EXISTS idx_embeddings_chunk ON embeddings (chunk_id);
 
 -- 总结的 Word 交付记录（工单 16 / US16）：由「总结 + 引用」按模板生成，
 -- 与方案成品（generations）分开记账——总结没有结构化方案，绝不伪造 plan。
