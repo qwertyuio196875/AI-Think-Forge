@@ -13,10 +13,16 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 
 class GenerationFormat(str, Enum):
-    """成品格式（ADR-0003 首版双轨：Word 与单文件 HTML）。"""
+    """成品格式（ADR-0003：Word、单文件 HTML；工单 29 增 PPT 截图版）。
+
+    - `docx`：Word 成品（方案 / 正文）；
+    - `html`：单文件 HTML 演示（deck）；
+    - `pptx`：截图版 PPT（HTML deck → 逐页截图 → 装配，ADR-0004）。
+    """
 
     docx = "docx"
     html = "html"
+    pptx = "pptx"
 
 
 class GenerationSource(str, Enum):
@@ -74,6 +80,8 @@ class Generation(BaseModel):
     format: GenerationFormat
     file_path: str
     template_used: str
+    # 截图版 PPT 所依据的来源页面规划（工单 29）；无规划的成品为 None。
+    page_plan_id: int | None = None
     # 来源（正文成品 / 大纲导出）。这一列现在由后端给出，#18 收口文件名前缀时
     # 前端就能据此把两者一眼分开。
     source: GenerationSource = GenerationSource.outline

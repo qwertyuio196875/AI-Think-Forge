@@ -34,18 +34,23 @@ class GenerationRepository:
         file_path: str,
         template_used: str,
         source: str = SOURCE_OUTLINE,
+        page_plan_id: int | None = None,
     ) -> dict:
         """记录一次成品生成（产物已落盘并通过完整性检查后才调用）。
 
         `source` 区分「正文成品」（body，来自填充的章节正文）与「大纲导出」
         （outline，直接渲染方案正文）。缺省 outline：既有调用点行为不变。
+
+        `page_plan_id`（工单 29）：截图版 PPT 成品登记其所依据的来源页面规划；
+        NULL = 无规划的成品（Word / 大纲 HTML）。可空，兼容既有调用点。
         """
         with connect(self._db_path) as connection:
             cursor = connection.execute(
                 """
                 INSERT INTO generations
-                    (task_id, plan_id, format, file_path, template_used, source, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (task_id, plan_id, format, file_path, template_used,
+                     source, page_plan_id, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     task_id,
@@ -54,6 +59,7 @@ class GenerationRepository:
                     file_path,
                     template_used,
                     source,
+                    page_plan_id,
                     utcnow_iso(),
                 ),
             )

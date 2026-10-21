@@ -25,15 +25,25 @@ from pathlib import Path
 
 from app import config
 from app.db.generation_repository import SOURCE_BODY, GenerationRepository
+from app.db.page_plan_repository import PagePlanRepository
+from app.db.plan_section_repository import PlanSectionRepository
 from app.db.summary_deliverable_repository import SummaryDeliverableRepository
 from app.db.template_repository import TemplateRepository
-from app.generation.deck import build_html_deck, verify_html_deliverable
+from app.generation.deck import (
+    build_html_deck,
+    build_html_deck_from_slides,
+    verify_html_deliverable,
+)
+from app.generation.page_deck import slides_for_page_plan
+from app.generation.pptx import assemble_pptx, verify_pptx_deliverable
+from app.generation.screenshots import SlideRenderer, screenshot_slides
 from app.generation.templates import resolve_template
 from app.generation.themes import DeckTheme
 from app.generation.word import build_word_deliverable, verify_word_deliverable
 
 FORMAT_DOCX = "docx"
 FORMAT_HTML = "html"
+FORMAT_PPTX = "pptx"
 
 # 单文件 HTML 演示所用「主题模板」在生成记录里的标识前缀（`generations.template_used`）。
 # 术语（GLOSSARY）**模板**：样式文件；HTML 一轨的样式载体就是主题，故沿用同一列记录，
@@ -288,6 +298,104 @@ def generate_html_deliverable(
         "network_resources_declared": list(theme.network_resources),
         "presenter_mode": "in-page-overlay",
     }
+
+
+def generate_pptx_deliverable(
+    *,
+    task_id: int,
+    task_title: str,
+    theme: DeckTheme,
+    data_dir: str | Path,
+    generation_repository: GenerationRepository,
+    section_repository: PlanSectionRepository,
+    page_plan_repository: PagePlanRepository,
+    renderer: SlideRenderer,
+) -> dict:
+    """生成一份**截图版 PPT**（HTML deck → 逐页截图 → 装配 pptx）并记录。
+
+    与 Word / HTML 同一条纪律：**先确认产物合格，再落库**；任何失败丢弃产物、不落库、
+    磁盘上不留 pptx（规格 US 22 + issue #29 验收）。
+
+    三步走（issue #29 验收 + ADR-0004）：
+    1. 取最新页面规划（`page_plans.latest_for_task`）——没有规划 = 没有「章节 → 页列表」，
+       截图版 PPT 无从谈起，明确报错（不落库、不产文件）；
+    2. 页面规划 + 已填章节 → 渲染 HTML deck → 逐页截图（`renderer`，注入点）；
+    3. 截图序列 → 装配 pptx → 回读校验（页数 = 规划页数 + 结尾页、每页一张满幅图）。
+       校验通过才 `create(format="pptx", source=body, page_plan_id=...)`。
+
+    `renderer` 是依赖注入点：生产传 `PlaywrightScreenshotRenderer()`（真实截图），测试
+    **绝不启动浏览器**（注入产真实 PNG 的假实现）。
+    """
+    page_plan = page_plan_repository.latest_for_task(task_id)
+    if page_plan is None:
+        raise ValueError("该任务还没有页面规划：截图版 PPT 需要先按目标页数规划（#25）")
+    page_plan_id = int(page_plan["id"])
+    plan_id = int(page_plan["plan_id"])
+    pages = _decode_pages(page_plan["pages_json"])
+
+    sections = section_repository.list_for_plan(plan_id)
+    slides = slides_for_page_plan(
+        pages=pages,
+        sections=sections,
+        task_title=task_title,
+        plan_title=task_title,
+    )
+
+    output_dir = Path(data_dir) / config.DELIVERABLES_SUBDIR / str(task_id)
+    html_path = output_dir / f".pptx-stage-{page_plan_id}.html"
+    build = build_html_deck_from_slides(
+        slides=slides,
+        task_title=task_title,
+        plan_md="",
+        theme=theme,
+        output_path=html_path,
+    )
+    output_path = _unique_output_path(
+        output_dir, page_plan_id, suffix=".pptx", prefix=BODY_FILE_PREFIX
+    )
+
+    # 截图 → 装配 → 校验，任一失败即丢弃，磁盘不留 pptx（issue #29 验收 ③）。
+    try:
+        pngs = screenshot_slides(build=build, output_dir=output_dir, renderer=renderer)
+        assemble_pptx(pngs, output_path)
+        verify_pptx_deliverable(output_path, expected_slides=len(slides))
+    except Exception:
+        output_path.unlink(missing_ok=True)
+        html_path.unlink(missing_ok=True)
+        raise
+
+    output_path = Path(str(output_path))
+    record = generation_repository.create(
+        task_id=task_id,
+        plan_id=plan_id,
+        format=FORMAT_PPTX,
+        file_path=str(output_path),
+        template_used=deck_template_name(theme.id),
+        source=SOURCE_BODY,
+        page_plan_id=page_plan_id,
+    )
+
+    return {
+        **record,
+        "integrity_ok": True,
+        "theme_used": theme.id,
+        "slides": len(slides),
+        "page_plan_id": page_plan_id,
+    }
+
+
+def _decode_pages(pages_json: str) -> list[dict]:
+    """把 `page_plans.pages_json` 反序列化成页列表；损坏则抛明确错误。"""
+    import json as _json
+
+    try:
+        pages = _json.loads(pages_json)
+    except (_json.JSONDecodeError, TypeError) as exc:
+        raise ValueError(f"页面规划 `pages_json` 无法解析：{exc}") from exc
+    if not isinstance(pages, list):
+        # 业务闸门（路由捕获 ValueError → 409「尚未规划」），不能用 TypeError。
+        raise ValueError("页面规划 `pages_json` 必须是页列表")  # noqa: TRY004
+    return pages
 
 
 def _unique_output_path(

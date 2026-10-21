@@ -136,6 +136,12 @@ def create_app(
     # 测试经 `dependency_overrides[get_embedding_client]` 注入确定性假向量。
     app.state.embedding_client = ConfiguredEmbeddingClient()
 
+    # PPT 截图渲染器（工单 29）：生产默认真截图（Playwright + Chromium，延迟加载）。
+    # 测试经 `dependency_overrides[get_pptx_renderer]` 注入产真实 PNG 的假实现。
+    from app.generation.screenshots import PlaywrightScreenshotRenderer
+
+    app.state.pptx_renderer = PlaywrightScreenshotRenderer()
+
     app.include_router(api_router, prefix=config.API_PREFIX)
 
     # API 路由注册在前；静态托管挂在 "/" 兜底，仅当前端构建产物存在时启用。
