@@ -431,6 +431,10 @@
                 @back-to-revise="backToRevise"
               />
 
+              <!-- 填充面板：确认后才有篇幅可定（工单 15）。与生成面板分开——
+                   填充是写作（唯一会调模型），生成是确定性渲染，混在一起分不清点下去花不花额度。 -->
+              <FillPanel v-if="plan.status === 'confirmed'" :task-id="plan.task_id" />
+
               <!-- 生成面板：确认且无未处置项后真实可用（Word 成品） -->
               <GenerationPanel
                 :task-id="plan.task_id"
@@ -578,6 +582,7 @@ import { splitPlanSections } from '../utils/markdown'
 import { formatDateTime, statusDotClass, statusLabel } from '../utils/taskMeta'
 import { awaitingLabel, awaitingResumeHint } from '../utils/resumeMeta'
 import GenerationPanel from '../components/GenerationPanel.vue'
+import FillPanel from '../components/FillPanel.vue'
 import ModelSelect from '../components/ModelSelect.vue'
 import SectionListCard from '../components/SectionListCard.vue'
 

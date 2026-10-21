@@ -791,6 +791,63 @@ export function listPlanSections(taskId: number): Promise<PlanSectionListRespons
 }
 
 /* ============================================================
+   填充：目标字数分摊（工单 15）—— ADR-0006
+   权威来源：backend/app/models/fill.py、routes/fill.py、fill/budget.py
+   ============================================================ */
+
+/**
+ * 分摊预览里的一章。
+ *
+ * 只有「分到多少字」，不含正文与状态：预览发生在**尚未开始填充**时，
+ * 那时还没有正文可谈。
+ */
+export interface FillAllocationItem {
+  seq: number
+  title: string
+  target_length: number
+}
+
+/**
+ * 目标字数的分摊预览（**只算不写**）。
+ *
+ * 与 `startFill` 的区别至关重要：预览不改章节表、不建填充任务。用户在参数弹窗里
+ * 来回试字数时，系统不该因此留下一串填充记录。
+ */
+export interface FillAllocationResponse {
+  plan_id: number
+  target_length: number
+  items: FillAllocationItem[]
+  total: number
+}
+
+/** 开始填充的请求体（与后端 `FillRequest` 对应，`extra="forbid"`）。 */
+export interface FillRequest {
+  /** 目标字数（按汉字计）；省略时后端按方案各章建议字数求和。 */
+  target_length?: number
+  /** 逐章改过的字数（序号 → 字数）；只含改动的章。 */
+  section_lengths?: Record<number, number>
+}
+
+/**
+ * 试算字数分摊：POST /api/tasks/{id}/fill/allocation（只算不写）。
+ *
+ * 分摊规则只在后端实现一份（`app.fill.budget`），前端绝不自己摊一遍——
+ * 两套实现一旦漂移，用户看到的预览与实际写出的正文就是两回事。
+ *
+ * 拒绝口径与 `startFill` 一致：无方案 / 未确认 → 409，无可切分章节 → 422，
+ * 字数超 300–20000 或分摊不成立 → 422（detail 说明原因，不静默夹到边界值）。
+ */
+export function previewFillAllocation(
+  taskId: number,
+  payload: FillRequest = {}
+): Promise<FillAllocationResponse> {
+  return request<FillAllocationResponse>(`/tasks/${taskId}/fill/allocation`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  })
+}
+
+/* ============================================================
    历史、续作与删除 —— TB-10
    权威来源：backend/app/models/{history,task}.py、routes/{history,tasks}.py
    ============================================================ */
@@ -1348,6 +1405,7 @@ export default {
   listOpenItems,
   resolveOpenItem,
   listPlanSections,
+  previewFillAllocation,
   listHistory,
   getHistoryDetail,
   getDeletionImpact,

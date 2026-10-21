@@ -16,12 +16,15 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.models.generation import GenerationResponse
 from app.models.plan_section import PlanSectionItem
 
-# ADR-0006：单次填充的目标字数上限。超出即拒绝并说明原因，不做静默截断——
-# 截断会让用户以为写了一万字，实际只写了两千。
+# ADR-0006 / US 14：目标字数的允许区间。两头都**不静默改成边界值**——
+# 静默夹紧会让用户以为写了一万字，实际只写了两千（或反过来白烧额度）。
+MIN_TARGET_LENGTH = 300
 MAX_TARGET_LENGTH = 20000
 
-# 方案没给建议字数（plan-v2 旧格式）时的缺省目标字数；只是一个可用的起点，
-# 真正的按章分摊属 #15，本单不猜分摊结果。
+# 常用档位（US 12）。前端参数弹窗与后端校验必须同一套值，所以放在这里而不是各写一份。
+TARGET_LENGTH_PRESETS: tuple[int, ...] = (1000, 2000, 3000, 5000, 8000, 12000)
+
+# 方案没给建议字数（plan-v2 旧格式）时的缺省目标字数；真正的按章分摊见 `app.fill.budget`。
 DEFAULT_TARGET_LENGTH = 3000
 
 
@@ -55,6 +58,32 @@ class FillRequest(BaseModel):
 
     target_length: int | None = Field(default=None, ge=1)
     section_lengths: dict[int, int] | None = None
+
+
+class FillAllocationItem(BaseModel):
+    """分摊预览里的一章：只回答「这一章分到多少字」。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    seq: int
+    title: str
+    target_length: int
+
+
+class FillAllocationResponse(BaseModel):
+    """目标字数的分摊预览（工单 15）：**只算不写**。
+
+    为什么要有它：用户在参数弹窗里选完字数、还没点「确认开始填充」时，得先看见
+    「哪一章多少字」才好逐章调整。若让前端自己摊一遍，就会出现两套分摊实现，
+    一旦算法改动两边立刻不一致（规格 §2 点名反对的「多套实现互相错位」）。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    plan_id: int
+    target_length: int
+    items: list[FillAllocationItem]
+    total: int
 
 
 class FillTask(BaseModel):

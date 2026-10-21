@@ -1,12 +1,14 @@
-"""填充阶段的业务逻辑：入口校验、目标字数定值、进度初值（工单 9 / ADR-0006）。
+"""填充阶段的业务逻辑：入口校验、目标字数定值与逐章分摊、进度初值（工单 9 / 15 / ADR-0006）。
 
-本单**不生成正文**：不调模型、不写 `plan_sections.content_md`。这里只做三件事——
+本模块**不生成正文**：不调模型、不写 `plan_sections.content_md`。这里只做三件事——
 把用户给的字数规整成一次填充的参数、把这次尝试登记成 `fill_tasks` 一行、把章节清单
 连同状态一起回给前端做初始进度。
 
-为什么字数定值放在这里而不是路由里：目标字数有三条来源（用户显式给、方案各章建议字数
-之和、系统缺省），三条来源的优先级是业务规则，会随 #15 的字数分摊一起演进；路由只该
-关心 HTTP 语义。本单刻意**不做分摊**，只把「目标字数」这一个总数与逐章建议字数落库。
+字数为什么在这里定：目标字数有三条来源（用户显式给、方案各章建议字数之和、系统缺省），
+三条来源的优先级是业务规则；分摊算法本身是纯函数，见 `app.fill.budget`。
+
+**权重回源头读方案**，不读章节表的 `target_length`：后者是上一次分摊的产物，拿它当权重
+会让每次重新分摊都放大上次的偏差。方案才是字数的真源（ADR-0006）。
 """
 
 from __future__ import annotations
@@ -15,7 +17,14 @@ from fastapi import HTTPException, status
 
 from app.db.fill_task_repository import FillTaskRepository
 from app.db.plan_section_repository import PlanSectionRepository
-from app.models.fill import DEFAULT_TARGET_LENGTH, MAX_TARGET_LENGTH, FillRequest
+from app.fill.budget import AllocationError, allocate_lengths
+from app.grilling.plan_sections import parse_plan_sections
+from app.models.fill import (
+    DEFAULT_TARGET_LENGTH,
+    MAX_TARGET_LENGTH,
+    MIN_TARGET_LENGTH,
+    FillRequest,
+)
 
 # 参数不可用统一用 422。这里写字面量而不是 `status.HTTP_422_UNPROCESSABLE_ENTITY`：
 # 该常量在新版 Starlette 里已改名并会发弃用警告，而旧版又没有新名字；与 grilling 路由
@@ -43,8 +52,8 @@ def validate_request(payload: FillRequest, rows: list[dict]) -> dict[int, int]:
       填充却按旧字数写；
     - 字数必须为正整数。
 
-    目标字数的上限**不在这里**判：它既可能是用户给的，也可能是各章建议字数之和，只有
-    定值之后才知道。见 `ensure_target_length_within_cap`。
+    目标字数的区间**不在这里**判：它既可能是用户给的，也可能是各章建议字数之和，只有
+    定值之后才知道。见 `ensure_target_length_within_range`。
     """
     if not payload.section_lengths:
         return {}
@@ -70,21 +79,35 @@ def validate_request(payload: FillRequest, rows: list[dict]) -> dict[int, int]:
     return normalized
 
 
-def resolve_target_length(payload: FillRequest, rows: list[dict]) -> int:
+def suggested_weights(plan: dict, rows: list[dict]) -> dict[int, int | None]:
+    """各章的**分摊权重**：回源头读方案「章节」一节的建议字数。
+
+    按标题把方案条目与章节行对上（章节表只由方案切出，标题相同即同一章）。方案没写
+    建议字数、或该章在方案里找不到时给 None，由 `budget` 退化为均分。
+    """
+    suggested = {section.title: section.suggested_length for section in parse_plan_sections(
+        plan.get("content_md", "")
+    )}
+    return {
+        int(row["seq"]): suggested.get(str(row["title"]))
+        for row in rows
+    }
+
+
+def resolve_target_length(payload: FillRequest, weights: dict[int, int | None]) -> int:
     """定下本次填充的目标字数。
 
     优先级（规格 §4 + ADR-0006）：
     1. 用户显式给的目标字数；
     2. 各章建议字数之和——但只有在**每一章**都有建议字数时才算；旧格式方案（plan-v2）
        有的章没建议字数，此时求和不成立（缺的章按 0 算会让目标字数凭空缩水）；
-    3. 系统缺省值 `DEFAULT_TARGET_LENGTH`。真正的按章分摊属 #15，本单不猜。
+    3. 系统缺省值 `DEFAULT_TARGET_LENGTH`。
     """
     if payload.target_length is not None:
         return int(payload.target_length)
 
-    suggested = [row["target_length"] for row in rows]
-    if all(length is not None for length in suggested):
-        return int(sum(suggested))
+    if weights and all(length is not None for length in weights.values()):
+        return int(sum(length for length in weights.values() if length is not None))
     return DEFAULT_TARGET_LENGTH
 
 
@@ -100,8 +123,20 @@ def ensure_no_active_fill(fill_repository: FillTaskRepository, task_id: int) -> 
         )
 
 
-def ensure_target_length_within_cap(target_length: int) -> None:
-    """ADR-0006：目标字数上限 20000，超出即拒绝并说明原因，不静默截断。"""
+def ensure_target_length_within_range(target_length: int) -> None:
+    """US 14：目标字数 300–20000；超出即拒绝并说明原因，**不静默改成边界值**。
+
+    文案里同时给出用户填的数与合法区间：只说「参数非法」等于让人自己猜边界；
+    而把 299 悄悄改成 300，用户拿到的是自己没要的篇幅。
+    """
+    if target_length < MIN_TARGET_LENGTH:
+        raise HTTPException(
+            status_code=UNPROCESSABLE,
+            detail=(
+                f"目标字数 {target_length} 低于下限 {MIN_TARGET_LENGTH} 字，"
+                f"不会自动改成 {MIN_TARGET_LENGTH}；请提高篇幅或分多篇写"
+            ),
+        )
     if target_length > MAX_TARGET_LENGTH:
         raise HTTPException(
             status_code=UNPROCESSABLE,
@@ -112,18 +147,32 @@ def ensure_target_length_within_cap(target_length: int) -> None:
         )
 
 
-def _with_section_lengths(rows: list[dict], lengths: dict[int, int]) -> list[dict]:
-    """返回逐章字数生效后的章节行（不改库），用来在**写库之前**定下目标字数。"""
-    if not lengths:
-        return rows
-    adjusted = []
-    for row in rows:
-        seq = int(row["seq"])
-        if seq in lengths:
-            adjusted.append({**row, "target_length": lengths[seq]})
-        else:
-            adjusted.append(row)
-    return adjusted
+def plan_lengths(
+    payload: FillRequest, plan: dict, rows: list[dict]
+) -> tuple[int, dict[int, int]]:
+    """定目标字数并分摊到各章，返回（目标字数, {序号: 字数}）。
+
+    顺序即纪律：目标字数先用内存里的副本算、判过区间才分摊、分摊成立才返回结果。
+    本函数**不写库**——拒绝必须发生在任何写入之前。
+    """
+    weights = suggested_weights(plan, rows)
+    target_length = resolve_target_length(payload, weights)
+    ensure_target_length_within_range(target_length)
+
+    overrides = validate_request(payload, rows)
+    try:
+        lengths = allocate_lengths(
+            target_length=target_length,
+            seqs=[int(row["seq"]) for row in rows],
+            weights=weights,
+            overrides=overrides,
+        )
+    except AllocationError as exc:
+        raise HTTPException(status_code=UNPROCESSABLE, detail=exc.detail) from exc
+
+    return target_length, {
+        int(row["seq"]): length for row, length in zip(rows, lengths, strict=True)
+    }
 
 
 def start_fill(
@@ -137,23 +186,16 @@ def start_fill(
     """执行入口流程，返回（填充任务行，章节行清单）。
 
     顺序即纪律：**先判、再写**。所有拒绝都发生在任何写入之前，失败请求不会留下半份
-    填充记录，也不会改动章节表——包括「各章建议字数之和超上限」这种只有算完才发现的拒绝，
-    所以目标字数先用内存里的副本算，判过上限才落库。
+    填充记录，也不会改动章节表——包括「分摊后各章之和超上限」这种只有算完才发现的拒绝。
     """
     rows = section_repository.list_for_plan(plan["id"])
     ensure_sections_exist(rows)
-
-    section_lengths = validate_request(payload, rows)
     ensure_no_active_fill(fill_repository, task_id)
 
-    target_length = resolve_target_length(
-        payload, _with_section_lengths(rows, section_lengths)
-    )
-    ensure_target_length_within_cap(target_length)
+    target_length, lengths = plan_lengths(payload, plan, rows)
 
-    # 逐章字数落在章节表（方案是字数真源），让只读清单与填充看到同一个数。
-    if section_lengths:
-        rows = section_repository.update_target_lengths(plan["id"], section_lengths)
+    # 分摊结果落在章节表（方案是字数真源），让只读清单与填充看到同一个数。
+    rows = section_repository.update_target_lengths(plan["id"], lengths)
 
     fill = fill_repository.start(task_id=task_id, plan_id=plan["id"], target_length=target_length)
     return fill, rows

@@ -27,6 +27,9 @@
 
 工单 14 追加 `POST /api/tasks/{task_id}/sections/{seq}/rewrite`：只重写一章，
 成品重新拼装成同一份（旧正文成品记录与文件一并清理）。
+
+工单 15 追加 `POST /api/tasks/{task_id}/fill/allocation`：**只算不写**的分摊预览，
+让参数弹窗在确认前就能看到「哪一章多少字」，并支持逐章调整。
 """
 
 from __future__ import annotations
@@ -49,10 +52,12 @@ from app.api.deps import (
 from app.api.gates import require_confirmed_plan
 from app.fill.rewrite import rewrite_section
 from app.fill.serial import run_serial_fill
-from app.fill.service import start_fill
+from app.fill.service import ensure_sections_exist, plan_lengths, start_fill
 from app.fill.writer import write_section
 from app.models.fill import (
     FILL_STATUS_LABELS,
+    FillAllocationItem,
+    FillAllocationResponse,
     FillRequest,
     FillResponse,
     SectionRewriteResponse,
@@ -105,6 +110,45 @@ def start_fill_task(
         created_at=fill["created_at"],
         items=items,
         total=len(items),
+    )
+
+
+@router.post("/{task_id}/fill/allocation", response_model=FillAllocationResponse)
+def preview_allocation(
+    task_id: int,
+    task_repository: TaskRepositoryDep,
+    plan_repository: PlanRepositoryDep,
+    open_item_repository: OpenItemRepositoryDep,
+    section_repository: PlanSectionRepositoryDep,
+    payload: FillRequest | None = None,
+) -> FillAllocationResponse:
+    """试算一次字数分摊（工单 15）：**只算不写**，不改章节表、不建填充任务。
+
+    为什么单独开一个只读端点：用户在参数弹窗里改字数时需要立刻看到「哪一章多少字」，
+    而 `POST /fill` 会真的登记一次填充任务。同一条分摊规则只实现一次（`app.fill.budget`），
+    预览与真正开工必然给出同一个结果。
+
+    拒绝口径与 `POST /fill` 完全一致（无方案/未确认 → 409、无可切分章节 → 422、
+    字数超范围或分摊不成立 → 422），这样用户在弹窗里就能被拦住，不必先点确认再吃一次错。
+    """
+    plan = require_confirmed_plan(
+        task_id, task_repository, plan_repository, open_item_repository, purpose="fill"
+    )
+
+    rows = section_repository.list_for_plan(plan["id"])
+    ensure_sections_exist(rows)
+
+    target_length, lengths = plan_lengths(payload or FillRequest(), plan, rows)
+    items = [
+        FillAllocationItem(
+            seq=int(row["seq"]),
+            title=str(row["title"]),
+            target_length=lengths[int(row["seq"])],
+        )
+        for row in rows
+    ]
+    return FillAllocationResponse(
+        plan_id=plan["id"], target_length=target_length, items=items, total=len(items)
     )
 
 
