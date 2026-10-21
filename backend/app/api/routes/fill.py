@@ -50,6 +50,7 @@ from app.api.deps import (
     TemplatesDirDep,
 )
 from app.api.gates import require_confirmed_plan
+from app.fill.deviation import measure
 from app.fill.rewrite import rewrite_section
 from app.fill.serial import run_serial_fill
 from app.fill.service import ensure_sections_exist, plan_lengths, start_fill
@@ -261,6 +262,7 @@ def run_fill(
     items = to_section_items(outcome["sections"])
     total = len(items)
     completed = int(fill["completed_sections"])
+    deviation = outcome["deviation"]
     return SerialFillResponse(
         task_id=task_id,
         fill_id=fill["id"],
@@ -272,6 +274,11 @@ def run_fill(
         items=items,
         total=total,
         deliverable=outcome["deliverable"],
+        # 字数偏差（工单 16）：实际与目标都由后端按唯一计量入口算，前端不重算。
+        target_length=deviation.target_length,
+        actual_length=deviation.actual_length,
+        deviation_ratio=round(deviation.ratio, 4),
+        deviation_note=deviation.note,
     )
 
 
@@ -310,6 +317,7 @@ def cancel_fill(
     items = to_section_items(rows)
     total = len(items)
     completed = sum(1 for row in rows if row["status"] == "completed")
+    deviation = measure(rows, int(fill["target_length"]))
     return SerialFillResponse(
         task_id=task_id,
         fill_id=fill["id"],
@@ -322,6 +330,11 @@ def cancel_fill(
         total=total,
         # 中断不出成品：还没写完整篇。
         deliverable=None,
+        # 中断时也报当前偏差：用户要知道「停下来时已经写了多少」，好判断要不要续写。
+        target_length=deviation.target_length,
+        actual_length=deviation.actual_length,
+        deviation_ratio=round(deviation.ratio, 4),
+        deviation_note=None,
     )
 
 

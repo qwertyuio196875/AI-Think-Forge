@@ -47,15 +47,19 @@ def _write_body(
     key_points: str,
     target_length: int | None,
     history: str | None,
+    remaining_length: int | None = None,
 ) -> str:
     """写出一章的正文 Markdown：短章一次调用，长章分段调用再拼接（工单 17）。
 
     分段与否只看**目标字数**（`app.fill.segment.needs_segmentation`）：8000 字量级的
-    单章在 8192 token 的输出上限下一次写不完，硬写的结果是「被长度上限截断」或
+    单章在 8192 token 的输出上限下一次写不完，硬写的结果是「被长度限制截断」或
     「只写了半篇」。短章仍走原来的单次调用——多调一次只是多花钱、多一次失败机会。
 
     两条路径共用同一套按次调用参数（`SECTION_MAX_TOKENS` / `SECTION_TIMEOUT_SECONDS`）
     与同一个提示词渲染，因此 #10 的既有契约一条不改。
+
+    `remaining_length` 是**全文还剩多少字**（工单 16）：交给模型做篇幅收敛，避免
+    总字数一路超出去。分段路径自己按段递减，不再吃这个值。
     """
     if target_length is not None and needs_segmentation(target_length):
         return write_body_segmented(
@@ -74,6 +78,8 @@ def _write_body(
         key_points=key_points,
         target_length=target_length,
         history=history,
+        remaining_length=remaining_length,
+        used_length=_used_hint(remaining_length, target_length),
     )
     return complete_text(
         model_client,
@@ -82,6 +88,13 @@ def _write_body(
         max_tokens=SECTION_MAX_TOKENS,
         timeout=SECTION_TIMEOUT_SECONDS,
     )
+
+
+def _used_hint(remaining_length: int | None, target_length: int | None) -> int | None:
+    """已用字数 = 目标 − 剩余。两者都已知时才算，缺一个就不给（不猜）。"""
+    if remaining_length is None or target_length is None:
+        return None
+    return max(0, target_length - remaining_length)
 
 
 def ensure_section_writable(section: dict) -> None:
@@ -134,6 +147,7 @@ def write_section(
     templates_dir: str,
     build_deliverable: bool = True,
     history: str | None = None,
+    remaining_length: int | None = None,
 ) -> dict:
     """写一章正文并随即拼装成品；返回（章节项, 成品记录）。
 
@@ -167,6 +181,7 @@ def write_section(
             key_points=section["key_points"],
             target_length=section["target_length"],
             history=history,
+            remaining_length=remaining_length,
         ).strip()
     except ModelCallError:
         # 失败留痕：章节标「失败」，不写正文、不产出成品。

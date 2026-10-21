@@ -129,13 +129,18 @@ class SectionWriteResponse(BaseModel):
 
 
 class SerialFillResponse(BaseModel):
-    """全篇逐章填完后的响应：进度 + 章节清单 + 成品（工单 11）。
+    """全篇逐章填完后的响应：进度 + 章节清单 + 成品 + 字数偏差（工单 11 / 16）。
 
     进度文字由后端给（`progress_label` = 「第 N / M 章」），前端不必自己拼——
     两处各拼一次就会出现「第 3 章」与「第 3 / 8 章」两种说法。
 
     `deliverable` 在**被中断**时为 None（工单 13）：中断时还没写完整篇，
     此时出一份成品等于把「写了一半的文章」当成品交出去。
+
+    偏差四项（工单 16）：`target_length` / `actual_length` / `deviation_ratio` /
+    `deviation_note`。为什么由后端算：偏差要按**唯一计量入口** `app.hanzi.count_hanzi`
+    数，前端另数一套就会得出不同的数（US 18 要求用户数出来的数与系统给的数能对上）。
+    `deviation_note` 在 ±15% 以内为 None（不打扰），超出才给可读说明。
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -150,6 +155,12 @@ class SerialFillResponse(BaseModel):
     items: list[PlanSectionItem]
     total: int
     deliverable: GenerationResponse | None = None
+
+    # 字数偏差（工单 16）。
+    target_length: int | None = None
+    actual_length: int | None = None
+    deviation_ratio: float | None = None
+    deviation_note: str | None = None
 
 
 class SectionRewriteResponse(BaseModel):

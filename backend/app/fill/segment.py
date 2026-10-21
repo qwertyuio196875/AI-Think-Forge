@@ -84,6 +84,7 @@ def write_body_segmented(
             remaining_length=remaining,
             citations=citations,
             continuation=_tail(parts),
+            used_length=written,
         )
 
         segment = complete_text(

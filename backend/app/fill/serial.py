@@ -26,9 +26,10 @@ from app.db.fill_task_repository import FillTaskRepository
 from app.db.generation_repository import GenerationRepository
 from app.db.plan_section_repository import PlanSectionRepository
 from app.db.template_repository import TemplateRepository
+from app.fill.deviation import measure, pick_regeneration_target, remaining_length
 from app.fill.document import compose_body_markdown
 from app.fill.history import build_history, summarize_section
-from app.fill.writer import STATUS_COMPLETED, write_section
+from app.fill.writer import STATUS_COMPLETED, _write_body, write_section
 from app.generation.service import generate_body_word_deliverable
 from app.providers.model_client import ModelCallError
 
@@ -97,6 +98,10 @@ def run_serial_fill(
         if fill_repository.is_cancel_requested(active["id"]):
             return _stop_cancelled(fill_repository, section_repository, plan, active)
 
+        # 每章重新读一遍：剩余字数（工单 16）必须按**已落库**的正文算，
+        # 用循环外的快照会一直把余量算成开跑前的值。
+        current_rows = section_repository.list_for_plan(plan["id"])
+
         try:
             write_section(
                 task_id=task_id,
@@ -114,6 +119,9 @@ def run_serial_fill(
                 build_deliverable=False,
                 # 前情提要：第一章为空（不喂「暂无」占位）。
                 history=build_history(summaries),
+                # 剩余字数（工单 16）：把「全文还剩多少」传给模型，否则它会照本章目标
+                # 一路写下去，总字数必然超出去。
+                remaining_length=remaining_length(current_rows, int(active["target_length"])),
             )
         except ModelCallError as exc:
             # 失败留痕：写清是第几章，别只留一句「生成失败」。
@@ -142,6 +150,22 @@ def run_serial_fill(
             if summary:
                 summaries.append(summary)
 
+    # 收尾偏差校验（工单 16）：只在**新写完**的章上做——若本次是「续写剩余章节」，
+    # 那些早就写完的章不该因为这次的总量再被改一遍。
+    if pending:
+        _correct_deviation(
+            task_id=task_id,
+            plan=plan,
+            model_client=model_client,
+            model_name=model_name,
+            section_repository=section_repository,
+            template_repository=template_repository,
+            generation_repository=generation_repository,
+            data_dir=data_dir,
+            templates_dir=templates_dir,
+            target_length=int(active["target_length"]),
+        )
+
     # 全部写完：整体重新拼装成品（成品目录与章节清单同源）。
     refreshed = section_repository.list_for_plan(plan["id"])
     deliverable = generate_body_word_deliverable(
@@ -162,7 +186,72 @@ def run_serial_fill(
         error=None,
     )
     assert fill is not None  # 填充任务刚刚存在，更新不会让它消失
-    return {"fill": fill, "sections": refreshed, "deliverable": deliverable}
+
+    deviation = measure(refreshed, int(active["target_length"]))
+    return {
+        "fill": fill,
+        "sections": refreshed,
+        "deliverable": deliverable,
+        "deviation": deviation,
+    }
+
+
+def _correct_deviation(
+    *,
+    task_id: int,
+    plan: dict,
+    model_client,
+    model_name: str | None,
+    section_repository: PlanSectionRepository,
+    template_repository: TemplateRepository,
+    generation_repository: GenerationRepository,
+    data_dir: str,
+    templates_dir: str,
+    target_length: int,
+) -> None:
+    """偏差超过 ±15% 时，对**最短**的一章重生成一次（工单 16）。
+
+    三条约束：
+    - **只做一次**：写完还差，说明目标与这一章的体量不匹配；再重试只是继续烧额度。
+      剩下的交给 `deviation.note` 明示偏差，由用户决定。
+    - **只重那一章**：其他章节的正文逐字不动（「不截断、不注水」的落点）。
+    - **不补写**：走的是整章重写，不是往末尾追加无意义的段落——规格明令不得注水。
+
+    重生成失败只影响这次修正：正文保留、偏差如实上报，不把整次填充判成失败
+    （已经写完的正文是合格产物，丢掉反而是损失）。
+    """
+    rows = section_repository.list_for_plan(plan["id"])
+    if measure(rows, target_length).within_threshold:
+        return
+
+    target = pick_regeneration_target(rows)
+    if target is None:
+        return
+
+    # 重写这一章时，把它该分到的份额作为目标：整章重写才有意义，追加段落等于注水。
+    share = target["target_length"] or target_length
+    try:
+        body_md = _write_body(
+            model_client=model_client,
+            model_name=model_name,
+            title=target["title"],
+            key_points=target["key_points"],
+            target_length=int(share),
+            history=None,
+        ).strip()
+    except ModelCallError:
+        # 重生成失败不回滚已写好的正文；偏差由调用方如实上报。
+        return
+
+    if not body_md:
+        return
+
+    section_repository.write_content(
+        plan_id=plan["id"],
+        seq=int(target["seq"]),
+        content_md=body_md,
+        status=STATUS_COMPLETED,
+    )
 
 
 def _completed_count(section_repository: PlanSectionRepository, plan_id: int) -> int:
@@ -193,4 +282,10 @@ def _stop_cancelled(
         error=None,
     )
     assert fill is not None  # 填充任务刚刚存在，更新不会让它消失
-    return {"fill": fill, "sections": refreshed, "deliverable": None}
+    return {
+        "fill": fill,
+        "sections": refreshed,
+        "deliverable": None,
+        # 中断时也报当前偏差：用户要知道「停下来时已经写了多少」，好判断要不要续写。
+        "deviation": measure(refreshed, int(active["target_length"])),
+    }
