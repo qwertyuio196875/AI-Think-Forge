@@ -49,6 +49,10 @@ class ScriptedModelClient:
     支持两种脚本方式（TB-3 多轮推进需要「本轮前沿 / 收敛 / 方案」三次不同应答）：
     - `set_result`：之后每次调用返回同一条应答；
     - `set_sequence`：按调用顺序逐条返回，超出后重复最后一条。
+
+    另有一个「写到第几章才失败」的失败点（`fail_after`）：逐章写作需要表达
+    「第一章写成了、第二章挂了」这种中途失败，`set_error` 是「从现在起全挂」，
+    表达不了。
     """
 
     def __init__(self, *, result: str = "ok", error: BaseException | None = None) -> None:
@@ -56,6 +60,7 @@ class ScriptedModelClient:
         self._error = error
         self._sequence: list[str] = []
         self._sequence_index = 0
+        self._fail_after = 0
         self.calls: list[dict] = []
 
     def complete(
@@ -74,7 +79,8 @@ class ScriptedModelClient:
                 "timeout": timeout,
             }
         )
-        if self._error is not None:
+        if self._error is not None and self._sequence_index >= self._fail_after:
+            self._sequence_index += 1
             raise self._error
         if self._sequence:
             index = min(self._sequence_index, len(self._sequence) - 1)
@@ -93,10 +99,21 @@ class ScriptedModelClient:
         self._sequence = list(results)
         self._sequence_index = 0
         self._error = None
+        self._fail_after = 0
 
     def set_error(self, error: BaseException | None) -> None:
         """让后续调用抛出指定异常（测试模型失败路径）。"""
         self._error = error
+        self._fail_after = 0
+
+    def fail_after(self, successes: int, error: BaseException) -> None:
+        """前 `successes` 次调用正常应答，之后每次都抛错。
+
+        用于表达「写到第 N 章才失败」：成功次数要连同拷问阶段的几次调用一起数，
+        所以调用方用 `len(client.calls)` 之类的已知偏移量来定这个数。
+        """
+        self._error = error
+        self._fail_after = successes
 
 
 class ScriptedModelClientFactory:

@@ -86,12 +86,17 @@ def write_section(
     generation_repository: GenerationRepository,
     data_dir: str,
     templates_dir: str,
+    build_deliverable: bool = True,
 ) -> dict:
     """写一章正文并随即拼装成品；返回（章节项, 成品记录）。
 
     顺序：写正文（落库）→ 拼装成品（渲染 + 回读校验）→ 落成品记录。
     模型失败走 `ModelCallError`，由路由翻成 502；此时章节已标「失败」、
     成品文件不存在。
+
+    `build_deliverable=False` 时只写正文、不拼装成品：全篇串行（工单 11）要先把
+    几章都写完再**整体**拼一份成品，中途每写一章就产一次成品，那几份都是「只写了一半」
+    的残件——用户拿到三份半成品，而不是一份完整的。
     """
     rows = section_repository.list_for_plan(plan["id"])
     section = next((row for row in rows if int(row["seq"]) == seq), None)
@@ -161,6 +166,11 @@ def write_section(
         error=None,
     )
 
+    item = to_section_items([updated])[0]
+    if not build_deliverable:
+        # 全篇串行：先只写正文，成品等全部写完再一次性拼装。
+        return {"fill_id": fill["id"], "section": item, "deliverable": None}
+
     # 随即拼装成品：章标题由系统给，只拼已写正文的章。
     body_md_document = compose_body_markdown(refreshed)
     record = generate_body_word_deliverable(
@@ -174,7 +184,6 @@ def write_section(
         generation_repository=generation_repository,
     )
 
-    item = to_section_items([updated])[0]
     return {"fill_id": fill["id"], "section": item, "deliverable": record}
 
 
