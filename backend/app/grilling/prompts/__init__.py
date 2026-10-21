@@ -29,6 +29,9 @@ GRILLING_PROMPT_VERSION = "grilling-v2"
 # 旧格式方案不会被拒——解析方在 `app.grilling.plan_sections` 里降级处理。
 PLAN_PROMPT_VERSION = "plan-v3"
 REVISION_PROMPT_VERSION = "revision-v1"
+# fact-check-v1（工单 23 / ADR-0005）：事实型问题判定。判定规则写死在资产里，
+# 不交给模型自由心证——否则同一个问题这轮检索、下轮不检索，引用卡片时有时无。
+FACT_CHECK_PROMPT_VERSION = "fact-check-v1"
 
 # 版本 → 资产文件名。旧版本保留可读（版本化资产是「旧版本不丢」的留痕），
 # 代码只经版本常量引用当前版本。
@@ -39,6 +42,7 @@ _ASSET_BY_VERSION = {
     "plan-v2": "plan_v2.md",
     PLAN_PROMPT_VERSION: "plan_v3.md",
     REVISION_PROMPT_VERSION: "revision_v1.md",
+    FACT_CHECK_PROMPT_VERSION: "fact_check_v1.md",
 }
 
 _MAX_QUESTIONS_TOKEN = "%%MAX_QUESTIONS%%"
@@ -48,6 +52,8 @@ _NO_HISTORY = "（暂无：这是第一轮）"
 _NO_OPEN_ITEMS = "（暂无：没有未定的待确认事项）"
 
 _SKIP_RENDERED = "（用户暂时跳过：未定，已进入待确认事项）"
+
+_NO_CITATIONS = "（暂无：本轮没有采用任何知识库引用）"
 
 
 def load_asset(version: str = GRILLING_PROMPT_VERSION) -> str:
@@ -89,11 +95,29 @@ def _render_open_items(open_items: list[str] | None) -> str:
     return "\n".join(f"- {item}" for item in open_items)
 
 
+def _render_citations(citations: list[dict] | None) -> str:
+    """把「已采用的引用片段」渲染为区块内容（工单 23 / 24）。
+
+    只渲染**用户勾选保留**的片段：界面上的取消必须真的生效，否则用户看到的与实际
+    喂给模型的就变成两回事。片段带出处（文件名 + 定位），模型引用时能说明依据。
+    """
+    if not citations:
+        return _NO_CITATIONS
+    lines: list[str] = []
+    for item in citations:
+        title = f"《{item.get('name', '未知资料')}》{item.get('locator_label', '')}".strip()
+        lines.append(f"### {title}")
+        lines.append(str(item.get("text", "")).strip())
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
 def render_frontier_messages(
     known_input: str,
     rounds: list[dict] | None = None,
     determined: list[str] | None = None,
     open_items: list[str] | None = None,
+    citations: list[dict] | None = None,
 ) -> list[dict]:
     """渲染「生成前沿问题」的对话消息：系统规则 + 已知信息 + 已确定决策 + 未定 + 历轮问答。
 
@@ -119,6 +143,8 @@ def render_frontier_messages(
         f"{_render_open_items(open_items)}\n\n"
         "## 历轮问答（据此把前沿向外推）\n"
         f"{_render_history(rounds)}\n\n"
+        "## 已采用的知识库引用（用户勾选保留的资料片段；可作为提问依据）\n"
+        f"{_render_citations(citations)}\n\n"
         "## 本轮任务\n"
         f"请基于以上已知信息与历轮问答，提出当前「前沿」的全部问题（1~{MAX_FRONTIER_QUESTIONS} 个，"
         "相互独立，且只问尚未解决的关键问题）；每个问题给出推荐答案、为什么现在问与备选方向；"
@@ -195,6 +221,33 @@ def render_revision_messages(
         "## 本轮任务\n"
         "请据用户的修订指令更新方案，输出**完整**的 Markdown 方案正文（不要输出 JSON）；"
         "只改与指令相关的部分，其余章节保持原样。"
+    )
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+
+
+def render_fact_check_messages(questions: list[dict]) -> list[dict]:
+    """渲染「判定哪些前沿问题需要外部依据」的对话消息（工单 23）。
+
+    一次判定整轮问题（而不是逐个问）：同一轮的问题彼此有关联，放在一起判更稳，
+    也省调用次数。`index` 让结果能对回原问题，不依赖输出顺序。
+
+    判定规则全部来自资产（`fact_check_v1.md`），这里只负责把问题按序编号喂进去。
+    """
+    system = load_asset(FACT_CHECK_PROMPT_VERSION)
+    lines: list[str] = []
+    for index, question in enumerate(questions):
+        title = str(question.get("title", "")).strip()
+        body = str(question.get("body", "")).strip()
+        lines.append(f"{index}. 标题：{title}\n   正文：{body}")
+    listing = "\n".join(lines) if lines else "（本轮没有问题）"
+    user = (
+        "## 本轮前沿问题（按下标编号）\n"
+        f"{listing}\n\n"
+        "## 本轮任务\n"
+        "请逐个判定上列问题是否需要外部依据，按资产里的输出契约返回 JSON。"
     )
     return [
         {"role": "system", "content": system},

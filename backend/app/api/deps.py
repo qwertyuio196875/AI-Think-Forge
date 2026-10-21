@@ -30,6 +30,7 @@ from app.providers.key_store import KeyStore
 from app.providers.model_client import ModelClient, ProviderModelClientFactory
 from app.providers.tiered_client import TieredModelClient
 from app.providers.url_fetcher import UrlFetcher
+from app.retrieval.service import RetrievalService
 
 
 def get_db_path(request: Request) -> str:
@@ -160,6 +161,24 @@ def get_embedding_client(request: Request) -> EmbeddingClient:
     return request.app.state.embedding_client
 
 
+def get_retrieval_service(
+    request: Request,
+    db_path: str = Depends(get_db_path),
+) -> RetrievalService:
+    """知识库检索服务依赖（工单 21 / 23）。
+
+    每次请求构造一个：它无状态、只持有库路径与嵌入客户端，构造代价可忽略。
+    为什么不缓存到 `app.state`：缓存会让「换嵌入模型后重建索引」这类操作需要额外
+    的失效逻辑，而这层本来就没有值得省的初始化成本。
+
+    嵌入客户端从 `request.app.state` 直接取（与 `get_embedding_client` 同一个来源），
+    这样本函数只需要一个 `Depends`，不必为第二个依赖再写一次默认参数。
+    """
+    return RetrievalService(
+        db_path=db_path, embedding_client=request.app.state.embedding_client
+    )
+
+
 # Annotated 别名：路由以类型标注声明依赖，避免在参数默认值里调用 Depends。
 TaskRepositoryDep = Annotated[TaskRepository, Depends(get_task_repository)]
 ProviderRepositoryDep = Annotated[ProviderRepository, Depends(get_provider_repository)]
@@ -192,3 +211,4 @@ ModelClientFactoryDep = Annotated[ProviderModelClientFactory, Depends(get_model_
 TieredModelClientDep = Annotated[TieredModelClient, Depends(get_tiered_model_client)]
 UrlFetcherDep = Annotated[UrlFetcher, Depends(get_url_fetcher)]
 EmbeddingClientDep = Annotated[EmbeddingClient, Depends(get_embedding_client)]
+RetrievalServiceDep = Annotated[RetrievalService, Depends(get_retrieval_service)]

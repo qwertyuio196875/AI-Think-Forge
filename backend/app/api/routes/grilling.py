@@ -17,6 +17,7 @@ from app.api.deps import (
     PlanRevisionRepositoryDep,
     PlanSectionRepositoryDep,
     ProviderRepositoryDep,
+    RetrievalServiceDep,
     TaskRepositoryDep,
 )
 from app.api.errors import require_task
@@ -28,6 +29,7 @@ from app.grilling.open_items import (
     is_skip_answer,
     skipped_items,
 )
+from app.grilling.retrieval import rejected_citations_content
 from app.grilling.service import (
     AdvanceError,
     PlanGenerationError,
@@ -115,6 +117,7 @@ def start_grilling_task(
     open_item_repository: OpenItemRepositoryDep,
     provider_repository: ProviderRepositoryDep,
     model_client: ModelClientDep,
+    retrieval: RetrievalServiceDep,
 ) -> GrillingStartResponse:
     """从一句话 / 一段描述发起主题创作，产出第一轮前沿问题集。"""
     if (
@@ -142,6 +145,7 @@ def start_grilling_task(
             open_item_repository=open_item_repository,
             model_client=client,
             model_name=model_name,
+            retrieval=retrieval,
         )
     except FrontierParseError as exc:
         raise HTTPException(
@@ -195,6 +199,17 @@ def submit_answers(
         content = SKIP_ANSWER_MARKER if is_skip_answer(answer) else (answer or "").strip()
         message_repository.append(task_id, payload.round_no, "user", content)
 
+    # 记录本轮取消采用的引用（工单 23）。存成一条 system 消息而不是新表：
+    # 这是对话的一部分（「我这次不用这些资料」），与轮次同生命周期，
+    # 而且下一轮渲染提示词时正好在同一条消息流里读到它。
+    if payload.rejected_chunk_ids:
+        message_repository.append(
+            task_id,
+            payload.round_no,
+            "system",
+            rejected_citations_content(payload.rejected_chunk_ids),
+        )
+
     return build_dialogue(task_id, message_repository.list_for_task(task_id))
 
 
@@ -207,6 +222,7 @@ def advance(
     plan_repository: PlanRepositoryDep,
     provider_repository: ProviderRepositoryDep,
     model_client: ModelClientDep,
+    retrieval: RetrievalServiceDep,
 ) -> AdvanceResponse:
     """按上一轮回答重算下一轮前沿；前沿为空即收敛并生成结构化方案草稿。"""
     task = _require_task(task_repository, task_id)
@@ -220,6 +236,7 @@ def advance(
             model_client=client,
             plan_repository=plan_repository,
             model_name=model_name,
+            retrieval=retrieval,
         )
     except AdvanceError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

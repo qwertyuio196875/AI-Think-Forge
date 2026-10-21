@@ -16,8 +16,57 @@ from app.models.plan import Plan
 from app.models.task import Task
 
 
+class CitationCard(BaseModel):
+    """一条引用卡片（工单 23）：文件名 · 段落号 · 相关度，可折叠、默认采用。
+
+    为什么要一个专门的模型而不是复用 `RetrievalHit`：卡片是**展示契约**，
+    它多了 `adopted`（默认全选、逐条可取消）与 `collapsible`（可折叠）两个交互字段，
+    而那两样不属于检索层。检索层只管「找到了什么」，卡片管「怎么给用户看」。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    chunk_id: int
+    document_id: int
+    source_id: int
+    # 文件名（展示用）。
+    name: str
+    # 该资料内的分块序号。
+    seq: int
+    # 相关度（余弦或关键词覆盖率，0–1）。
+    similarity: float
+    # 段落号（可能为 None：PDF / PPT 用页 / 幻灯片定位）。
+    paragraph: int | None = None
+    # 可读定位标签（「第 3 段」这类），前端直接显示，不自己拼。
+    locator_label: str
+    # 将注入的正文片段（折叠时隐藏，展开时显示）。
+    text: str
+    # 是否采用；默认全选，用户逐条取消勾选即置 false。
+    adopted: bool = True
+    # 是否可折叠（规格要求可折叠，默认展开以便一眼看到相关度）。
+    collapsible: bool = True
+
+
+class RetrievalStatusInfo(BaseModel):
+    """本次检索的状态（前端据此明示降级 / 未使用知识库，不静默隐藏）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: str
+    status_label: str
+    message: str | None = None
+    degraded: bool = False
+    truncated: bool = False
+
+
 class FrontierQuestion(BaseModel):
-    """前沿中的一个问题：标题、正文、推荐答案，以及「为什么现在问」与「备选方向」。"""
+    """前沿中的一个问题：标题、正文、推荐答案，以及「为什么现在问」与「备选方向」。
+
+    工单 23 追加两个字段：
+    - `citations`：本次为该问题检索到的引用卡片。**决策型问题恒为空清单**（判定为
+      不需要外部依据），空清单与「还没判」不是一回事——因此有问题就一定有这个字段；
+    - `retrieval_status`：检索状态。降级或未使用知识库时非空，界面据此明示原因。
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -28,6 +77,10 @@ class FrontierQuestion(BaseModel):
     why: str | None = None
     # 备选方向：供用户不确定时挑选的可选答案（缺失/空条目容错为空列表）。
     alternatives: list[str] = Field(default_factory=list)
+    # 引用卡片（工单 23）：决策型问题为空清单。
+    citations: list[CitationCard] = Field(default_factory=list)
+    # 检索状态（工单 23）：未检索 / 决策型时为 None。
+    retrieval_status: RetrievalStatusInfo | None = None
 
     @field_validator("why")
     @classmethod
@@ -101,12 +154,17 @@ class AnswerSubmitRequest(BaseModel):
 
     `answers` 中为 `null`（或纯空白）的项表示用户把该问题「**暂时跳过**」：
     它保持未定并进入待确认事项清单，绝不作为已定需求进入下游。
+
+    `rejected_chunk_ids`（工单 23）：本次**取消采用**的引用片段。引用卡片默认全选，
+    用户逐条取消后，那些片段不得进入本次提示词——否则界面上取消了、实际仍然喂给了
+    模型，用户看到的与实际发生的是两回事。
     """
 
     model_config = ConfigDict(extra="forbid")
 
     round_no: int = Field(ge=0)
     answers: list[str | None]
+    rejected_chunk_ids: list[int] = Field(default_factory=list)
 
 
 class AdvanceResponse(BaseModel):

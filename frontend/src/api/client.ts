@@ -268,8 +268,45 @@ export function testProvider(id: number): Promise<ConnectionTestResult> {
    ============================================================ */
 
 /**
+ * 一条引用卡片（工单 23）：文件名 · 段落号 · 相关度，可折叠、默认采用。
+ *
+ * 与 backend/app/models/grilling.py::CitationCard 逐字段对齐。
+ * `adopted` 默认 true（规格：默认全选、逐条可取消）；`collapsible` 由后端给，
+ * 前端不自己判断「这条能不能折叠」——展示形态是后端契约的一部分。
+ */
+export interface CitationCard {
+  chunk_id: number
+  document_id: number
+  source_id: number
+  /** 文件名（展示用）。 */
+  name: string
+  /** 该资料内的分块序号。 */
+  seq: number
+  /** 相关度（0–1）。 */
+  similarity: number
+  /** 段落号；PDF / PPT 类资料可能为空（用页 / 幻灯片定位）。 */
+  paragraph: number | null
+  /** 可读定位标签，前端直接显示，不自己拼。 */
+  locator_label: string
+  /** 将注入的正文片段（折叠时隐藏）。 */
+  text: string
+  adopted: boolean
+  collapsible: boolean
+}
+
+/** 本次检索的状态（降级 / 未使用知识库时必须明示，不静默隐藏）。 */
+export interface RetrievalStatusInfo {
+  status: string
+  status_label: string
+  message: string | null
+  degraded: boolean
+  truncated: boolean
+}
+
+/**
  * 前沿中的一个问题：标题、正文、推荐答案，以及 TB-4 新增的
  * `why`（为什么现在问，缺失为 null）与 `alternatives`（备选方向，缺失为空列表）。
+ * 工单 23 追加 `citations`（引用卡片）与 `retrieval_status`（检索状态）。
  * 与 backend/app/models/grilling.py::FrontierQuestion 逐字段对齐。
  */
 export interface FrontierQuestion {
@@ -278,6 +315,10 @@ export interface FrontierQuestion {
   recommended_answer: string
   why: string | null
   alternatives: string[]
+  /** 引用卡片：决策型问题恒为空清单（判定过、不需要检索）。 */
+  citations: CitationCard[]
+  /** 检索状态：未检索 / 决策型时为 null。 */
+  retrieval_status: RetrievalStatusInfo | null
 }
 
 /**
@@ -341,15 +382,20 @@ export function startGrillingTask(
 /**
  * 提交某轮回答：POST /api/grilling/tasks/{id}/answers（数量须与前沿问题一致）。
  * answers 项为 null（或纯空白）= 该题「暂时跳过」，入待确认事项、保持未定。返回写后对话状态。
+ *
+ * `rejectedChunkIds`（工单 23）：本次**取消采用**的引用片段。引用卡片默认全选、
+ * 逐条可取消；取消过的片段必须带上来，后端会确保它们不进本次提示词——
+ * 否则「界面上取消了、实际仍喂给了模型」，用户看到的与发生的就成了两回事。
  */
 export function submitAnswers(
   taskId: number,
   roundNo: number,
-  answers: Array<string | null>
+  answers: Array<string | null>,
+  rejectedChunkIds: number[] = []
 ): Promise<Dialogue> {
   return request<Dialogue>(`/grilling/tasks/${taskId}/answers`, {
     method: 'POST',
-    body: JSON.stringify({ round_no: roundNo, answers })
+    body: JSON.stringify({ round_no: roundNo, answers, rejected_chunk_ids: rejectedChunkIds })
   })
 }
 

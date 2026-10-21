@@ -15,9 +15,10 @@ from app.db.message_repository import MessageRepository
 from app.db.open_item_repository import OpenItemRepository
 from app.db.plan_repository import PlanRepository
 from app.db.plan_revision_repository import PlanRevisionRepository
-from app.grilling.frontier import frontier_from_content
+from app.grilling.frontier import FrontierParseError, frontier_from_content
 from app.grilling.graph import build_grilling_graph, derive_determined
 from app.grilling.prompts import render_plan_messages, render_revision_messages
+from app.grilling.retrieval import rejected_chunk_ids
 from app.grilling.revision import compute_changes
 from app.models.grilling import Dialogue, DialogueMessage, FrontierQuestion, FrontierRound
 from app.models.plan import Plan, PlanRevision
@@ -84,6 +85,37 @@ def rounds_from_messages(messages: list[dict]) -> list[dict]:
     return [grouped[no] for no in sorted(grouped)]
 
 
+def accepted_citations(messages: list[dict]) -> list[dict]:
+    """读出最近一轮**用户已采用**的引用片段（工单 23）。
+
+    做法：取最新一轮 assistant 消息里的 `citations`（那是当时给出的卡片），
+    再剔除用户在提交回答时取消掉的 chunk_id。用户没勾掉的默认采用——
+    「默认全选」这条规格要求落在这里，而不是在前端的复选框初始值上。
+    """
+    rejected = rejected_chunk_ids(messages)
+    latest: list[dict] = []
+    for message in messages:
+        if message["role"] != "assistant":
+            continue
+        try:
+            frontier = frontier_from_content(message["content"])
+        except FrontierParseError:
+            continue
+        collected: list[dict] = []
+        for question in frontier:
+            for citation in question.citations:
+                collected.append(citation.model_dump())
+        if collected:
+            latest = collected
+
+    return [
+        citation
+        for citation in latest
+        if int(citation.get("chunk_id", -1)) not in rejected
+        and citation.get("adopted", True)
+    ]
+
+
 def frontier_for_round(messages: list[dict], round_no: int) -> list[FrontierQuestion] | None:
     """取某轮 assistant 消息中的前沿问题集；该轮无提问则返回 None。"""
     for message in messages:
@@ -148,11 +180,18 @@ def start_first_round(
     open_item_repository: OpenItemRepository,
     model_client: ModelClient,
     model_name: str | None = None,
+    retrieval=None,
 ) -> FrontierRound:
-    """发起主题创作的第一轮：落种子输入 → 跑状态机 → 返回前沿问题集。"""
+    """发起主题创作的第一轮：落种子输入 → 跑状态机 → 返回前沿问题集。
+
+    `retrieval`（工单 23）为 None 时不检索：没有知识库也能正常拷问，
+    引用卡片为空即可——这不是特例分支，而是「知识库可选」的正常形态。
+    """
     message_repository.append(task_id, SEED_ROUND_NO, "user", idea)
 
-    graph = build_grilling_graph(model_client, message_repository, model_name=model_name)
+    graph = build_grilling_graph(
+        model_client, message_repository, model_name=model_name, retrieval=retrieval
+    )
     state = graph.invoke(
         {
             "task_id": task_id,
@@ -175,6 +214,7 @@ def advance_round(
     model_client: ModelClient,
     plan_repository: PlanRepository,
     model_name: str | None = None,
+    retrieval=None,
 ) -> AdvanceOutcome:
     """按上一轮回答重算下一轮前沿；前沿为空即收敛，并生成结构化方案草稿。
 
@@ -190,7 +230,11 @@ def advance_round(
     rounds = rounds_from_messages(messages)
     known_input = _seed_input(messages)
     open_items = open_item_repository.open_texts(task_id)
-    graph = build_grilling_graph(model_client, message_repository, model_name=model_name)
+    # 上一轮用户勾选保留的引用（工单 23）：取消过的不再进提示词。
+    citations = accepted_citations(messages)
+    graph = build_grilling_graph(
+        model_client, message_repository, model_name=model_name, retrieval=retrieval
+    )
 
     if not rounds:
         return _advance_without_rounds(
@@ -201,6 +245,7 @@ def advance_round(
             model_client=model_client,
             plan_repository=plan_repository,
             model_name=model_name,
+            citations=citations,
         )
 
     last_round_no = rounds[-1]["round_no"]
@@ -213,6 +258,7 @@ def advance_round(
             "round_no": next_round_no,
             "rounds": rounds,
             "open_items": open_items,
+            "citations": citations,
         }
     )
 
@@ -244,6 +290,7 @@ def _advance_without_rounds(
     model_client: ModelClient,
     plan_repository: PlanRepository,
     model_name: str | None,
+    citations: list[dict] | None = None,
 ) -> AdvanceOutcome:
     """尚无任何轮次时的推进：等价于「发起第一轮」。
 
@@ -260,6 +307,7 @@ def _advance_without_rounds(
             "round_no": FIRST_ROUND_NO,
             "rounds": [],
             "open_items": open_items,
+            "citations": citations or [],
         }
     )
 
