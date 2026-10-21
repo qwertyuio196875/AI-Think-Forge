@@ -124,3 +124,32 @@ class PlanSectionRepository:
             connection.commit()
 
         return self.list_for_plan(plan_id)
+
+    def write_content(
+        self, *, plan_id: int, seq: int, content_md: str, status: str
+    ) -> dict | None:
+        """写入一章的正文并置状态（工单 10：填充写正文）。
+
+        `status` 取 `completed` / `failed`；`completed` 时一并记完成时刻。正文与状态
+        在**同一条 UPDATE** 里落库：不存在「正文写了但状态还是待写」的中间态。
+
+        章节不存在返回 None（调用方翻成 404，不静默建行——章节目录由方案决定）。
+        """
+        now = utcnow_iso()
+        completed_at = now if status == "completed" else None
+        with connect(self._db_path) as connection:
+            cursor = connection.execute(
+                """
+                UPDATE plan_sections
+                SET content_md = ?, status = ?, completed_at = ?, updated_at = ?
+                WHERE plan_id = ? AND seq = ?
+                """,
+                (content_md, status, completed_at, now, plan_id, seq),
+            )
+            connection.commit()
+            if cursor.rowcount == 0:
+                return None
+            row = connection.execute(
+                "SELECT * FROM plan_sections WHERE plan_id = ? AND seq = ?", (plan_id, seq)
+            ).fetchone()
+        return dict(row) if row is not None else None
