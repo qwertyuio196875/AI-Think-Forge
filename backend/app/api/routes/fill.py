@@ -16,7 +16,11 @@
 - 逐章字数含不存在的章节序号 / 目标字数超上限 → 422。
 
 工单 10 追加 `POST /api/tasks/{task_id}/sections/{seq}/fill`：写**一章**正文并随即
-拼装成品（见 `app.fill.writer`）。逐章串行推进的编排属工单 11。
+拼装成品（见 `app.fill.writer`）。
+
+工单 11 追加 `POST /api/tasks/{task_id}/fill/run`：把剩余章节**逐章串行**写完
+（见 `app.fill.serial`），全部写完后整体重新拼装成品。任一章失败即停下、报错指出
+是第几章、**不产出残缺成品**。
 """
 
 from __future__ import annotations
@@ -37,9 +41,16 @@ from app.api.deps import (
     TemplatesDirDep,
 )
 from app.api.gates import require_confirmed_plan
+from app.fill.serial import run_serial_fill
 from app.fill.service import start_fill
 from app.fill.writer import write_section
-from app.models.fill import FILL_STATUS_LABELS, FillRequest, FillResponse, SectionWriteResponse
+from app.models.fill import (
+    FILL_STATUS_LABELS,
+    FillRequest,
+    FillResponse,
+    SectionWriteResponse,
+    SerialFillResponse,
+)
 from app.providers.model_client import ModelCallError
 from app.providers.task_model import model_for_task
 from app.sections.service import to_section_items
@@ -145,5 +156,68 @@ def fill_section(
         task_id=task_id,
         fill_id=outcome["fill_id"],
         section=outcome["section"],
+        deliverable=outcome["deliverable"],
+    )
+
+
+@router.post("/{task_id}/fill/run", response_model=SerialFillResponse)
+def run_fill(
+    task_id: int,
+    task_repository: TaskRepositoryDep,
+    plan_repository: PlanRepositoryDep,
+    open_item_repository: OpenItemRepositoryDep,
+    section_repository: PlanSectionRepositoryDep,
+    fill_repository: FillTaskRepositoryDep,
+    template_repository: TemplateRepositoryDep,
+    generation_repository: GenerationRepositoryDep,
+    provider_repository: ProviderRepositoryDep,
+    model_client: ModelClientDep,
+    data_dir: DataDirDep,
+    templates_dir: TemplatesDirDep,
+) -> SerialFillResponse:
+    """把剩余章节**逐章串行**写完（工单 11），全部写完后整体拼装正文成品。
+
+    闸门与 `/fill`、`/sections/{seq}/fill` 完全一致：填充是唯一会调模型的写作环节，
+    闸门一旦失守，模型就会替未定内容写正文。
+
+    失败口径：
+    - 没有进行中的填充任务 → 409；方案无可填充章节 → 422；
+    - 任一章模型调用失败 → 502，报错指明是第几章；**不产出残缺成品**，
+      已写成的章保留，填充任务标「失败」并留痕。
+    """
+    plan = require_confirmed_plan(
+        task_id, task_repository, plan_repository, open_item_repository, purpose="fill"
+    )
+
+    task = task_repository.get(task_id) or {}
+    client, model_name = model_for_task(task, provider_repository, model_client)
+
+    outcome = run_serial_fill(
+        task_id=task_id,
+        plan=plan,
+        model_client=client,
+        model_name=model_name,
+        section_repository=section_repository,
+        fill_repository=fill_repository,
+        template_repository=template_repository,
+        generation_repository=generation_repository,
+        data_dir=data_dir,
+        templates_dir=templates_dir,
+    )
+
+    fill = outcome["fill"]
+    items = to_section_items(outcome["sections"])
+    total = len(items)
+    completed = int(fill["completed_sections"])
+    return SerialFillResponse(
+        task_id=task_id,
+        fill_id=fill["id"],
+        status=fill["status"],
+        status_label=FILL_STATUS_LABELS.get(fill["status"], fill["status"]),
+        completed_sections=completed,
+        total_sections=total,
+        progress_label=f"第 {completed} / {total} 章",
+        items=items,
+        total=total,
         deliverable=outcome["deliverable"],
     )

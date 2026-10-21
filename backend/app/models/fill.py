@@ -97,3 +97,24 @@ class SectionWriteResponse(BaseModel):
     fill_id: int
     section: PlanSectionItem
     deliverable: GenerationResponse
+
+
+class SerialFillResponse(BaseModel):
+    """全篇逐章填完后的响应：进度 + 章节清单 + 成品（工单 11）。
+
+    进度文字由后端给（`progress_label` = 「第 N / M 章」），前端不必自己拼——
+    两处各拼一次就会出现「第 3 章」与「第 3 / 8 章」两种说法。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: int
+    fill_id: int
+    status: FillStatus
+    status_label: str
+    completed_sections: int
+    total_sections: int
+    progress_label: str
+    items: list[PlanSectionItem]
+    total: int
+    deliverable: GenerationResponse
