@@ -87,6 +87,7 @@ def write_section(
     data_dir: str,
     templates_dir: str,
     build_deliverable: bool = True,
+    history: str | None = None,
 ) -> dict:
     """写一章正文并随即拼装成品；返回（章节项, 成品记录）。
 
@@ -97,6 +98,9 @@ def write_section(
     `build_deliverable=False` 时只写正文、不拼装成品：全篇串行（工单 11）要先把
     几章都写完再**整体**拼一份成品，中途每写一章就产一次成品，那几份都是「只写了一半」
     的残件——用户拿到三份半成品，而不是一份完整的。
+
+    `history` 是前情提要（工单 12）：前面已写章节的摘要。第一章为 None，此时提示词
+    里给的是「暂无」占位而不是一段空白。
     """
     rows = section_repository.list_for_plan(plan["id"])
     section = next((row for row in rows if int(row["seq"]) == seq), None)
@@ -113,6 +117,7 @@ def write_section(
         title=section["title"],
         key_points=section["key_points"],
         target_length=section["target_length"],
+        history=history,
     )
 
     try:
