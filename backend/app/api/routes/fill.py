@@ -14,22 +14,34 @@
   见 `app.api.gates`）；
 - 已确认但切不出章节 → 422，并提示返回修订方案（ADR-0006：不猜、不退化切分）；
 - 逐章字数含不存在的章节序号 / 目标字数超上限 → 422。
+
+工单 10 追加 `POST /api/tasks/{task_id}/sections/{seq}/fill`：写**一章**正文并随即
+拼装成品（见 `app.fill.writer`）。逐章串行推进的编排属工单 11。
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, status
 
 from app.api.deps import (
+    DataDirDep,
     FillTaskRepositoryDep,
+    GenerationRepositoryDep,
+    ModelClientDep,
     OpenItemRepositoryDep,
     PlanRepositoryDep,
     PlanSectionRepositoryDep,
+    ProviderRepositoryDep,
     TaskRepositoryDep,
+    TemplateRepositoryDep,
+    TemplatesDirDep,
 )
 from app.api.gates import require_confirmed_plan
 from app.fill.service import start_fill
-from app.models.fill import FILL_STATUS_LABELS, FillRequest, FillResponse
+from app.fill.writer import write_section
+from app.models.fill import FILL_STATUS_LABELS, FillRequest, FillResponse, SectionWriteResponse
+from app.providers.model_client import ModelCallError
+from app.providers.task_model import model_for_task
 from app.sections.service import to_section_items
 
 router = APIRouter(prefix="/tasks", tags=["fill"])
@@ -74,4 +86,64 @@ def start_fill_task(
         created_at=fill["created_at"],
         items=items,
         total=len(items),
+    )
+
+
+@router.post("/{task_id}/sections/{seq}/fill", response_model=SectionWriteResponse)
+def fill_section(
+    task_id: int,
+    seq: int,
+    task_repository: TaskRepositoryDep,
+    plan_repository: PlanRepositoryDep,
+    open_item_repository: OpenItemRepositoryDep,
+    section_repository: PlanSectionRepositoryDep,
+    fill_repository: FillTaskRepositoryDep,
+    template_repository: TemplateRepositoryDep,
+    generation_repository: GenerationRepositoryDep,
+    provider_repository: ProviderRepositoryDep,
+    model_client: ModelClientDep,
+    data_dir: DataDirDep,
+    templates_dir: TemplatesDirDep,
+) -> SectionWriteResponse:
+    """写**一章**正文（工单 10），随即拼装出含真实段落与小标题的 .docx 成品。
+
+    闸门与 `/fill` 完全一致（方案已确认、无未处置待确认事项）：填充是唯一会调模型的
+    写作环节，闸门一旦失守，模型就会替未定内容写正文。
+
+    失败口径：
+    - 章节不存在 → 404；已完成不重复写 → 409；没有进行中的填充任务 → 409；
+    - 模型调用失败 → 502（章节已标「失败」、不产出成品文件）。
+    """
+    plan = require_confirmed_plan(
+        task_id, task_repository, plan_repository, open_item_repository, purpose="fill"
+    )
+
+    task = task_repository.get(task_id) or {}
+    client, model_name = model_for_task(task, provider_repository, model_client)
+
+    try:
+        outcome = write_section(
+            task_id=task_id,
+            plan=plan,
+            seq=seq,
+            model_client=client,
+            model_name=model_name,
+            section_repository=section_repository,
+            fill_repository=fill_repository,
+            template_repository=template_repository,
+            generation_repository=generation_repository,
+            data_dir=data_dir,
+            templates_dir=templates_dir,
+        )
+    except ModelCallError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"第 {seq} 章生成失败：{exc}",
+        ) from exc
+
+    return SectionWriteResponse(
+        task_id=task_id,
+        fill_id=outcome["fill_id"],
+        section=outcome["section"],
+        deliverable=outcome["deliverable"],
     )

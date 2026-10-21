@@ -3,12 +3,18 @@
 顺序是有意的：**先确认产物合格，再落库**。任何一步失败都不会留下成品记录，
 也不会留下可被误认为成品的不完整文件（规格 US 22「结构损坏的成品不会被交到我手上」）。
 
-本模块不做模型调用：成品是把**已确认的结构化方案**确定性渲染成文件，方案内容早已由
-拷问流程定稿（这是「未经确认的推测绝不变成成品」的另一面）。
+本模块的**渲染**不做模型调用：成品是把**已确认的结构化方案**确定性渲染成文件，方案内容早已由
+拷问流程定稿（这是「未经确认的推测绝不变成成品」的另一面）。**填充**（把大纲扩写成正文）
+会调模型，但那是 `app.fill` 模块的职责，与这里的渲染是两条独立的路径（ADR-0006 决策一）。
 
 两轨（ADR-0003）：
 - Word：模板机制（`app.generation.word` / `templates`）；
 - 单文件 HTML 演示：主题族（`app.generation.deck` / `themes`），资源全内联、无网络引用。
+
+**两种输入**（规格 §2「/generations 的行为不因填充而改变，只是新增一种输入」）：
+- 方案原文 → **大纲导出**（`generations.source = outline`）；
+- 已填充的章节正文 → **正文成品**（`generations.source = body`）。
+两者共用同一条「先确认产物合格再落库」的纪律，只是源文本与来源标记不同。
 """
 
 from __future__ import annotations
@@ -18,7 +24,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from app import config
-from app.db.generation_repository import GenerationRepository
+from app.db.generation_repository import SOURCE_BODY, GenerationRepository
 from app.db.summary_deliverable_repository import SummaryDeliverableRepository
 from app.db.template_repository import TemplateRepository
 from app.generation.deck import build_html_deck, verify_html_deliverable
@@ -33,6 +39,10 @@ FORMAT_HTML = "html"
 # 术语（GLOSSARY）**模板**：样式文件；HTML 一轨的样式载体就是主题，故沿用同一列记录，
 # 加前缀与模板目录里的 `.docx` 相对路径区分开（语义不混淆，且不改表结构）。
 DECK_TEMPLATE_PREFIX = "deck-theme:"
+
+# 正文成品文件名前缀。与「大纲导出」的 `outline-` 前缀对称，一眼能分清哪份是成品
+# （大纲导出侧的收口属工单 18；这里先保证正文成品**不带** outline- 前缀）。
+BODY_FILE_PREFIX = "body-"
 
 
 def deck_template_name(theme_id: str) -> str:
@@ -79,6 +89,63 @@ def generate_word_deliverable(
         format=FORMAT_DOCX,
         file_path=str(output_path),
         template_used=resolved.template_used,
+    )
+
+    return {
+        **record,
+        "template_style_applied": build.template_style_applied,
+        "missing_styles": list(build.missing_styles),
+        "headings": build.headings,
+        "integrity_ok": True,
+    }
+
+
+def generate_body_word_deliverable(
+    *,
+    task_id: int,
+    plan: dict,
+    body_md: str,
+    requested_template: str | None,
+    data_dir: str | Path,
+    templates_dir: str | Path,
+    template_repository: TemplateRepository,
+    generation_repository: GenerationRepository,
+) -> dict:
+    """由**已填充的章节正文**生成一份 Word 成品并记录（工单 10）。
+
+    与大纲导出走同一条纪律：**先确认产物合格，再落库**；失败删半成品、不落库。
+    差别只有两处：源文本是正文而非方案正文、成品记录的 `source` 是 `body`。
+
+    `body_md` 由 `app.fill.document.compose_body_markdown` 组装（章标题由系统给），
+    本函数只负责渲染与记录，不关心正文从哪来。
+    """
+    default_record = template_repository.get_default(FORMAT_DOCX)
+    resolved = resolve_template(
+        templates_dir,
+        requested=requested_template,
+        default_name=default_record["name"] if default_record else None,
+    )
+
+    output_dir = Path(data_dir) / config.DELIVERABLES_SUBDIR / str(task_id)
+    output_path = _unique_output_path(
+        output_dir, plan["id"], suffix=".docx", prefix=BODY_FILE_PREFIX
+    )
+
+    build = build_word_deliverable(body_md, resolved.path, output_path)
+    try:
+        verify_word_deliverable(build)
+    except Exception:
+        # 结构损坏：丢弃产物，绝不交付、绝不落库（规格 US 22）。
+        output_path.unlink(missing_ok=True)
+        raise
+
+    record = generation_repository.create(
+        task_id=task_id,
+        plan_id=plan["id"],
+        format=FORMAT_DOCX,
+        file_path=str(output_path),
+        template_used=resolved.template_used,
+        source=SOURCE_BODY,
     )
 
     return {
@@ -215,14 +282,20 @@ def generate_html_deliverable(
     }
 
 
-def _unique_output_path(output_dir: Path, plan_id: int, *, suffix: str) -> Path:
-    """成品文件名：方案号 + 时间戳；同一秒内重复生成时追加序号，不覆盖已有成品。"""
+def _unique_output_path(
+    output_dir: Path, plan_id: int, *, suffix: str, prefix: str = ""
+) -> Path:
+    """成品文件名：方案号 + 时间戳；同一秒内重复生成时追加序号，不覆盖已有成品。
+
+    `prefix` 是来源前缀：正文成品用 `body-`，大纲导出不带前缀（文件名带
+    `outline-` 前缀是工单 18 的事，本单不擅自动既有导出路径）。
+    """
     stamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
-    candidate = output_dir / f"plan-{plan_id}-{stamp}{suffix}"
+    candidate = output_dir / f"{prefix}plan-{plan_id}-{stamp}{suffix}"
     order = 1
     while candidate.exists():
         order += 1
-        candidate = output_dir / f"plan-{plan_id}-{stamp}-{order}{suffix}"
+        candidate = output_dir / f"{prefix}plan-{plan_id}-{stamp}-{order}{suffix}"
     return candidate
 
 

@@ -13,6 +13,7 @@ from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.models.generation import GenerationResponse
 from app.models.plan_section import PlanSectionItem
 
 # ADR-0006：单次填充的目标字数上限。超出即拒绝并说明原因，不做静默截断——
@@ -81,3 +82,18 @@ class FillResponse(FillTask):
 
     items: list[PlanSectionItem]
     total: int
+
+
+class SectionWriteResponse(BaseModel):
+    """写完一章的响应：刚写好的那一章 + 随即拼装出来的正文成品。
+
+    `section` 是**章节项**（与只读清单同构），`deliverable` 是**成品记录**
+    （与 `GET /generations` 列表同构）。两者都是既有结构，本单不另造一套形状。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: int
+    fill_id: int
+    section: PlanSectionItem
+    deliverable: GenerationResponse

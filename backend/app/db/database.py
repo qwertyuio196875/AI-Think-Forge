@@ -161,6 +161,9 @@ CREATE INDEX IF NOT EXISTS idx_plan_revisions_plan ON plan_revisions (plan_id, i
 -- - template_used：**本次生成实际所用的模板**（规格 US 20「每次生成实际所用模板的记录」），
 --   取模板目录下的相对路径（内置默认模板为 `_builtin/minimal-default.docx`）。任务级
 --   **临时覆盖**只体现在本列，绝不改写全局默认（术语「默认模板 / 临时覆盖」）。
+-- - source：本次成品的**来源**（规格 §4「新增一列记录某次生成是否来自填充」）：
+--   outline（大纲导出：直接渲染方案正文）/ body（正文成品：来自填充的章节正文）。
+--   这一列是「正文成品」与「大纲导出」的唯一区分点，缺省 outline 保持既有行为不变。
 CREATE TABLE IF NOT EXISTS generations (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     task_id       INTEGER NOT NULL REFERENCES tasks(id),
@@ -168,6 +171,8 @@ CREATE TABLE IF NOT EXISTS generations (
     format        TEXT NOT NULL CHECK (format IN ('docx', 'html')),
     file_path     TEXT NOT NULL,
     template_used TEXT NOT NULL,
+    source        TEXT NOT NULL DEFAULT 'outline'
+                  CHECK (source IN ('outline', 'body')),
     created_at    TEXT NOT NULL
 );
 
@@ -406,6 +411,9 @@ MIGRATION_COLUMNS: dict[str, dict[str, str]] = {
         "index_message": "TEXT",
         "indexed_at": "TEXT",
     },
+    # 工单 10：成品来源（正文成品 / 大纲导出）。既有库补列时缺省 outline，
+    # 行为与补列前完全一致（既有成品本来就都是大纲导出）。
+    "generations": {"source": "TEXT NOT NULL DEFAULT 'outline'"},
 }
 
 

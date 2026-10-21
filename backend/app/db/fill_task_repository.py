@@ -74,3 +74,31 @@ class FillTaskRepository:
                 (task_id, *ACTIVE_STATUSES),
             ).fetchone()
         return dict(row) if row is not None else None
+
+    def update_progress(
+        self, fill_id: int, *, completed_sections: int, status: str, error: str | None = None
+    ) -> dict | None:
+        """更新一次填充尝试的进度与状态（工单 10：逐章写完随写随更新）。
+
+        `completed_sections` 由调用方按**库里已完成章节数**给出（唯一真源是
+        `plan_sections.status`），本方法不自己数——两个口径必然漂移。
+
+        状态取值沿用 `fill_tasks` 的 CHECK 约束（running / completed / cancelled /
+        failed）。本单写 `running`（继续写下一章）或 `failed`（出错留痕）；
+        `completed` / `cancelled` 由 #11（逐章写完）与 #13（中断）写。
+        """
+        now = utcnow_iso()
+        with connect(self._db_path) as connection:
+            connection.execute(
+                """
+                UPDATE fill_tasks
+                SET completed_sections = ?, status = ?, error = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (completed_sections, status, error, now, fill_id),
+            )
+            connection.commit()
+            row = connection.execute(
+                "SELECT * FROM fill_tasks WHERE id = ?", (fill_id,)
+            ).fetchone()
+        return dict(row) if row is not None else None

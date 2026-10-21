@@ -13,6 +13,12 @@ from pathlib import Path
 
 from app.db.database import connect, utcnow_iso
 
+# 成品来源（`generations.source`）：正文成品 vs 大纲导出。
+# 规格 §4「新增一列记录某次生成是否来自填充」；术语表把两者明确区分开，
+# 因此它们在成品记录里必须是两个不同的值，不能靠文件名猜。
+SOURCE_OUTLINE = "outline"
+SOURCE_BODY = "body"
+
 
 class GenerationRepository:
     """`generations` 表的读写入口。"""
@@ -27,16 +33,29 @@ class GenerationRepository:
         format: str,
         file_path: str,
         template_used: str,
+        source: str = SOURCE_OUTLINE,
     ) -> dict:
-        """记录一次成品生成（产物已落盘并通过完整性检查后才调用）。"""
+        """记录一次成品生成（产物已落盘并通过完整性检查后才调用）。
+
+        `source` 区分「正文成品」（body，来自填充的章节正文）与「大纲导出」
+        （outline，直接渲染方案正文）。缺省 outline：既有调用点行为不变。
+        """
         with connect(self._db_path) as connection:
             cursor = connection.execute(
                 """
                 INSERT INTO generations
-                    (task_id, plan_id, format, file_path, template_used, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                    (task_id, plan_id, format, file_path, template_used, source, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (task_id, plan_id, format, file_path, template_used, utcnow_iso()),
+                (
+                    task_id,
+                    plan_id,
+                    format,
+                    file_path,
+                    template_used,
+                    source,
+                    utcnow_iso(),
+                ),
             )
             connection.commit()
             row = connection.execute(
