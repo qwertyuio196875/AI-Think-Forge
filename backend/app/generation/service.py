@@ -40,9 +40,13 @@ FORMAT_HTML = "html"
 # 加前缀与模板目录里的 `.docx` 相对路径区分开（语义不混淆，且不改表结构）。
 DECK_TEMPLATE_PREFIX = "deck-theme:"
 
-# 正文成品文件名前缀。与「大纲导出」的 `outline-` 前缀对称，一眼能分清哪份是成品
-# （大纲导出侧的收口属工单 18；这里先保证正文成品**不带** outline- 前缀）。
+# 正文成品文件名前缀。与「大纲导出」的 `outline-` 前缀对称，一眼能分清哪份是成品。
 BODY_FILE_PREFIX = "body-"
+
+# 大纲导出文件名前缀（工单 18）。术语（GLOSSARY）：**大纲导出**是跳过填充、直接把
+# 方案正文渲染成的成品，与填充后的正文成品是两种产物。前缀必须写在文件名里，
+# 因为用户是从文件管理器里双击打开的——只靠 `generations.source` 他看不见。
+OUTLINE_FILE_PREFIX = "outline-"
 
 
 def deck_template_name(theme_id: str) -> str:
@@ -73,7 +77,9 @@ def generate_word_deliverable(
     )
 
     output_dir = Path(data_dir) / config.DELIVERABLES_SUBDIR / str(task_id)
-    output_path = _unique_output_path(output_dir, plan["id"], suffix=".docx")
+    output_path = _unique_output_path(
+        output_dir, plan["id"], suffix=".docx", prefix=OUTLINE_FILE_PREFIX
+    )
 
     build = build_word_deliverable(plan["content_md"], resolved.path, output_path)
     try:
@@ -246,7 +252,9 @@ def generate_html_deliverable(
     未通过则丢弃产物、不写记录（规格 US 22），绝不交付半成品。
     """
     output_dir = Path(data_dir) / config.DELIVERABLES_SUBDIR / str(task_id)
-    output_path = _unique_output_path(output_dir, plan["id"], suffix=".html")
+    output_path = _unique_output_path(
+        output_dir, plan["id"], suffix=".html", prefix=OUTLINE_FILE_PREFIX
+    )
 
     build = build_html_deck(
         plan_md=plan["content_md"],
@@ -285,10 +293,13 @@ def generate_html_deliverable(
 def _unique_output_path(
     output_dir: Path, plan_id: int, *, suffix: str, prefix: str = ""
 ) -> Path:
-    """成品文件名：方案号 + 时间戳；同一秒内重复生成时追加序号，不覆盖已有成品。
+    """成品文件名：来源前缀 + 方案号 + 时间戳；同秒重复生成时追加序号，不覆盖已有成品。
 
-    `prefix` 是来源前缀：正文成品用 `body-`，大纲导出不带前缀（文件名带
-    `outline-` 前缀是工单 18 的事，本单不擅自动既有导出路径）。
+    `prefix` 是**来源前缀**，必须由调用方显式给出：
+    - 大纲导出用 `outline-`（工单 18）；
+    - 正文成品用 `body-`（工单 10）。
+    不给缺省值会让一次漏传就产出「身份不明」的文件，所以这里保留空串兜底只为兼容
+    既有测试的调用形态，两条生产路径都显式传。
     """
     stamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
     candidate = output_dir / f"{prefix}plan-{plan_id}-{stamp}{suffix}"
