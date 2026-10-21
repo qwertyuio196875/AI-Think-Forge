@@ -26,6 +26,7 @@ from app.db.settings_repository import SettingsRepository
 from app.db.summary_deliverable_repository import SummaryDeliverableRepository
 from app.db.task_repository import TaskRepository
 from app.db.template_repository import TemplateRepository
+from app.generation.screenshots import SlideRenderer
 from app.providers.embedding_client import EmbeddingClient
 from app.providers.key_store import KeyStore
 from app.providers.model_client import ModelClient, ProviderModelClientFactory
@@ -167,6 +168,15 @@ def get_embedding_client(request: Request) -> EmbeddingClient:
     return request.app.state.embedding_client
 
 
+def get_pptx_renderer(request: Request) -> SlideRenderer:
+    """PPT 截图渲染器依赖（fake 注入点 4，工单 29）。
+
+    生产默认是 `app.state.pptx_renderer`（Playwright + Chromium）；测试注入**产真实
+    PNG 的假实现**，任何用例都不打开 Chromium（Playwright 不加载）。
+    """
+    return request.app.state.pptx_renderer
+
+
 def get_retrieval_service(
     request: Request,
     db_path: str = Depends(get_db_path),
@@ -220,4 +230,5 @@ ModelClientFactoryDep = Annotated[ProviderModelClientFactory, Depends(get_model_
 TieredModelClientDep = Annotated[TieredModelClient, Depends(get_tiered_model_client)]
 UrlFetcherDep = Annotated[UrlFetcher, Depends(get_url_fetcher)]
 EmbeddingClientDep = Annotated[EmbeddingClient, Depends(get_embedding_client)]
+PptxRendererDep = Annotated[SlideRenderer, Depends(get_pptx_renderer)]
 RetrievalServiceDep = Annotated[RetrievalService, Depends(get_retrieval_service)]

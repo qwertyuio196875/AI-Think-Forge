@@ -168,13 +168,18 @@ CREATE INDEX IF NOT EXISTS idx_plan_revisions_plan ON plan_revisions (plan_id, i
 -- - source：本次成品的**来源**（规格 §4「新增一列记录某次生成是否来自填充」）：
 --   outline（大纲导出：直接渲染方案正文）/ body（正文成品：来自填充的章节正文）。
 --   这一列是「正文成品」与「大纲导出」的唯一区分点，缺省 outline 保持既有行为不变。
+-- - page_plan_id：成品所依据的来源页面规划（工单 29，可空）。NULL = 无页面规划的
+--   走大纲/方案渲染的成品（如 Word 正文）；非空 = 截图版 PPT 由某一次页面规划而来。
+--   这列只追溯「来源规划」，不加 CHECK 引用 page_plans——规划可被增删页重规划出新的，
+--   旧成品仍应持有其落库时可回溯的那一次规划。兼容既有库：`_migrate` 补列。
 CREATE TABLE IF NOT EXISTS generations (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     task_id       INTEGER NOT NULL REFERENCES tasks(id),
     plan_id       INTEGER NOT NULL REFERENCES plans(id),
-    format        TEXT NOT NULL CHECK (format IN ('docx', 'html')),
+    format        TEXT NOT NULL CHECK (format IN ('docx', 'html', 'pptx')),
     file_path     TEXT NOT NULL,
     template_used TEXT NOT NULL,
+    page_plan_id  INTEGER,
     source        TEXT NOT NULL DEFAULT 'outline'
                   CHECK (source IN ('outline', 'body')),
     created_at    TEXT NOT NULL
@@ -439,7 +444,11 @@ MIGRATION_COLUMNS: dict[str, dict[str, str]] = {
     },
     # 工单 10：成品来源（正文成品 / 大纲导出）。既有库补列时缺省 outline，
     # 行为与补列前完全一致（既有成品本来就都是大纲导出）。
-    "generations": {"source": "TEXT NOT NULL DEFAULT 'outline'"},
+    "generations": {
+        "source": "TEXT NOT NULL DEFAULT 'outline'",
+        # 工单 29：截图版 PPT 成品登记其来源页面规划。可空；NULL = 无规划的成品。
+        "page_plan_id": "INTEGER",
+    },
     # 工单 13：填充中断标记。既有库里的历史填充记录都是「没请求过中断」，
     # 补列缺省 0 与补列前语义一致。
     "fill_tasks": {"cancel_requested": "INTEGER NOT NULL DEFAULT 0"},
@@ -459,3 +468,51 @@ def _migrate(connection: sqlite3.Connection) -> None:
         for name, column_type in columns.items():
             if name not in existing:
                 connection.execute(f"ALTER TABLE {table} ADD COLUMN {name} {column_type}")
+    _relax_generations_format_check(connection)
+
+
+def _relax_generations_format_check(connection: sqlite3.Connection) -> None:
+    """既有库的 `generations.format` CHECK 只收 docx/html（工单 29 之前），
+    `ALTER TABLE` 不能改约束，故按「新建 → COPY → 弃旧 → 改名」重建该表以放宽到 pptx。
+
+    幂等：新库或已放宽过的库，其 format CHECK 已含 pptx，直接跳过重建。保留旧表全部数据
+    与新表已有列；只在重建时补上 `page_plan_id`（若还没有）。重复运行无副作用。
+    """
+    sql = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='generations'"
+    ).fetchone()
+    if sql is None or "pptx" in (sql["sql"] or ""):
+        return  # 新库或已放宽，无需重建。
+
+    create = (
+        "CREATE TABLE generations_new ("
+        "id            INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "task_id       INTEGER NOT NULL,"
+        "plan_id       INTEGER NOT NULL,"
+        "format        TEXT NOT NULL CHECK (format IN ('docx', 'html', 'pptx')),"
+        "file_path     TEXT NOT NULL,"
+        "template_used TEXT NOT NULL,"
+        "page_plan_id  INTEGER,"
+        "source        TEXT NOT NULL DEFAULT 'outline'"
+        "               CHECK (source IN ('outline', 'body')),"
+        "created_at    TEXT NOT NULL"
+        ")"
+    )
+    connection.execute("DROP TABLE IF EXISTS generations_new")
+    connection.execute(create)
+    connection.execute(
+        """
+        INSERT INTO generations_new
+            (id, task_id, plan_id, format, file_path, template_used,
+             source, page_plan_id, created_at)
+        SELECT id, task_id, plan_id, format, file_path, template_used,
+               source, NULL, created_at
+        FROM generations
+        """
+    )
+    connection.execute("DROP TABLE generations")
+    connection.execute("ALTER TABLE generations_new RENAME TO generations")
+    # 重建后补齐既有库可能缺的索引（保留一致性，与 SCHEMA 对齐）。
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_generations_task ON generations (task_id, id)"
+    )

@@ -25,7 +25,10 @@ from app.api.deps import (
     DataDirDep,
     GenerationRepositoryDep,
     OpenItemRepositoryDep,
+    PagePlanRepositoryDep,
     PlanRepositoryDep,
+    PlanSectionRepositoryDep,
+    PptxRendererDep,
     SettingsRepositoryDep,
     TaskRepositoryDep,
     TemplateRepositoryDep,
@@ -33,7 +36,11 @@ from app.api.deps import (
 )
 from app.api.errors import require_task
 from app.api.gates import require_confirmed_plan
-from app.generation.service import generate_html_deliverable, generate_word_deliverable
+from app.generation.service import (
+    generate_html_deliverable,
+    generate_pptx_deliverable,
+    generate_word_deliverable,
+)
 from app.generation.templates import TemplateError
 from app.generation.themes import (
     DECK_THEME_SETTING_KEY,
@@ -85,6 +92,9 @@ def request_generation(
     settings_repository: SettingsRepositoryDep,
     data_dir: DataDirDep,
     templates_dir: TemplatesDirDep,
+    section_repository: PlanSectionRepositoryDep,
+    page_plan_repository: PagePlanRepositoryDep,
+    pptx_renderer: PptxRendererDep,
     payload: GenerationRequest | None = None,
 ) -> GenerationResponse:
     """请求生成成品：方案未确认、或仍有未定的待确认事项时，在服务端拒绝。"""
@@ -93,6 +103,20 @@ def request_generation(
     )
 
     request = payload or GenerationRequest()
+
+    if request.format is GenerationFormat.pptx:
+        return _generate_pptx(
+            task_id=task_id,
+            plan=plan,
+            request=request,
+            task_repository=task_repository,
+            generation_repository=generation_repository,
+            settings_repository=settings_repository,
+            data_dir=data_dir,
+            section_repository=section_repository,
+            page_plan_repository=page_plan_repository,
+            pptx_renderer=pptx_renderer,
+        )
 
     if request.format is GenerationFormat.html:
         return _generate_deck(
@@ -166,6 +190,60 @@ def _generate_deck(
             generation_repository=generation_repository,
         )
     except DeliverableIntegrityError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"成品完整性检查未通过，已丢弃产物：{exc}",
+        ) from exc
+
+    return GenerationResponse(**result)
+
+
+def _generate_pptx(
+    *,
+    task_id: int,
+    plan: dict,
+    request: GenerationRequest,
+    task_repository,
+    generation_repository,
+    settings_repository,
+    data_dir: str,
+    section_repository,
+    page_plan_repository,
+    pptx_renderer,
+) -> GenerationResponse:
+    """截图版 PPT 一轨：规划页 → 渲染 HTML deck → 截图 → 装配 pptx → 校验 → 记录。
+
+    主题解析与 HTML 一轨相同（未显式给则读全局默认；未知主题 → 400）。
+    截图用注入的 `pptx_renderer`（生产 = Playwright，测试 = 产真实 PNG 的假实现，不启浏览器）。
+    完整性校验未通过（任一页失败 / 尺寸不符 / 页数不符）→ 500，产物由服务层丢弃、不落库。
+    """
+    theme_id = request.theme
+    if theme_id is None:
+        stored = settings_repository.get(DECK_THEME_SETTING_KEY, DEFAULT_THEME_ID)
+        theme_id = stored if stored in DECK_THEMES else DEFAULT_THEME_ID
+
+    try:
+        theme = deck_theme(theme_id)
+    except DeckThemeError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    task = task_repository.get(task_id) or {}
+    try:
+        result = generate_pptx_deliverable(
+            task_id=task_id,
+            task_title=task.get("title") or FALLBACK_DECK_TITLE,
+            theme=theme,
+            data_dir=data_dir,
+            generation_repository=generation_repository,
+            section_repository=section_repository,
+            page_plan_repository=page_plan_repository,
+            renderer=pptx_renderer,
+        )
+    except ValueError as exc:
+        # 该任务还没有页面规划：截图版 PPT 无从装配（#29 闸门），明确 409 不带产物。
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except Exception as exc:
+        # 任一页失败 / 尺寸不符 / 页数不符：产物已由服务层丢弃，绝不交付不完整 PPT。
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"成品完整性检查未通过，已丢弃产物：{exc}",
