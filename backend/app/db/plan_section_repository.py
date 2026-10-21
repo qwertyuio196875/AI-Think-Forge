@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -153,3 +154,43 @@ class PlanSectionRepository:
                 "SELECT * FROM plan_sections WHERE plan_id = ? AND seq = ?", (plan_id, seq)
             ).fetchone()
         return dict(row) if row is not None else None
+
+    def write_references(
+        self, *, plan_id: int, seq: int, references_json: str
+    ) -> dict | None:
+        """记录一章实际采用的引用片段（工单 24）。
+
+        与正文分两步写，是因为正文写失败时绝不记录引用（「只列实际用到的来源」：
+        正文没写成，这章就不该有任何参考资料）。调用方在正文 `write_content` 成功之后
+        再调本方法；这里只落 `references_json`，不动正文与状态。
+
+        章节不存在返回 None（与 `write_content` 同口径，不静默建行）。
+        """
+        with connect(self._db_path) as connection:
+            cursor = connection.execute(
+                "UPDATE plan_sections SET references_json = ?, updated_at = ?"
+                " WHERE plan_id = ? AND seq = ?",
+                (references_json, utcnow_iso(), plan_id, seq),
+            )
+            connection.commit()
+            if cursor.rowcount == 0:
+                return None
+            row = connection.execute(
+                "SELECT * FROM plan_sections WHERE plan_id = ? AND seq = ?", (plan_id, seq)
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def read_references(self, row: dict) -> list[dict]:
+        """把一章的 `references_json` 反序列化为引用卡片清单。
+
+        缺省/损坏按**空清单**处理（绝不因参考资料损坏而让成品拼装失败——资料是
+        附注，不是正文；正文写好了，参考资料解析失败就缺一块注脚，不该让整章作废）。
+        """
+        raw = row.get("references_json") or ""
+        if not raw.strip():
+            return []
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return []
+        return data if isinstance(data, list) else []

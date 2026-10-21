@@ -128,6 +128,36 @@ class SectionWriteResponse(BaseModel):
     deliverable: GenerationResponse
 
 
+class SectionFillRequest(BaseModel):
+    """单章填充的请求体（工单 24）。
+
+    `reference_cards` 是用户在该章**保留**的引用片段（从 `POST /references` 预览里
+    勾选后带回）。后端只把 `adopted=True` 的片段注入提示词；正文写成功后把这些实际
+    采用的片段落库，供成品拼装「参考资料」。为 None 或缺省表示本章不使用知识库。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    reference_cards: list[dict] | None = Field(default=None)
+
+
+class SectionReferencesResponse(BaseModel):
+    """一章可用的引用片段（工单 24 / ADR-0005）。
+
+    检索结果的引用卡片（`to_citation_cards` 的形状）：默认全选（`adopted=True`），
+    前端逐条可取消。这是「写之前看一眼将用哪些资料」的预览——读库不改库。没有命中
+    或没有可用资料时 `cards` 为空清单、`retrieval_status` 说明原因（界面据此明示
+    「本次未使用知识库」）。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: int
+    seq: int
+    cards: list[dict]
+    retrieval_status: dict | None = None
+
+
 class SerialFillResponse(BaseModel):
     """全篇逐章填完后的响应：进度 + 章节清单 + 成品 + 字数偏差（工单 11 / 16）。
 

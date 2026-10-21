@@ -6,7 +6,8 @@
  *    空清单提示、按 plan_id 判定清单是否过期；
  * 2) `frontend/src/api/client.ts` 的 `listPlanSections`：用替身 fetch 断言它只打
  *    `GET /tasks/{id}/sections`，且返回值原样透出后端字段（不重算、不猜字段）；
- * 3) 只读边界的源码级守卫：没有改名 / 排序 / 增删章节的 API 与界面入口。
+ * 3) 只读边界的源码级守卫：没有改名 / 排序 / 增删章节的结构编辑 API 与界面入口
+ *    （工单 24 的引用预览与单章填充是写内容，不改变目录结构，故不在禁列）。
  *
  * 期望值来自工单 8、规格 US5–US6 与后端契约
  * （`backend/app/models/plan_section.py`、`backend/app/api/routes/sections.py`），
@@ -147,13 +148,16 @@ test('空清单提示把「怎么写才能切出章节」说清楚，并指向�
   assert.match(EMPTY_SECTIONS_HINT, /返回修订方案/)
 })
 
-test('章节相关 API 只有只读的 listPlanSections——不存在改名 / 排序 / 增删 / 重写的函数', () => {
+test('章节 API 只含「只读清单 + 逐章填充」——不存在改名 / 排序 / 增删 / 重排的函数', () => {
   const text = source('../src/api/client.ts')
+  // 允许的章节端点：只读清单 listPlanSections、工单 24 的引用预览 previewSectionReferences、
+  // 单章正文填充 fillSection。这些**写的是章节内容 / 引用**，不改变章节目录结构。
   const names = [...text.matchAll(/export function (\w*[Ss]ection\w*)\s*\(/g)].map((m) => m[1])
-  assert.deepEqual(names, ['listPlanSections'])
-  // 只读边界：整份客户端里不该出现任何写章节的端点
-  assert.equal(/sections\/[\w{}$]/.test(text), false)
-  assert.equal(/method:\s*'(POST|PUT|PATCH|DELETE)'[^}]*sections/s.test(text), false)
+  assert.deepEqual(names, ['listPlanSections', 'previewSectionReferences', 'fillSection'])
+  // 只读边界：章节目录**结构**不可改——没有改名 / 排序 / 增删 / 重排章节的端点
+  // （填充单章正文是写内容，不是改目录；ADR-0006 只禁止结构编辑）。
+  assert.equal(/rename[\w]*[Ss]ection|reorder[\w]*[Ss]ection|resequence[\w]*[Ss]ection/i.test(text), false)
+  assert.equal(/method:\s*'(?:PUT|PATCH|DELETE)'[^}]*sections/s.test(text), false)
 })
 
 /* ---------- 客户端：端点、字段透出与错误 ---------- */

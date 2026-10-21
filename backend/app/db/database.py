@@ -96,23 +96,27 @@ CREATE INDEX IF NOT EXISTS idx_plans_task ON plans (task_id, id);
 -- - content_md：已写正文（填充阶段写入）；字数**不落列**，读时用 `app.hanzi.count_hanzi`
 --   现算——落一份缓存列就等于多一套口径，违反「计量函数是唯一入口」；
 -- - status：pending（待写）/ completed（已完成）/ failed（失败）；
--- - completed_at：该章完成时刻（未完成为 NULL）。
+-- - completed_at：该章完成时刻（未完成为 NULL）；
+-- - references_json：本章实际采用的引用片段（工单 24），正文写成功时随正文落库，
+--   供拼装成品时聚合为「参考资料」清单。
 -- 纪律：清单只读，**不提供**改名 / 排序 / 增删章节（ADR-0006 的决定，不是遗漏）；
 -- 方案修订或重复确认后按标题匹配重建，匹配不上的旧章节一律废弃。
 CREATE TABLE IF NOT EXISTS plan_sections (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    task_id       INTEGER NOT NULL REFERENCES tasks(id),
-    plan_id       INTEGER NOT NULL REFERENCES plans(id),
-    seq           INTEGER NOT NULL,
-    title         TEXT NOT NULL,
-    key_points    TEXT NOT NULL DEFAULT '',
-    target_length INTEGER,
-    content_md    TEXT NOT NULL DEFAULT '',
-    status        TEXT NOT NULL DEFAULT 'pending'
-                  CHECK (status IN ('pending', 'completed', 'failed')),
-    completed_at  TEXT,
-    created_at    TEXT NOT NULL,
-    updated_at    TEXT NOT NULL
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id         INTEGER NOT NULL REFERENCES tasks(id),
+    plan_id         INTEGER NOT NULL REFERENCES plans(id),
+    seq             INTEGER NOT NULL,
+    title           TEXT NOT NULL,
+    key_points      TEXT NOT NULL DEFAULT '',
+    target_length   INTEGER,
+    content_md      TEXT NOT NULL DEFAULT '',
+    status          TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending', 'completed', 'failed')),
+    completed_at    TEXT,
+    references_json TEXT NOT NULL DEFAULT '',
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    UNIQUE (plan_id, seq)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_sections_seq ON plan_sections (plan_id, seq);
@@ -325,21 +329,25 @@ CREATE INDEX IF NOT EXISTS idx_summary_deliverables_source
 -- - content_md：本章已写正文；字数**不落列**，读时按唯一入口 app.hanzi.count_hanzi 现算，
 --   避免「改正文忘了改字数列」的死数据；
 -- - status：待写 / 已完成 / 失败（机器值 pending / completed / failed）；
+-- - references_json：本章实际采用的引用片段（工单 24）。只在正文**写成功**时落库，
+--   是与正文同事务的一份事实，供拼装成品时聚合成「参考资料」清单；反序列化失败按空清单
+--   处理（见 plan_section_repository.read_references）。
 -- - title 不设唯一：方案里允许两章重名（真实场景有），键只有（方案 + 序号）。
 CREATE TABLE IF NOT EXISTS plan_sections (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    task_id       INTEGER NOT NULL REFERENCES tasks(id),
-    plan_id       INTEGER NOT NULL REFERENCES plans(id),
-    seq           INTEGER NOT NULL,
-    title         TEXT NOT NULL,
-    key_points    TEXT NOT NULL DEFAULT '',
-    target_length INTEGER,
-    content_md    TEXT NOT NULL DEFAULT '',
-    status        TEXT NOT NULL DEFAULT 'pending'
-                  CHECK (status IN ('pending', 'completed', 'failed')),
-    completed_at  TEXT,
-    created_at    TEXT NOT NULL,
-    updated_at    TEXT NOT NULL,
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id         INTEGER NOT NULL REFERENCES tasks(id),
+    plan_id         INTEGER NOT NULL REFERENCES plans(id),
+    seq             INTEGER NOT NULL,
+    title           TEXT NOT NULL,
+    key_points      TEXT NOT NULL DEFAULT '',
+    target_length   INTEGER,
+    content_md      TEXT NOT NULL DEFAULT '',
+    status          TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending', 'completed', 'failed')),
+    completed_at    TEXT,
+    references_json TEXT NOT NULL DEFAULT '',
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
     UNIQUE (plan_id, seq)
 );
 
@@ -418,6 +426,9 @@ MIGRATION_COLUMNS: dict[str, dict[str, str]] = {
     # 工单 13：填充中断标记。既有库里的历史填充记录都是「没请求过中断」，
     # 补列缺省 0 与补列前语义一致。
     "fill_tasks": {"cancel_requested": "INTEGER NOT NULL DEFAULT 0"},
+    # 工单 24：本章实际采用的引用片段。既有章节都是「填充阶段引入前」的，引用为空串
+    # 表示「没用过知识库资料」，与补列前语义一致。
+    "plan_sections": {"references_json": "TEXT NOT NULL DEFAULT ''"},
 }
 
 

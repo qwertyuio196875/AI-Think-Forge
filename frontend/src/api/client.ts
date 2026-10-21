@@ -836,6 +836,20 @@ export function listPlanSections(taskId: number): Promise<PlanSectionListRespons
   return request<PlanSectionListResponse>(`/tasks/${taskId}/sections`)
 }
 
+/**
+ * 单章填充的响应（工单 10 / 24）：刚写好的那章（章节项）与随即拼装出的正文成品。
+ *
+ * 与后端 `SectionWriteResponse` 逐字段对齐：`section` 是章节项（含字数 / 状态），
+ * `deliverable` 是成品记录（`source` 标正文成品，文件名可下载）。单章端点成功即返回
+ * 一个真实成品，`deliverable` 恒非空（被中断为 None 的那条属于全篇串行的回调，不在此处）。
+ */
+export interface SectionWriteResponse {
+  task_id: number
+  fill_id: number
+  section: PlanSectionItem
+  deliverable: GenerationResponse
+}
+
 /* ============================================================
    填充：目标字数分摊（工单 15）—— ADR-0006
    权威来源：backend/app/models/fill.py、routes/fill.py、fill/budget.py
@@ -888,6 +902,66 @@ export function previewFillAllocation(
   payload: FillRequest = {}
 ): Promise<FillAllocationResponse> {
   return request<FillAllocationResponse>(`/tasks/${taskId}/fill/allocation`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  })
+}
+
+/* ============================================================
+   填充·单章引用与正文（工单 24）
+   权威来源：backend/app/models/fill.py、routes/fill.py
+   ============================================================ */
+
+/**
+ * 一章可用引用片段的预览（工单 24）：**只读不改库**。
+ *
+ * 用户在写这一章之前先看到将注入哪些资料片段（默认全选、可逐条取消），再决定
+ * 要不要真的用它们。`cards` 复用检索的 `CitationCard` 形状；`retrieval_status`
+ * 复用 `RetrievalStatusInfo`——界面据此明示「降级 / 本次未使用知识库」。
+ */
+export interface SectionReferencesResponse {
+  task_id: number
+  seq: number
+  /** 引用卡片（默认全选，可逐条取消）。 */
+  cards: CitationCard[]
+  retrieval_status: RetrievalStatusInfo | null
+}
+
+/** 单章填充的请求体（与后端 `SectionFillRequest` 对应，`extra="forbid"`）。 */
+export interface SectionFillRequest {
+  /**
+   * 用户在该章**保留**的引用片段（从引用预览里勾选后带回）。
+   * 省略表示本章不使用知识库。后端只把 `adopted=true` 的注入正文。
+   */
+  reference_cards?: CitationCard[]
+}
+
+/**
+ * 给一章算一份可用引用片段预览：POST /api/tasks/{id}/sections/{seq}/references。
+ *
+ * 只读不改库——反复预览不会留下填充记录，也不会触发写正文。
+ */
+export function previewSectionReferences(
+  taskId: number,
+  seq: number
+): Promise<SectionReferencesResponse> {
+  return request<SectionReferencesResponse>(`/tasks/${taskId}/sections/${seq}/references`, {
+    method: 'POST'
+  })
+}
+
+/**
+ * 写一章正文并随即拼装成品：POST /api/tasks/{id}/sections/{seq}/fill。
+ *
+ * `payload.reference_cards` 只在带引用片段时传：后端把保留的片段注入提示词、并在
+ * 正文写成功后落库。返回 `SectionWriteResponse`（内含章节项与成品记录）。
+ */
+export function fillSection(
+  taskId: number,
+  seq: number,
+  payload: SectionFillRequest = {}
+): Promise<SectionWriteResponse> {
+  return request<SectionWriteResponse>(`/tasks/${taskId}/sections/${seq}/fill`, {
     method: 'POST',
     body: JSON.stringify(payload)
   })
@@ -1452,6 +1526,8 @@ export default {
   resolveOpenItem,
   listPlanSections,
   previewFillAllocation,
+  previewSectionReferences,
+  fillSection,
   listHistory,
   getHistoryDetail,
   getDeletionImpact,

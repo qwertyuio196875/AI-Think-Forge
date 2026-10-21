@@ -435,6 +435,9 @@
                    填充是写作（唯一会调模型），生成是确定性渲染，混在一起分不清点下去花不花额度。 -->
               <FillPanel v-if="plan.status === 'confirmed'" :task-id="plan.task_id" />
 
+              <!-- 逐章填充：确认后出现，一章一写、可选引用（工单 24） -->
+              <SectionFillCard v-if="plan.status === 'confirmed'" :task-id="plan.task_id" />
+
               <!-- 生成面板：确认且无未处置项后真实可用（Word 成品） -->
               <GenerationPanel
                 :task-id="plan.task_id"
@@ -584,6 +587,7 @@ import { awaitingLabel, awaitingResumeHint } from '../utils/resumeMeta'
 import GenerationPanel from '../components/GenerationPanel.vue'
 import FillPanel from '../components/FillPanel.vue'
 import ModelSelect from '../components/ModelSelect.vue'
+import SectionFillCard from '../components/SectionFillCard.vue'
 import SectionListCard from '../components/SectionListCard.vue'
 
 type ListState = 'loading' | 'ready' | 'error'

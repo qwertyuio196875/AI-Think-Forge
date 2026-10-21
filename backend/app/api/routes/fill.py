@@ -45,6 +45,7 @@ from app.api.deps import (
     PlanRepositoryDep,
     PlanSectionRepositoryDep,
     ProviderRepositoryDep,
+    RetrievalServiceDep,
     TaskRepositoryDep,
     TemplateRepositoryDep,
     TemplatesDirDep,
@@ -53,7 +54,12 @@ from app.api.gates import require_confirmed_plan
 from app.fill.deviation import measure
 from app.fill.rewrite import rewrite_section
 from app.fill.serial import run_serial_fill
-from app.fill.service import ensure_sections_exist, plan_lengths, start_fill
+from app.fill.service import (
+    ensure_sections_exist,
+    plan_lengths,
+    preview_section_references,
+    start_fill,
+)
 from app.fill.writer import write_section
 from app.models.fill import (
     FILL_STATUS_LABELS,
@@ -61,6 +67,8 @@ from app.models.fill import (
     FillAllocationResponse,
     FillRequest,
     FillResponse,
+    SectionFillRequest,
+    SectionReferencesResponse,
     SectionRewriteResponse,
     SectionWriteResponse,
     SerialFillResponse,
@@ -153,6 +161,38 @@ def preview_allocation(
     )
 
 
+@router.post("/{task_id}/sections/{seq}/references", response_model=SectionReferencesResponse)
+def preview_references(
+    task_id: int,
+    seq: int,
+    task_repository: TaskRepositoryDep,
+    plan_repository: PlanRepositoryDep,
+    open_item_repository: OpenItemRepositoryDep,
+    section_repository: PlanSectionRepositoryDep,
+    retrieval: RetrievalServiceDep,
+) -> SectionReferencesResponse:
+    """给一章算一份「可用引用片段」预览（工单 24）：**只读不改库**。
+
+    用户写这一章之前，先看到将注入哪些资料片段（默认全选、可逐条取消），
+    再决定要不要**真的**用它们。检索不可用不报错：返回空卡片 + 检索状态，界面据此
+    明示「本次未使用知识库」，填充照常可进行。
+
+    闸门与 `POST /sections/{seq}/fill` 一致（方案已确认、无未处置待确认事项）。
+    """
+    plan = require_confirmed_plan(
+        task_id, task_repository, plan_repository, open_item_repository, purpose="fill"
+    )
+    rows = section_repository.list_for_plan(plan["id"])
+    ensure_sections_exist(rows)
+
+    cards, status_payload = preview_section_references(
+        rows=rows, seq=seq, retrieval=retrieval
+    )
+    return SectionReferencesResponse(
+        task_id=task_id, seq=seq, cards=cards, retrieval_status=status_payload
+    )
+
+
 @router.post("/{task_id}/sections/{seq}/fill", response_model=SectionWriteResponse)
 def fill_section(
     task_id: int,
@@ -168,11 +208,15 @@ def fill_section(
     model_client: ModelClientDep,
     data_dir: DataDirDep,
     templates_dir: TemplatesDirDep,
+    payload: SectionFillRequest | None = None,
 ) -> SectionWriteResponse:
-    """写**一章**正文（工单 10），随即拼装出含真实段落与小标题的 .docx 成品。
+    """写**一章**正文（工单 10 / 24），随即拼装出含真实段落与小标题的 .docx 成品。
 
     闸门与 `/fill` 完全一致（方案已确认、无未处置待确认事项）：填充是唯一会调模型的
     写作环节，闸门一旦失守，模型就会替未定内容写正文。
+
+    `payload.reference_cards`（工单 24）是本用户保留的引用片段：只注入 `adopted=True`
+    的，并在正文写成功后把这些实际采用的片段落库供成品拼参考资料。
 
     失败口径：
     - 章节不存在 → 404；已完成不重复写 → 409；没有进行中的填充任务 → 409；
@@ -198,6 +242,7 @@ def fill_section(
             generation_repository=generation_repository,
             data_dir=data_dir,
             templates_dir=templates_dir,
+            reference_cards=(payload or SectionFillRequest()).reference_cards,
         )
     except ModelCallError as exc:
         raise HTTPException(
@@ -354,11 +399,15 @@ def rewrite_task_section(
     model_client: ModelClientDep,
     data_dir: DataDirDep,
     templates_dir: TemplatesDirDep,
+    payload: SectionFillRequest | None = None,
 ) -> SectionRewriteResponse:
-    """只重写一章正文并重新拼装成品（工单 14）。
+    """只重写一章正文并重新拼装成品（工单 14 / 24）。
 
     与 `/sections/{seq}/fill` 的差别：后者对已完成的章是 409（不许悄悄覆盖），
     本端点正是为「用户明确要求换掉这一章」而存在。
+
+    `payload.reference_cards`（工单 24）与单章填充同口径：只用用户保留的片段，
+    并更新这一章落库的参考资料。
 
     - 章节不存在 → 404；章**还没写过**（pending）→ 409，那是正常填充的活儿；
     - 模型调用失败 → 502，**旧正文保留**（重写失败不该把已写好的一章弄丢）；
@@ -383,6 +432,7 @@ def rewrite_task_section(
         generation_repository=generation_repository,
         data_dir=data_dir,
         templates_dir=templates_dir,
+        reference_cards=(payload or SectionFillRequest()).reference_cards,
     )
 
     return SectionRewriteResponse(

@@ -20,6 +20,7 @@ from fastapi import HTTPException, status
 from app.db.generation_repository import GenerationRepository
 from app.db.plan_section_repository import PlanSectionRepository
 from app.db.template_repository import TemplateRepository
+from app.fill.citations import render_citations_block, serialize_references
 from app.fill.document import compose_body_markdown
 from app.fill.prompts import render_section_messages
 from app.fill.writer import (
@@ -45,8 +46,12 @@ def rewrite_section(
     generation_repository: GenerationRepository,
     data_dir: str,
     templates_dir: str,
+    reference_cards: list[dict] | None = None,
 ) -> dict:
     """重写一章正文并重新拼装成品；返回（章节项, 成品记录）。
+
+    `reference_cards`（工单 24）：与单章填充同口径——只注入 `adopted=True` 的片段，
+    并把实际采用的片段更新进 `references_json`（重写常改引用，旧引用不能残留）。
 
     失败口径：模型调用失败 → `ModelCallError`（路由翻 502），**旧正文保留**——
     重写失败不该把已经写好的一章弄丢。
@@ -65,6 +70,7 @@ def rewrite_section(
         title=section["title"],
         key_points=section["key_points"],
         target_length=section["target_length"],
+        citations=render_citations_block(reference_cards or []),
     )
 
     try:
@@ -91,6 +97,13 @@ def rewrite_section(
         plan_id=plan["id"], seq=seq, content_md=body_md, status=STATUS_COMPLETED
     )
     assert updated is not None  # 章节刚刚存在，写入不会让它消失
+
+    # 重写更新引用：只落实际采纳的片段；没传引用时清空旧引用（与「不用资料了」一致）。
+    section_repository.write_references(
+        plan_id=plan["id"],
+        seq=seq,
+        references_json=serialize_references(reference_cards or []),
+    )
 
     # 先删旧的正文成品（记录 + 文件），再拼新的：同一任务只留一份正文成品。
     # 放在拼装之前，是为了「拼装失败时旧的也没了」——但那更糟，所以先拼后删。

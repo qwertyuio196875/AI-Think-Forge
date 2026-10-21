@@ -22,6 +22,7 @@ from app.db.fill_task_repository import FillTaskRepository
 from app.db.generation_repository import GenerationRepository
 from app.db.plan_section_repository import PlanSectionRepository
 from app.db.template_repository import TemplateRepository
+from app.fill.citations import render_citations_block, serialize_references
 from app.fill.document import compose_body_markdown
 from app.fill.prompts import render_section_messages
 from app.fill.segment import needs_segmentation, write_body_segmented
@@ -48,6 +49,7 @@ def _write_body(
     target_length: int | None,
     history: str | None,
     remaining_length: int | None = None,
+    citations: str | None = None,
 ) -> str:
     """写出一章的正文 Markdown：短章一次调用，长章分段调用再拼接（工单 17）。
 
@@ -60,6 +62,9 @@ def _write_body(
 
     `remaining_length` 是**全文还剩多少字**（工单 16）：交给模型做篇幅收敛，避免
     总字数一路超出去。分段路径自己按段递减，不再吃这个值。
+
+    `citations` 是**本章可用的资料片段**文本块（工单 24）：由调用方把采纳的引用卡片
+    `render_citations_block` 成文后传入；为 None 时提示词里给「暂无」占位。
     """
     if target_length is not None and needs_segmentation(target_length):
         return write_body_segmented(
@@ -69,6 +74,7 @@ def _write_body(
             key_points=key_points,
             target_length=target_length,
             history=history,
+            citations=citations,
             max_tokens=SECTION_MAX_TOKENS,
             timeout=SECTION_TIMEOUT_SECONDS,
         )
@@ -79,6 +85,7 @@ def _write_body(
         target_length=target_length,
         history=history,
         remaining_length=remaining_length,
+        citations=citations,
         used_length=_used_hint(remaining_length, target_length),
     )
     return complete_text(
@@ -148,6 +155,7 @@ def write_section(
     build_deliverable: bool = True,
     history: str | None = None,
     remaining_length: int | None = None,
+    reference_cards: list[dict] | None = None,
 ) -> dict:
     """写一章正文并随即拼装成品；返回（章节项, 成品记录）。
 
@@ -161,6 +169,11 @@ def write_section(
 
     `history` 是前情提要（工单 12）：前面已写章节的摘要。第一章为 None，此时提示词
     里给的是「暂无」占位而不是一段空白。
+
+    `reference_cards` 是本章可用的引用卡片（工单 24）：只把 `adopted=True` 的片段
+    注入提示词；正文写成功后把这些**实际采用**的片段落进 `references_json`，供成品
+    拼装时聚合「参考资料」。为 None 表示本节不使用知识库（提示词给「暂无」占位，
+    也不落参考资料）。
     """
     rows = section_repository.list_for_plan(plan["id"])
     section = next((row for row in rows if int(row["seq"]) == seq), None)
@@ -182,6 +195,7 @@ def write_section(
             target_length=section["target_length"],
             history=history,
             remaining_length=remaining_length,
+            citations=render_citations_block(reference_cards or []),
         ).strip()
     except ModelCallError:
         # 失败留痕：章节标「失败」，不写正文、不产出成品。
@@ -216,6 +230,15 @@ def write_section(
         plan_id=plan["id"], seq=seq, content_md=body_md, status=STATUS_COMPLETED
     )
     assert updated is not None  # 章节刚刚存在，写入不会让它消失
+
+    # 正文写成功了，才把这一章实际采用的引用落库（工单 24）：「只列实际用到的来源」，
+    # 正文没写成就不该有任何参考资料。写引用失败不阻断正文——参考是注脚不是正文。
+    if reference_cards:
+        section_repository.write_references(
+            plan_id=plan["id"],
+            seq=seq,
+            references_json=serialize_references(reference_cards),
+        )
 
     # 进度按**库里已完成章节数**给（唯一真源是 plan_sections.status）。
     refreshed = section_repository.list_for_plan(plan["id"])

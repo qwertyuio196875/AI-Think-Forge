@@ -19,12 +19,14 @@ from app.db.fill_task_repository import FillTaskRepository
 from app.db.plan_section_repository import PlanSectionRepository
 from app.fill.budget import AllocationError, allocate_lengths
 from app.grilling.plan_sections import parse_plan_sections
+from app.grilling.retrieval import to_citation_cards
 from app.models.fill import (
     DEFAULT_TARGET_LENGTH,
     MAX_TARGET_LENGTH,
     MIN_TARGET_LENGTH,
     FillRequest,
 )
+from app.retrieval.service import RetrievalService
 
 # 参数不可用统一用 422。这里写字面量而不是 `status.HTTP_422_UNPROCESSABLE_ENTITY`：
 # 该常量在新版 Starlette 里已改名并会发弃用警告，而旧版又没有新名字；与 grilling 路由
@@ -199,3 +201,34 @@ def start_fill(
 
     fill = fill_repository.start(task_id=task_id, plan_id=plan["id"], target_length=target_length)
     return fill, rows
+
+
+def preview_section_references(
+    *,
+    rows: list[dict],
+    seq: int,
+    retrieval: RetrievalService,
+) -> tuple[list[dict], dict | None]:
+    """给一章算一份「可用引用片段」预览（工单 24）：**只读不改库**。
+
+    用「章节标题 + 要点」做检索查询——这是本章要写的内容，据此召回最贴切的资料。
+    返回（引用卡片, 检索状态）。`to_citation_cards` 契约下的卡片默认全选，前端逐条
+    取消；取消后用户会把**保留的**卡片带回填充请求，后端只注入那些。
+
+    章节不存在时由调用方先拦（这里假定 `seq` 已存在于 `rows`，不重复校验）。
+    检索不可用不报错：返回空卡片 + 检索状态，界面据状态明示「本次未使用知识库」。
+    """
+    section = next((row for row in rows if int(row["seq"]) == seq), None)
+    if section is None:
+        raise HTTPException(status_code=404, detail=f"当前方案没有第 {seq} 章")
+
+    query = f"{section['title']} {section['key_points']}".strip()
+    result = retrieval.retrieve(query)
+    status_payload = {
+        "status": result.status.value,
+        "status_label": result.status_label,
+        "message": result.message,
+        "degraded": result.degraded,
+        "truncated": result.truncated,
+    }
+    return to_citation_cards(result), status_payload
