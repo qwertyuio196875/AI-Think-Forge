@@ -379,6 +379,23 @@ CREATE TABLE IF NOT EXISTS fill_tasks (
 );
 
 CREATE INDEX IF NOT EXISTS idx_fill_tasks_task ON fill_tasks (task_id, id);
+
+-- 页面规划（工单 25 / ADR-0004）：一次「已填充章节 → 页列表」规划的落库。
+-- - 一份方案可以先后规划成不同页数（改页数即重新规划），故按 (task_id, plan_id, target_pages)
+--   存多行；实际页数**恒等于** target_pages（含封面占一页）。
+-- - pages_json：规划后的页列表（封面 + 内容页），每页记 kind / title / chapter_seqs。
+--   这是 #26 单页到增删的载体：增删页即改这份 JSON，再由此重截（ADR-0004 决策）。
+-- - source：规划依据 = 已填充章节。未填充就请求规划 → 服务层 409，绝不落空规划。
+CREATE TABLE IF NOT EXISTS page_plans (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id       INTEGER NOT NULL REFERENCES tasks(id),
+    plan_id       INTEGER NOT NULL REFERENCES plans(id),
+    target_pages  INTEGER NOT NULL,
+    pages_json    TEXT NOT NULL,
+    created_at    TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_page_plans_task ON page_plans (task_id, id);
 """
 
 

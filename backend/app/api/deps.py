@@ -17,6 +17,7 @@ from app.db.generation_repository import GenerationRepository
 from app.db.knowledge_repository import KnowledgeRepository
 from app.db.message_repository import MessageRepository
 from app.db.open_item_repository import OpenItemRepository
+from app.db.page_plan_repository import PagePlanRepository
 from app.db.plan_repository import PlanRepository
 from app.db.plan_revision_repository import PlanRevisionRepository
 from app.db.plan_section_repository import PlanSectionRepository
@@ -127,6 +128,11 @@ def get_fill_task_repository(db_path: str = Depends(get_db_path)) -> FillTaskRep
     return FillTaskRepository(db_path)
 
 
+def get_page_plan_repository(db_path: str = Depends(get_db_path)) -> PagePlanRepository:
+    """页面规划仓库依赖（`page_plans` 表的唯一写入入口）。"""
+    return PagePlanRepository(db_path)
+
+
 def get_key_store(request: Request) -> KeyStore:
     """密钥库依赖（默认写 Windows 凭据管理器；测试注入内存替身）。"""
     return request.app.state.key_store
@@ -195,6 +201,9 @@ GenerationRepositoryDep = Annotated[
     GenerationRepository, Depends(get_generation_repository)
 ]
 FillTaskRepositoryDep = Annotated[FillTaskRepository, Depends(get_fill_task_repository)]
+PagePlanRepositoryDep = Annotated[
+    PagePlanRepository, Depends(get_page_plan_repository)
+]
 TemplateRepositoryDep = Annotated[TemplateRepository, Depends(get_template_repository)]
 AnalysisRepositoryDep = Annotated[AnalysisRepository, Depends(get_analysis_repository)]
 SummaryDeliverableRepositoryDep = Annotated[

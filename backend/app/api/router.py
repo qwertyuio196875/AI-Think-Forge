@@ -14,6 +14,7 @@ from app.api.routes import (
     health,
     history,
     knowledge,
+    pageplans,
     providers,
     sections,
     settings,
@@ -35,4 +36,5 @@ api_router.include_router(templates.router)
 api_router.include_router(deck.router)
 api_router.include_router(sections.router)
 api_router.include_router(fill.router)
+api_router.include_router(pageplans.router)
 api_router.include_router(settings.router)
