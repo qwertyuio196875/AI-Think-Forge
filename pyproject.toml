@@ -31,6 +31,9 @@ dependencies = [
     "python-multipart>=0.0.9",
     # trafilatura：URL 来源的正文提取（过滤导航 / 广告 / 侧栏，只留主正文）。
     "trafilatura>=2.0",
+    # playwright + 内置 Chromium：PPT 走 HTML deck 逐页截图（图片型成品），见 ADR-0004。
+    # 首次见机需下载 Chromium（约 150MB）；失败必须明确报错，不得静默降级成「没有 PPT」。
+    "playwright>=1.44",
 ]
 
 [project.optional-dependencies]
