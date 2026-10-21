@@ -32,8 +32,9 @@ from app.fill.writer import STATUS_COMPLETED, write_section
 from app.generation.service import generate_body_word_deliverable
 from app.providers.model_client import ModelCallError
 
-# 填充任务的两种终态（`fill_tasks.status` 的取值域）。
+# 填充任务的终态（`fill_tasks.status` 的取值域）。
 STATUS_COMPLETED_FILL = "completed"
+STATUS_CANCELLED_FILL = "cancelled"
 STATUS_FAILED = "failed"
 
 
@@ -90,6 +91,12 @@ def run_serial_fill(
 
     for row in pending:
         seq = int(row["seq"])
+
+        # 中断检查放在**章节边界**上（工单 13）：正在写的那一章必须写完才能停，
+        # 写到一半停下会在库里留下半章正文。所以这个判断在写之前、上一章写完之后。
+        if fill_repository.is_cancel_requested(active["id"]):
+            return _stop_cancelled(fill_repository, section_repository, plan, active)
+
         try:
             write_section(
                 task_id=task_id,
@@ -165,3 +172,25 @@ def _completed_count(section_repository: PlanSectionRepository, plan_id: int) ->
         for row in section_repository.list_for_plan(plan_id)
         if row["status"] == STATUS_COMPLETED
     )
+
+
+def _stop_cancelled(
+    fill_repository: FillTaskRepository,
+    section_repository: PlanSectionRepository,
+    plan: dict,
+    active: dict,
+) -> dict:
+    """按用户请求停下并返回（工单 13）。
+
+    **不拼装成品**：中断时还没有写完整篇，此时出一份成品等于把「写了一半的文章」
+    当成品交给用户。等用户续写跑完再出——这也是「中断本身不产生成品文件」的落点。
+    """
+    refreshed = section_repository.list_for_plan(plan["id"])
+    fill = fill_repository.update_progress(
+        active["id"],
+        completed_sections=_completed_count(section_repository, plan["id"]),
+        status=STATUS_CANCELLED_FILL,
+        error=None,
+    )
+    assert fill is not None  # 填充任务刚刚存在，更新不会让它消失
+    return {"fill": fill, "sections": refreshed, "deliverable": None}

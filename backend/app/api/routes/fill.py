@@ -221,3 +221,53 @@ def run_fill(
         total=total,
         deliverable=outcome["deliverable"],
     )
+
+
+@router.post("/{task_id}/fill/cancel", response_model=SerialFillResponse)
+def cancel_fill(
+    task_id: int,
+    task_repository: TaskRepositoryDep,
+    plan_repository: PlanRepositoryDep,
+    open_item_repository: OpenItemRepositoryDep,
+    section_repository: PlanSectionRepositoryDep,
+    fill_repository: FillTaskRepositoryDep,
+) -> SerialFillResponse:
+    """请求中断一次进行中的填充（工单 13）。
+
+    **中断发生在章节边界上**，不是在这次请求里立刻生效：正在写的那一章必须写完
+    才能停，写到一半停下会在库里留下半章正文。所以这里只置标记并返回当前进度，
+    真正的 `cancelled` 由串行循环在下一个章节边界写入。
+
+    - 没有进行中的填充任务 → 409（没什么可中断的）；
+    - 中断**不产生成品文件**：还没写完整篇，此时出成品等于交一份半成品。
+    """
+    plan = require_confirmed_plan(
+        task_id, task_repository, plan_repository, open_item_repository, purpose="fill"
+    )
+
+    active = fill_repository.active_for_task(task_id)
+    if active is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"任务 {task_id} 没有进行中的填充任务，无法中断",
+        )
+
+    fill_repository.request_cancel(active["id"])
+    fill = fill_repository.get(active["id"]) or active
+    rows = section_repository.list_for_plan(plan["id"])
+    items = to_section_items(rows)
+    total = len(items)
+    completed = sum(1 for row in rows if row["status"] == "completed")
+    return SerialFillResponse(
+        task_id=task_id,
+        fill_id=fill["id"],
+        status=fill["status"],
+        status_label=FILL_STATUS_LABELS.get(fill["status"], fill["status"]),
+        completed_sections=completed,
+        total_sections=total,
+        progress_label=f"第 {completed} / {total} 章",
+        items=items,
+        total=total,
+        # 中断不出成品：还没写完整篇。
+        deliverable=None,
+    )

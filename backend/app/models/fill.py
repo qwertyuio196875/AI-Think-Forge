@@ -104,6 +104,9 @@ class SerialFillResponse(BaseModel):
 
     进度文字由后端给（`progress_label` = 「第 N / M 章」），前端不必自己拼——
     两处各拼一次就会出现「第 3 章」与「第 3 / 8 章」两种说法。
+
+    `deliverable` 在**被中断**时为 None（工单 13）：中断时还没写完整篇，
+    此时出一份成品等于把「写了一半的文章」当成品交出去。
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -117,4 +120,4 @@ class SerialFillResponse(BaseModel):
     progress_label: str
     items: list[PlanSectionItem]
     total: int
-    deliverable: GenerationResponse
+    deliverable: GenerationResponse | None = None

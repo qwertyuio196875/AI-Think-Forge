@@ -365,6 +365,7 @@ CREATE TABLE IF NOT EXISTS fill_tasks (
     status             TEXT NOT NULL DEFAULT 'running'
                        CHECK (status IN ('running', 'completed', 'cancelled', 'failed')),
     error              TEXT,
+    cancel_requested   INTEGER NOT NULL DEFAULT 0 CHECK (cancel_requested IN (0, 1)),
     created_at         TEXT NOT NULL,
     updated_at         TEXT NOT NULL
 );
@@ -414,6 +415,9 @@ MIGRATION_COLUMNS: dict[str, dict[str, str]] = {
     # 工单 10：成品来源（正文成品 / 大纲导出）。既有库补列时缺省 outline，
     # 行为与补列前完全一致（既有成品本来就都是大纲导出）。
     "generations": {"source": "TEXT NOT NULL DEFAULT 'outline'"},
+    # 工单 13：填充中断标记。既有库里的历史填充记录都是「没请求过中断」，
+    # 补列缺省 0 与补列前语义一致。
+    "fill_tasks": {"cancel_requested": "INTEGER NOT NULL DEFAULT 0"},
 }
 
 

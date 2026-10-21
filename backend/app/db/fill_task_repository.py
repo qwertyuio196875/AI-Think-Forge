@@ -102,3 +102,27 @@ class FillTaskRepository:
                 "SELECT * FROM fill_tasks WHERE id = ?", (fill_id,)
             ).fetchone()
         return dict(row) if row is not None else None
+
+    def request_cancel(self, fill_id: int) -> dict | None:
+        """给一次进行中的填充打上「请求中断」标记（工单 13）。
+
+        只置标记，**不改状态**：填充是逐章串行写 `plan_sections` 的，正在写的那一章
+        必须写完才能停（写到一半停下会在库里留下半章正文）。真正的 `cancelled`
+        状态由串行循环在章节边界上写入。
+        """
+        now = utcnow_iso()
+        with connect(self._db_path) as connection:
+            connection.execute(
+                "UPDATE fill_tasks SET cancel_requested = 1, updated_at = ? WHERE id = ?",
+                (now, fill_id),
+            )
+            connection.commit()
+            row = connection.execute(
+                "SELECT * FROM fill_tasks WHERE id = ?", (fill_id,)
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def is_cancel_requested(self, fill_id: int) -> bool:
+        """这次填充是否已被请求中断（串行循环在每章边界上查它）。"""
+        row = self.get(fill_id)
+        return bool(row and int(row.get("cancel_requested") or 0))
