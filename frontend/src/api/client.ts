@@ -736,6 +736,61 @@ export function resolveOpenItem(
 }
 
 /* ============================================================
+   成品章节清单（只读）—— 工单 7 / 8 / ADR-0006
+   权威来源：backend/app/models/plan_section.py、routes/sections.py
+   ============================================================ */
+
+/**
+ * 成品章节状态：待写 / 已完成 / 失败。
+ *
+ * 三态必须分开（ADR-0006）：把「没写」和「写挂了」并成一态，界面就没法说清
+ * 到底哪一章需要重写。保留 string 兜底以防后端后续扩展。
+ */
+export type PlanSectionStatus = 'pending' | 'completed' | 'failed' | (string & {})
+
+/**
+ * 成品目录里的一章。
+ *
+ * **不含已写正文**：清单只回答「目录长什么样、写到哪一步」，正文由填充模块
+ * 写库、由成品文件呈现。字段与后端 `PlanSectionItem` 逐一对应：
+ * - `target_length` 是方案给的**建议字数**，旧格式方案可能为 null（前端说「字数未定」）；
+ * - `hanzi_count` 是**已写汉字数**，由后端唯一入口 `app.hanzi.count_hanzi` 现算，前端不另算；
+ * - `status_label` 是后端给的中文标签，前端优先用它，避免两边各翻一套。
+ */
+export interface PlanSectionItem {
+  seq: number
+  title: string
+  key_points: string
+  target_length: number | null
+  hanzi_count: number
+  status: PlanSectionStatus
+  status_label: string
+  completed_at: string | null
+}
+
+/**
+ * 某任务的成品章节清单（只读）。
+ *
+ * `plan_id` 标出这份清单属于哪一版方案：方案修订会换一版，前端据此判断清单是否过期。
+ * 方案没有可切分章节时是**空清单而不是错误**（`items: []`、`total: 0`）。
+ */
+export interface PlanSectionListResponse {
+  plan_id: number
+  items: PlanSectionItem[]
+  total: number
+}
+
+/**
+ * 成品章节清单：GET /api/tasks/{id}/sections（只读）。
+ *
+ * 刻意**只有这一个**章节接口——改名、拖拽排序、增删章节一律不做（ADR-0006：
+ * 那等于把「方案直接编辑」提前，超出范围）。要改章节就回去对话修订方案。
+ */
+export function listPlanSections(taskId: number): Promise<PlanSectionListResponse> {
+  return request<PlanSectionListResponse>(`/tasks/${taskId}/sections`)
+}
+
+/* ============================================================
    历史、续作与删除 —— TB-10
    权威来源：backend/app/models/{history,task}.py、routes/{history,tasks}.py
    ============================================================ */
@@ -1292,6 +1347,7 @@ export default {
   listRevisions,
   listOpenItems,
   resolveOpenItem,
+  listPlanSections,
   listHistory,
   getHistoryDetail,
   getDeletionImpact,
