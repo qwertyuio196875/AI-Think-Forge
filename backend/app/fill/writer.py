@@ -24,6 +24,7 @@ from app.db.plan_section_repository import PlanSectionRepository
 from app.db.template_repository import TemplateRepository
 from app.fill.document import compose_body_markdown
 from app.fill.prompts import render_section_messages
+from app.fill.segment import needs_segmentation, write_body_segmented
 from app.generation.service import generate_body_word_deliverable
 from app.providers.model_client import ModelCallError, complete_text
 from app.sections.service import to_section_items
@@ -36,6 +37,51 @@ SECTION_TIMEOUT_SECONDS = 180.0
 # 章节状态（`plan_sections.status` 的取值域）。
 STATUS_COMPLETED = "completed"
 STATUS_FAILED = "failed"
+
+
+def _write_body(
+    *,
+    model_client,
+    model_name: str | None,
+    title: str,
+    key_points: str,
+    target_length: int | None,
+    history: str | None,
+) -> str:
+    """写出一章的正文 Markdown：短章一次调用，长章分段调用再拼接（工单 17）。
+
+    分段与否只看**目标字数**（`app.fill.segment.needs_segmentation`）：8000 字量级的
+    单章在 8192 token 的输出上限下一次写不完，硬写的结果是「被长度上限截断」或
+    「只写了半篇」。短章仍走原来的单次调用——多调一次只是多花钱、多一次失败机会。
+
+    两条路径共用同一套按次调用参数（`SECTION_MAX_TOKENS` / `SECTION_TIMEOUT_SECONDS`）
+    与同一个提示词渲染，因此 #10 的既有契约一条不改。
+    """
+    if target_length is not None and needs_segmentation(target_length):
+        return write_body_segmented(
+            model_client=model_client,
+            model_name=model_name,
+            title=title,
+            key_points=key_points,
+            target_length=target_length,
+            history=history,
+            max_tokens=SECTION_MAX_TOKENS,
+            timeout=SECTION_TIMEOUT_SECONDS,
+        )
+
+    messages = render_section_messages(
+        title=title,
+        key_points=key_points,
+        target_length=target_length,
+        history=history,
+    )
+    return complete_text(
+        model_client,
+        messages,
+        model=model_name,
+        max_tokens=SECTION_MAX_TOKENS,
+        timeout=SECTION_TIMEOUT_SECONDS,
+    )
 
 
 def ensure_section_writable(section: dict) -> None:
@@ -113,20 +159,14 @@ def write_section(
     ensure_section_writable(section)
     fill = require_active_fill(fill_repository, task_id)
 
-    messages = render_section_messages(
-        title=section["title"],
-        key_points=section["key_points"],
-        target_length=section["target_length"],
-        history=history,
-    )
-
     try:
-        body_md = complete_text(
-            model_client,
-            messages,
-            model=model_name,
-            max_tokens=SECTION_MAX_TOKENS,
-            timeout=SECTION_TIMEOUT_SECONDS,
+        body_md = _write_body(
+            model_client=model_client,
+            model_name=model_name,
+            title=section["title"],
+            key_points=section["key_points"],
+            target_length=section["target_length"],
+            history=history,
         ).strip()
     except ModelCallError:
         # 失败留痕：章节标「失败」，不写正文、不产出成品。

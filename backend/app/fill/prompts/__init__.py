@@ -29,6 +29,7 @@ _ASSET_BY_VERSION = {
 _NO_HISTORY = "（暂无：这是第一章，前面没有已写内容）"
 _NO_REMAINING = "（暂无：本次不按剩余字数收敛）"
 _NO_CITATIONS = "（暂无：本次没有使用知识库资料）"
+_NO_CONTINUATION = "（暂无：这是本章的第一段，直接从开头写）"
 
 
 def load_asset(version: str = FILL_PROMPT_VERSION) -> str:
@@ -47,12 +48,17 @@ def render_section_messages(
     history: str | None = None,
     remaining_length: int | None = None,
     citations: str | None = None,
+    continuation: str | None = None,
 ) -> list[dict]:
     """渲染「把一章扩写成正文」的对话消息。
 
     上下文按「已知 → 待写 → 约束」三段给：先说已写内容（跨章承接，#12 接手），
     再说本章要写什么，最后给字数与可用的资料片段（#16 / #24 接手）。缺省的那几项
     显式写「暂无」，模型不会误以为那是用户的话。
+
+    `continuation` 是**长章分段**（#17）的已写结尾：长章写不下时分多次调用，第二段
+    起把上一段的收尾喂回去，模型才能接着往下写，而不是把写过的东西重写一遍。
+    单章一次写完时它是 `None`，提示词与分段功能引入前逐字一致。
     """
     system = load_asset(FILL_PROMPT_VERSION)
     user = (
@@ -62,9 +68,11 @@ def render_section_messages(
         f"{title}\n\n"
         "## 本章要点（必须围绕它展开，但不要照抄成条目）\n"
         f"{key_points or '（暂无：只按本章标题展开）'}\n\n"
-        "## 本章目标字数（按汉字计，不含标点与空白）\n"
+        "## 本章已写到的结尾（这次要接着往下写，不要重写这部分）\n"
+        f"{continuation or _NO_CONTINUATION}\n\n"
+        "## 本次目标字数（按汉字计，不含标点与空白）\n"
         f"{target_length if target_length is not None else '（暂无：请写一个完整的短章）'}\n\n"
-        "## 剩余字数（全文还剩多少）\n"
+        "## 剩余字数（本章还剩多少）\n"
         f"{remaining_length if remaining_length is not None else _NO_REMAINING}\n\n"
         "## 本次可用的资料片段\n"
         f"{citations or _NO_CITATIONS}\n\n"
