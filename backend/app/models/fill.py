@@ -121,3 +121,16 @@ class SerialFillResponse(BaseModel):
     items: list[PlanSectionItem]
     total: int
     deliverable: GenerationResponse | None = None
+
+
+class SectionRewriteResponse(BaseModel):
+    """重写一章的响应（工单 14）：刚重写的章 + **重新拼装**的正文成品。
+
+    成品是新拼的那一份，不是追加的第二份——旧的那份已在服务层清理。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: int
+    section: PlanSectionItem
+    deliverable: GenerationResponse

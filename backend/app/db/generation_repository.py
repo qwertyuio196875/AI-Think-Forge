@@ -95,6 +95,33 @@ class GenerationRepository:
             ).fetchone()
         return int(row["total"])
 
+    def delete_body_generations(self, task_id: int, *, keep_id: int | None = None) -> list[dict]:
+        """删掉某任务全部**正文成品**记录（可保留一条），返回被删的行供清理文件。
+
+        为什么只在重写时用（工单 14）：正文成品是「整篇正文的快照」，同一任务同时
+        留多份会让用户分不清哪份是最新的。重写某一章后，旧的那份正文成品已经被新
+        拼装的那份取代——它不是历史版本，是过期快照。
+
+        `keep_id` 是**必须保留**的那一条（刚拼好的新成品）。调用方先拼新的、再清旧的，
+        所以这里必须能排除新记录，否则会把刚写好的成品一起删掉。
+
+        **不动大纲导出**（`source='outline'`）：那是另一条产物、另一种用途，
+        用户可能确实要留着做对照。
+        """
+        with connect(self._db_path) as connection:
+            rows = connection.execute(
+                "SELECT * FROM generations WHERE task_id = ? AND source = ?",
+                (task_id, SOURCE_BODY),
+            ).fetchall()
+            stale = [
+                dict(row) for row in rows if keep_id is None or int(row["id"]) != keep_id
+            ]
+            for row in stale:
+                connection.execute("DELETE FROM generations WHERE id = ?", (row["id"],))
+            if stale:
+                connection.commit()
+        return stale
+
     def _has_task_column(self) -> bool:
         """成品表是否已落地且带 `task_id`。"""
         with connect(self._db_path) as connection:

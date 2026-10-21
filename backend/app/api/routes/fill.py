@@ -21,6 +21,12 @@
 工单 11 追加 `POST /api/tasks/{task_id}/fill/run`：把剩余章节**逐章串行**写完
 （见 `app.fill.serial`），全部写完后整体重新拼装成品。任一章失败即停下、报错指出
 是第几章、**不产出残缺成品**。
+
+工单 13 追加 `POST /api/tasks/{task_id}/fill/cancel`：置中断标记，串行循环在章节
+边界上停下；中断本身不产出成品、也不算失败。
+
+工单 14 追加 `POST /api/tasks/{task_id}/sections/{seq}/rewrite`：只重写一章，
+成品重新拼装成同一份（旧正文成品记录与文件一并清理）。
 """
 
 from __future__ import annotations
@@ -41,6 +47,7 @@ from app.api.deps import (
     TemplatesDirDep,
 )
 from app.api.gates import require_confirmed_plan
+from app.fill.rewrite import rewrite_section
 from app.fill.serial import run_serial_fill
 from app.fill.service import start_fill
 from app.fill.writer import write_section
@@ -48,6 +55,7 @@ from app.models.fill import (
     FILL_STATUS_LABELS,
     FillRequest,
     FillResponse,
+    SectionRewriteResponse,
     SectionWriteResponse,
     SerialFillResponse,
 )
@@ -270,4 +278,58 @@ def cancel_fill(
         total=total,
         # 中断不出成品：还没写完整篇。
         deliverable=None,
+    )
+
+
+@router.post(
+    "/{task_id}/sections/{seq}/rewrite", response_model=SectionRewriteResponse
+)
+def rewrite_task_section(
+    task_id: int,
+    seq: int,
+    task_repository: TaskRepositoryDep,
+    plan_repository: PlanRepositoryDep,
+    open_item_repository: OpenItemRepositoryDep,
+    section_repository: PlanSectionRepositoryDep,
+    template_repository: TemplateRepositoryDep,
+    generation_repository: GenerationRepositoryDep,
+    provider_repository: ProviderRepositoryDep,
+    model_client: ModelClientDep,
+    data_dir: DataDirDep,
+    templates_dir: TemplatesDirDep,
+) -> SectionRewriteResponse:
+    """只重写一章正文并重新拼装成品（工单 14）。
+
+    与 `/sections/{seq}/fill` 的差别：后者对已完成的章是 409（不许悄悄覆盖），
+    本端点正是为「用户明确要求换掉这一章」而存在。
+
+    - 章节不存在 → 404；章**还没写过**（pending）→ 409，那是正常填充的活儿；
+    - 模型调用失败 → 502，**旧正文保留**（重写失败不该把已写好的一章弄丢）；
+    - 其余章节一个字不动；成品重新拼装成同一份（旧正文成品记录与文件清理掉，
+      大纲导出不动）。
+    """
+    plan = require_confirmed_plan(
+        task_id, task_repository, plan_repository, open_item_repository, purpose="fill"
+    )
+
+    task = task_repository.get(task_id) or {}
+    client, model_name = model_for_task(task, provider_repository, model_client)
+
+    outcome = rewrite_section(
+        task_id=task_id,
+        plan=plan,
+        seq=seq,
+        model_client=client,
+        model_name=model_name,
+        section_repository=section_repository,
+        template_repository=template_repository,
+        generation_repository=generation_repository,
+        data_dir=data_dir,
+        templates_dir=templates_dir,
+    )
+
+    return SectionRewriteResponse(
+        task_id=task_id,
+        section=outcome["section"],
+        deliverable=outcome["deliverable"],
     )
