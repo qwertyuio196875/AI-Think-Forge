@@ -241,13 +241,18 @@ def test_inject_budget_truncates_instead_of_failing(
     assert result.truncated is True
 
 
-# --- 负测：降级与不可用（骨架 + 标记，关键词检索属 #22）-----------------------------
+# --- 负测：降级与不可用（骨架 + 标记；降级的**召回**由 #22 负责）-------------------
 
 
 def test_degraded_when_embedding_call_fails(
     retrieval_client: TestClient, db_path, embedding_client: FakeEmbeddingClient
 ) -> None:
-    """嵌入调用失败：降级路径返回结果对象并明示降级，不抛错、不静默。"""
+    """嵌入调用失败：降级路径返回结果对象并明示降级，不抛错、不静默。
+
+    工单 22 起，降级**不再返回空结果**——它改走关键词检索，RAG 仍然可用。
+    本条只钉「状态可见」这一层（降级标记与提示语），召回能力的断言在
+    `test_keyword_fallback.py`。
+    """
     _upload_md(retrieval_client, "分块说明.md", "# 分块说明\n\n" + PARAGRAPH + "\n")
     embedding_client.set_error(EmbeddingCallError("嵌入服务不可用"))
 
@@ -257,7 +262,6 @@ def test_degraded_when_embedding_call_fails(
     assert result.degraded is True
     assert result.status_label == "降级检索"
     assert "降级" in (result.message or "")
-    assert result.hits == []
 
 
 def test_degraded_when_every_source_lacks_vectors(
