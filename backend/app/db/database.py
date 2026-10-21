@@ -340,6 +340,31 @@ CREATE TABLE IF NOT EXISTS plan_sections (
 
 CREATE INDEX IF NOT EXISTS idx_plan_sections_plan ON plan_sections (plan_id, seq);
 CREATE INDEX IF NOT EXISTS idx_plan_sections_task ON plan_sections (task_id, plan_id, seq);
+
+-- 填充任务（规格 §4；工单 9 / ADR-0006）：一次「填充为正文」的尝试，一章一行正文存在
+-- `plan_sections`，这里只记**这次尝试**的整体进度与失败原因。
+-- - target_length：本次正文的目标字数（按汉字计，唯一计量入口 app.hanzi.count_hanzi）；
+-- - completed_sections：已写完的章节数（由逐章填充工单随写随更新，本单只写初值 0）；
+-- - status：进行中 / 已完成 / 中断 / 失败（机器值 running / completed / cancelled / failed）。
+--   中断保留已完成章节（规格 §4），故「中断」不是删除；
+-- - error：当前错误信息；空着表示还没出错。失败必须留痕，不能只在前端弹一下就没了。
+-- 为什么单独一张表而不复用 generations：填充是写作阶段、生成是渲染阶段，两者生命周期
+-- 完全不同（填充可能进行中、被中断、失败重试；成品是最终产物），混在一张表里必然要加
+-- 一堆互斥的可空列。
+CREATE TABLE IF NOT EXISTS fill_tasks (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id            INTEGER NOT NULL REFERENCES tasks(id),
+    plan_id            INTEGER NOT NULL REFERENCES plans(id),
+    target_length      INTEGER NOT NULL,
+    completed_sections INTEGER NOT NULL DEFAULT 0,
+    status             TEXT NOT NULL DEFAULT 'running'
+                       CHECK (status IN ('running', 'completed', 'cancelled', 'failed')),
+    error              TEXT,
+    created_at         TEXT NOT NULL,
+    updated_at         TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_fill_tasks_task ON fill_tasks (task_id, id);
 """
 
 

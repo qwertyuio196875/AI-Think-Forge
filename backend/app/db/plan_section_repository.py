@@ -103,3 +103,24 @@ class PlanSectionRepository:
             connection.commit()
 
         return self.list_for_plan(plan_id)
+
+    def update_target_lengths(self, plan_id: int, lengths: dict[int, int]) -> list[dict]:
+        """改写若干章的 `target_length`（填充时用户微调逐章字数用），返回改后的整份清单。
+
+        只动 `target_length`：正文与状态属于填充过程，不该被字数调整顺手清掉。序号不存在
+        时由调用方先行校验（这里不猜也不静默建行）。
+        """
+        if not lengths:
+            return self.list_for_plan(plan_id)
+
+        now = utcnow_iso()
+        with connect(self._db_path) as connection:
+            for seq, length in lengths.items():
+                connection.execute(
+                    "UPDATE plan_sections SET target_length = ?, updated_at = ?"
+                    " WHERE plan_id = ? AND seq = ?",
+                    (length, now, plan_id, seq),
+                )
+            connection.commit()
+
+        return self.list_for_plan(plan_id)

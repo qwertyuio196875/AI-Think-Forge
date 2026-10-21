@@ -32,6 +32,7 @@ from app.api.deps import (
     TemplatesDirDep,
 )
 from app.api.errors import require_task
+from app.api.gates import require_confirmed_plan
 from app.generation.service import generate_html_deliverable, generate_word_deliverable
 from app.generation.templates import TemplateError
 from app.generation.themes import (
@@ -59,31 +60,14 @@ FALLBACK_DECK_TITLE = "演示"
 def _require_confirmed_plan(
     task_id: int, task_repository, plan_repository, open_item_repository
 ) -> dict:
-    """闸门判定：返回已确认且无未定条目的方案；否则抛 404/409。"""
-    require_task(task_repository, task_id)
+    """闸门判定：返回已确认且无未定条目的方案；否则抛 404/409。
 
-    plan = plan_repository.get_current(task_id)
-    if plan is None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"任务 {task_id} 尚无结构化方案，无法生成",
-        )
-    if plan["status"] != "confirmed":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="结构化方案尚未确认，拒绝生成（方案确认是进入生成阶段的唯一闸门）",
-        )
-
-    if open_item_repository.has_unresolved(task_id):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                "仍有未处置的待确认事项，拒绝生成"
-                "（未确认的推测不得进入下游；请先确认或搁置这些条目）"
-            ),
-        )
-
-    return plan
+    判据已抽到 `app.api.gates.require_confirmed_plan`（填充入口复用同一套），这里只固定
+    「生成」用途的措辞，行为与抽走之前完全一致。
+    """
+    return require_confirmed_plan(
+        task_id, task_repository, plan_repository, open_item_repository, purpose="generate"
+    )
 
 
 @router.post(

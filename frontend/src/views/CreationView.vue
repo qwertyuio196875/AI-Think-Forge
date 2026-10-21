@@ -352,6 +352,7 @@
                   <div class="plan-revise">
                     <h4>继续对话修订方案</h4>
                     <textarea
+                      ref="reviseRef"
                       v-model="reviseText"
                       rows="2"
                       placeholder="例如：把目标读者改成初级工程师；补充一节「常见问题」"
@@ -420,6 +421,15 @@
                   <p class="hint">{{ generationHint }}</p>
                 </div>
               </div>
+
+              <!-- 确认后的成品章节清单：只读 + 唯一出口「返回修订方案」（工单 8）。
+                   方案未确认时不渲染——未确认的方案还没有进入生成的资格。 -->
+              <SectionListCard
+                v-if="plan.status === 'confirmed'"
+                :task-id="plan.task_id"
+                :plan-id="plan.id"
+                @back-to-revise="backToRevise"
+              />
 
               <!-- 生成面板：确认且无未处置项后真实可用（Word 成品） -->
               <GenerationPanel
@@ -569,6 +579,7 @@ import { formatDateTime, statusDotClass, statusLabel } from '../utils/taskMeta'
 import { awaitingLabel, awaitingResumeHint } from '../utils/resumeMeta'
 import GenerationPanel from '../components/GenerationPanel.vue'
 import ModelSelect from '../components/ModelSelect.vue'
+import SectionListCard from '../components/SectionListCard.vue'
 
 type ListState = 'loading' | 'ready' | 'error'
 type ChatState = 'loading' | 'ready' | 'error'
@@ -590,6 +601,8 @@ const revisions = ref<PlanRevision[]>([])
 const showRevisions = ref(false)
 const revising = ref(false)
 const reviseText = ref('')
+/** 修订输入框：章节清单卡的「返回修订方案」要把人带到这里，而不是另开一套入口。 */
+const reviseRef = ref<HTMLTextAreaElement | null>(null)
 const resolvingId = ref<number | null>(null)
 
 const submitting = ref(false)
@@ -1131,6 +1144,22 @@ async function doRevise(): Promise<void> {
   } finally {
     revising.value = false
   }
+}
+
+/**
+ * 章节清单卡的「返回修订方案」出口（工单 8）。
+ *
+ * 复用既有修订流程而不是另造一套：滚动到方案卡的「继续对话修订」并聚焦输入框，
+ * 用户在那里写修订指令、提交后方案回到草稿态——章节由服务端在修订时重新切分。
+ * 不给「直接改章节」的入口（规格 §3 不做方案直接编辑）。
+ */
+async function backToRevise(): Promise<void> {
+  await nextTick()
+  const box = reviseRef.value
+  if (!box) return
+  box.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  box.focus()
+  ElMessage.info('请在这里说明要改哪几章；提交修订后方案回到草稿态，需再次确认')
 }
 
 async function doResolve(item: OpenItem, status: ResolveStatus): Promise<void> {
