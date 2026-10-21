@@ -12,6 +12,7 @@ from fastapi import Depends, Request
 
 from app.db.analysis_repository import AnalysisRepository
 from app.db.embedding_repository import EmbeddingRepository
+from app.db.fill_task_repository import FillTaskRepository
 from app.db.generation_repository import GenerationRepository
 from app.db.knowledge_repository import KnowledgeRepository
 from app.db.message_repository import MessageRepository
@@ -120,6 +121,11 @@ def get_settings_repository(db_path: str = Depends(get_db_path)) -> SettingsRepo
     return SettingsRepository(db_path)
 
 
+def get_fill_task_repository(db_path: str = Depends(get_db_path)) -> FillTaskRepository:
+    """填充任务记录仓库依赖（`fill_tasks` 表的唯一写入入口）。"""
+    return FillTaskRepository(db_path)
+
+
 def get_key_store(request: Request) -> KeyStore:
     """密钥库依赖（默认写 Windows 凭据管理器；测试注入内存替身）。"""
     return request.app.state.key_store
@@ -169,6 +175,7 @@ PlanSectionRepositoryDep = Annotated[
 GenerationRepositoryDep = Annotated[
     GenerationRepository, Depends(get_generation_repository)
 ]
+FillTaskRepositoryDep = Annotated[FillTaskRepository, Depends(get_fill_task_repository)]
 TemplateRepositoryDep = Annotated[TemplateRepository, Depends(get_template_repository)]
 AnalysisRepositoryDep = Annotated[AnalysisRepository, Depends(get_analysis_repository)]
 SummaryDeliverableRepositoryDep = Annotated[

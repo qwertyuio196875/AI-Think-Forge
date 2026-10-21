@@ -8,6 +8,7 @@ from app.api.routes import (
     analysis,
     deck,
     deliverables,
+    fill,
     generations,
     grilling,
     health,
@@ -33,4 +34,5 @@ api_router.include_router(deliverables.router)
 api_router.include_router(templates.router)
 api_router.include_router(deck.router)
 api_router.include_router(sections.router)
+api_router.include_router(fill.router)
 api_router.include_router(settings.router)

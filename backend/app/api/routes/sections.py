@@ -16,12 +16,8 @@ from fastapi import APIRouter, HTTPException, status
 
 from app.api.deps import PlanRepositoryDep, PlanSectionRepositoryDep, TaskRepositoryDep
 from app.api.errors import require_task
-from app.hanzi import count_hanzi
-from app.models.plan_section import (
-    SECTION_STATUS_LABELS,
-    PlanSectionItem,
-    PlanSectionListResponse,
-)
+from app.models.plan_section import PlanSectionListResponse
+from app.sections.service import to_section_items
 
 router = APIRouter(prefix="/tasks", tags=["sections"])
 
@@ -42,17 +38,5 @@ def list_sections(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"任务 {task_id} 尚无结构化方案"
         )
 
-    items = [
-        PlanSectionItem(
-            seq=record["seq"],
-            title=record["title"],
-            key_points=record["key_points"],
-            target_length=record["target_length"],
-            hanzi_count=count_hanzi(record["content_md"]),
-            status=record["status"],
-            status_label=SECTION_STATUS_LABELS.get(record["status"], record["status"]),
-            completed_at=record["completed_at"],
-        )
-        for record in section_repository.list_for_plan(plan["id"])
-    ]
+    items = to_section_items(section_repository.list_for_plan(plan["id"]))
     return PlanSectionListResponse(plan_id=plan["id"], items=items, total=len(items))

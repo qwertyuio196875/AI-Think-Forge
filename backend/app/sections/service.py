@@ -17,6 +17,29 @@ from __future__ import annotations
 
 from app.db.plan_section_repository import PlanSectionRepository
 from app.grilling.plan_sections import parse_plan_sections
+from app.hanzi import count_hanzi
+from app.models.plan_section import SECTION_STATUS_LABELS, PlanSectionItem
+
+
+def to_section_items(records: list[dict]) -> list[PlanSectionItem]:
+    """把章节行转成对外结构（含现算的汉字数与中文状态标签）。
+
+    只读清单（`GET /sections`）与填充入口的初始进度（`POST /fill`）必须给出**同一份**
+    章节数据，否则前端会看到两个「第几章、多少字」。所以构造只有这一处。
+    """
+    return [
+        PlanSectionItem(
+            seq=record["seq"],
+            title=record["title"],
+            key_points=record["key_points"],
+            target_length=record["target_length"],
+            hanzi_count=count_hanzi(record["content_md"]),
+            status=record["status"],
+            status_label=SECTION_STATUS_LABELS.get(record["status"], record["status"]),
+            completed_at=record["completed_at"],
+        )
+        for record in records
+    ]
 
 
 def sync_plan_sections(
