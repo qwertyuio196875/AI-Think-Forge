@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 from collections.abc import Sequence
 
 from app.providers.embedding_client import VECTOR_FORMAT_VERSION
@@ -125,6 +126,10 @@ class FakeEmbeddingClient:
     - `set_error`：调用直接抛错（模拟未配置 / 服务不可用）；
     - `set_ragged`：返回一条少一维的向量（模拟模型维度不一致）；
     - `set_model`：换模型名与维度（模拟用户切换嵌入模型）。
+
+    **按字符袋散列，不按整段散列**：整段散列会让「查询与分块内容相近」的
+    余弦接近 0，检索阈值断言就变成靠运气。字符袋散列让共享字符越多、余弦
+    越接近 1，于是「相关文本能命中、无关文本被阈值挡掉」可被稳定断言。
     """
 
     def __init__(
@@ -153,17 +158,26 @@ class FakeEmbeddingClient:
         return vectors
 
     def _vector(self, text: str) -> list[float]:
-        """把文本散列成 `dimensions` 个 `[-1, 1]` 浮点（同一文本恒定不变）。"""
-        digest = b""
-        counter = 0
-        while len(digest) < self.dimensions * 2:
-            material = f"{self.model_name}:{counter}:{text}".encode()
-            digest += hashlib.sha256(material).digest()
-            counter += 1
-        return [
-            int.from_bytes(digest[index * 2 : index * 2 + 2], "big") / 32767.5 - 1.0
-            for index in range(self.dimensions)
-        ]
+        """把文本散列成 `dimensions` 个 `[-1, 1]` 浮点（同一文本恒定不变）。
+
+        用**字符袋**（每个字符各贡献一维）而非整段散列：这样「查询与分块
+        共享的字符越多，余弦越接近 1」，与真实嵌入模型的语义相似行为一致；
+        整段散列会得到互不相关的伪随机向量，阈值断言将完全靠运气。
+        """
+        vector = [0.0] * self.dimensions
+        for character in text:
+            slot = hashlib.sha256(
+                f"{self.model_name}:{character}".encode()
+            ).digest()
+            index = int.from_bytes(slot[:2], "big") % self.dimensions
+            vector[index] += 1.0
+        norm = math.sqrt(sum(value * value for value in vector))
+        if norm == 0.0:
+            # 空文本（或全部字符都撞到同一维）：给一个固定的非零向量，
+            # 否则余弦无定义，检索层会把它当成不相关。
+            vector[0] = 1.0
+            return vector
+        return [value / norm for value in vector]
 
     def set_error(self, error: BaseException | None) -> None:
         """预置嵌入失败（未配置 / 网络 / 服务端错误）。"""
