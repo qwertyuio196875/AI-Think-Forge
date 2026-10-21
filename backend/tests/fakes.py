@@ -23,6 +23,15 @@ from app.providers.url_fetcher import (
     FetchedPage,
 )
 
+# 摘要调用的识别标记：摘要提示词带这一节，正文提示词不带（只有「本章要点」）。
+# 替身靠它把「摘要失败」与「正文失败」分开——两者共用同一个客户端。
+_SUMMARY_MARKER = "## 本章正文（已写完）"
+
+
+def _is_summary_call(messages: list[dict]) -> bool:
+    """这次调用是不是摘要调用（工单 12）。"""
+    return any(_SUMMARY_MARKER in str(message.get("content", "")) for message in messages)
+
 
 class InMemoryKeyStore:
     """内存密钥库替身，遵守 KeyStore 协议。"""
@@ -61,6 +70,7 @@ class ScriptedModelClient:
         self._sequence: list[str] = []
         self._sequence_index = 0
         self._fail_after = 0
+        self._summary_error: BaseException | None = None
         self.calls: list[dict] = []
 
     def complete(
@@ -79,6 +89,9 @@ class ScriptedModelClient:
                 "timeout": timeout,
             }
         )
+        # 摘要调用的专用失败（工单 12）：只打摘要，正文照常。
+        if self._summary_error is not None and _is_summary_call(messages):
+            raise self._summary_error
         if self._error is not None and self._sequence_index >= self._fail_after:
             self._sequence_index += 1
             raise self._error
@@ -114,6 +127,15 @@ class ScriptedModelClient:
         """
         self._error = error
         self._fail_after = successes
+
+    def fail_summary_calls(self, error: BaseException) -> None:
+        """只让**摘要**调用抛错，正文调用照常应答（工单 12 的降级验收）。
+
+        摘要与正文共用同一个客户端，靠提示词里的固定小节标题区分：摘要提示词含
+        「## 本章正文（已写完）」，正文提示词含「## 本章要点」。用调用序号区分不行——
+        正文与摘要交错发生，序号会随章节数变化。
+        """
+        self._summary_error = error
 
 
 class ScriptedModelClientFactory:

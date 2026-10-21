@@ -58,6 +58,9 @@ BODY_THIRD = (
     "额度是团队最常问的三个问题里最难答的一个，因为它的答案随用量变化。\n"
 )
 
+# 摘要调用（工单 12）的固定应答：这些用例只关心正文与进度，不关心摘要内容。
+_SUMMARY = "本章讲完了产品主线，为下一章留下了「先做哪五件事」的悬念。"
+
 
 def _frontier_json(*triples: tuple[str, str, str]) -> str:
     frontier = [
@@ -73,12 +76,19 @@ def _task_with_started_fill(
     """走完拷问 → 收敛 → 确认方案 → 开始填充，返回任务 id。
 
     `bodies` 是逐章写作的应答（按章顺序）；不给就用 `BODY_FIRST`。
+
+    **每章正文后跟着一次摘要调用**（工单 12）：`set_sequence` 是按调用顺序取应答的，
+    所以这里要把「正文 / 摘要」交错排好，否则摘要调用会吃掉下一章的正文应答。
+    摘要给一段固定短文本即可——这些用例关心的是正文与进度，不是摘要内容。
     """
+    responses: list[str] = []
+    for body in bodies or (BODY_FIRST,):
+        responses.extend([body, _SUMMARY])
     scripted.set_sequence(
         _frontier_json(("目标读者", "写给谁？", "新员工")),
         json.dumps({"frontier": []}, ensure_ascii=False),
         PLAN_MD,
-        *(bodies or (BODY_FIRST,)),
+        *responses,
     )
     task_id = client.post("/api/grilling/tasks", json={"idea": IDEA}).json()["task"]["id"]
     client.post(

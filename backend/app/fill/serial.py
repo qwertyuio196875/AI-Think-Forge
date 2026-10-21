@@ -11,8 +11,11 @@
 
 **本模块只做编排**：每一章的写作动作仍然走 `app.fill.writer.write_section`，
 因此工单 10 的既有契约（失败留痕、模型调用参数、空正文算失败）一条都不改。
-本单不引入前情提要（#12）、中断续写（#13）、单章重写（#14）、字数分摊（#15）、
-偏差修正（#16）、长章分段（#17）——那些各自接在 write_section 之上。
+
+工单 12 在本模块接入**前情提要**：每章写完后压一段约 100 字摘要，累积成提要喂给
+下一章。摘要调用失败只丢这段提要，不阻断正文生成。
+本单不引入中断续写（#13）、单章重写（#14）、字数分摊（#15）、偏差修正（#16）、
+长章分段（#17）——那些各自接在 write_section 之上。
 """
 
 from __future__ import annotations
@@ -24,6 +27,7 @@ from app.db.generation_repository import GenerationRepository
 from app.db.plan_section_repository import PlanSectionRepository
 from app.db.template_repository import TemplateRepository
 from app.fill.document import compose_body_markdown
+from app.fill.history import build_history, summarize_section
 from app.fill.writer import STATUS_COMPLETED, write_section
 from app.generation.service import generate_body_word_deliverable
 from app.providers.model_client import ModelCallError
@@ -68,6 +72,22 @@ def run_serial_fill(
         )
 
     pending = [row for row in rows if row["status"] != STATUS_COMPLETED]
+
+    # 前情提要：已写完的章各压一段摘要，累积起来喂给下一章（工单 12）。
+    # 只取**已完成**的章——失败或待写的章没有正文可压。
+    summaries: list[str] = []
+    for row in rows:
+        if row["status"] != STATUS_COMPLETED:
+            continue
+        summary = summarize_section(
+            model_client=model_client,
+            model_name=model_name,
+            title=row["title"],
+            body_md=row["content_md"],
+        )
+        if summary:
+            summaries.append(summary)
+
     for row in pending:
         seq = int(row["seq"])
         try:
@@ -85,6 +105,8 @@ def run_serial_fill(
                 templates_dir=templates_dir,
                 # 中途不拼装成品：写完一半的成品是残件，全部写完再一次性拼。
                 build_deliverable=False,
+                # 前情提要：第一章为空（不喂「暂无」占位）。
+                history=build_history(summaries),
             )
         except ModelCallError as exc:
             # 失败留痕：写清是第几章，别只留一句「生成失败」。
@@ -98,6 +120,20 @@ def run_serial_fill(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=f"第 {seq} 章生成失败：{exc}",
             ) from exc
+
+        # 本章写完 → 压一段摘要，供下一章承接。
+        # 摘要失败只丢这段提要（summarize_section 返回 None），正文已落库，不回滚。
+        written = section_repository.list_for_plan(plan["id"])
+        current = next((item for item in written if int(item["seq"]) == seq), None)
+        if current is not None:
+            summary = summarize_section(
+                model_client=model_client,
+                model_name=model_name,
+                title=current["title"],
+                body_md=current["content_md"],
+            )
+            if summary:
+                summaries.append(summary)
 
     # 全部写完：整体重新拼装成品（成品目录与章节清单同源）。
     refreshed = section_repository.list_for_plan(plan["id"])
