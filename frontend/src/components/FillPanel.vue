@@ -173,6 +173,10 @@ function openDialog(): void {
   dialogVisible.value = true
 }
 
+// 生成面板顶部的「填充为正文」入口（工单 #9）需要的唯一对外动作：
+// 弹窗逻辑仍归本组件，父组件只负责把用户带到这里，不复制第二套参数。
+defineExpose({ openDialog })
+
 /**
  * 把当前所有**手动改过**的章作为约束带给后端，让分摊只重算剩下的章。
  *
