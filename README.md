@@ -59,7 +59,7 @@
 | 页面规划 · 截图版 PPT · PDF | ✅ 工单 #25~#31：`POST /page-plans` 按章节权重合并 / 拆页，页数 3–60 是**硬约束**且封面计入；预览可单页增删，实际页数以修改后的规划为准；Playwright 内置 Chromium 逐页截图（1280×720、2x → 2560×1440 PNG），python-pptx 按 13.333×7.5 英寸满幅装配 `.pptx`；PDF 与 PPT 同源同版式，作为可选动作单独导出；测试注入假渲染器，**不启动浏览器** |
 | 知识库 · 最小版 RAG | ✅ 工单 #19~#24：知识库资料复用 `sources` / `documents` / `document_chunks`（以 `task_id IS NULL` 表示不隶属任务）；嵌入默认百炼 `text-embedding-v4`，向量以固定 JSON 存 SQLite，检索用 numpy 内存暴力余弦；top-k = 6、相似度 <0.3 丢弃、单次注入 ≤3000 汉字；嵌入不可用降级为二元组关键词检索，双失败明示「本次未使用知识库」且填充仍可完成；拷问事实型问题带可折叠引用卡片，填充前可逐条取消，成品末尾「参考资料」只列实际使用的来源 |
 | 运行时目录 | ✅ `data/`（运行时 SQLite 落此处，gitignored）、`启动.bat`、根 `.gitignore`（覆盖 `/data/`、`/templates/`、`.slim/`） |
-| 自动化测试 | ✅ `backend/tests`（pytest，进程内 HTTP 接缝，不联网；**666 项通过**，`ruff check` 全绿）+ `frontend/tests`（`node --test` 纯函数测试，**159 项通过**） |
+| 自动化测试 | ✅ `backend/tests`（pytest，进程内 HTTP 接缝，不联网；**666 项通过**，`ruff check` 全绿）+ `frontend/tests`（`node --test` 纯函数测试，**170 项通过**） |
 
 ### v1 收尾补齐（2026-10-19 评审）
 
@@ -315,7 +315,7 @@ v1.1 已完成：RAG 最小版（#19~#24）、填充正文与字数控制（#3~#
 
 ## 测试与验收
 
-- **后端自动化测试接缝 = 本地工作台 HTTP API 边界**：进程内客户端驱动，不起真实端口、不开浏览器、不联网。前端另有 `node --test` 纯函数单测（159 项），不替代 API 接缝；UI 走手工验收。
+- **后端自动化测试接缝 = 本地工作台 HTTP API 边界**：进程内客户端驱动，不起真实端口、不开浏览器、不联网。前端另有 `node --test` 纯函数单测（170 项），不替代 API 接缝；UI 走手工验收。
 - 断言三类可观察结果：API 状态、持久化数据（「重启续作」靠重建客户端再读验证）、数据目录中的成品文件。
 - 外部世界有四个 fake 注入点：模型客户端（脚本化应答，零真实花费）、URL 抓取（假响应 + 纯函数式 URL 安全校验负测）、嵌入客户端（同文本恒得同一假向量）、页面渲染器（预置 PNG / PDF 字节，**测试绝不启动 Chromium**）。
 - 不对模型输出的语义质量做自动化断言，语义质量由人看证据链验收；前端走手工验收。
@@ -327,7 +327,7 @@ v1.1 已完成：RAG 最小版（#19~#24）、填充正文与字数控制（#3~#
 .\.venv\Scripts\python.exe -m pytest --no-header -q --tb=short
 .\.venv\Scripts\python.exe -m ruff check .
 
-# 前端（在 frontend/ 下）：159 passed，type-check / build 通过
+# 前端（在 frontend/ 下）：170 passed，type-check / build 通过
 npm run test:unit   # node --test "tests/*.test.mts"，覆盖全部纯函数测试
 npm run type-check
 npm run build
