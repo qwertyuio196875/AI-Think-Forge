@@ -8,7 +8,7 @@
 - 记录里的绝对路径经 `Path.resolve()` 解析后，必须仍位于 `data/deliverables/`
   之内，否则（`..`、软链、绝对路径逃逸）一律与「文件不存在」同样处理；
 - 越界与缺失都回 **404**，响应体不带路径：不让客户端借错误信息探测文件系统；
-- 只投递白名单扩展名（`.docx` / `.html`），其它后缀即便落在目录内也不投。
+- 只投递白名单扩展名（`.docx` / `.html` / `.pptx`），其它后缀即便落在目录内也不投。
 
 HTML 一轨是自包含单文件（样式 / 脚本全内联，见 ADR-0003 与完整性检查），应用内用
 `iframe` 预览；因此**不额外加 CSP**，否则会阻断产物自己的内联资源。Content-Disposition
@@ -31,10 +31,15 @@ router = APIRouter(prefix="/deliverables", tags=["deliverables"])
 DOCX_MEDIA_TYPE = (
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 )
+PPTX_MEDIA_TYPE = (
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+)
 # 白名单：既决定 Content-Type，也决定哪些文件允许被投递。
+# `.pptx` 是截图版 PPT（HTML deck → 逐页截图 → 装配，工单 29/30），按附件下载。
 MEDIA_TYPES = {
     ".docx": DOCX_MEDIA_TYPE,
     ".html": "text/html; charset=utf-8",
+    ".pptx": PPTX_MEDIA_TYPE,
 }
 # 可内联渲染、适合应用内 iframe 预览的格式；其余按附件下载。
 INLINE_SUFFIXES = frozenset({".html"})
