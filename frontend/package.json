@@ -8,7 +8,7 @@
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "type-check": "vue-tsc --noEmit",
-    "test:unit": "node --test tests/analysisMeta.test.mts tests/workbenchGaps.test.mts tests/knowledgeMeta.test.mts tests/sectionList.test.mts tests/pptFrontend.test.mts"
+    "test:unit": "node --test tests/analysisMeta.test.mts tests/workbenchGaps.test.mts tests/knowledgeMeta.test.mts tests/sectionList.test.mts tests/pptFrontend.test.mts tests/pagePlan.test.mts"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.1",

@@ -125,6 +125,49 @@ def create_page_plan(
     return _page_plan_response(outcome)
 
 
+@router.get("/{task_id}/page-plans/latest", response_model=PagePlanResponse)
+def get_latest_page_plan(
+    task_id: int,
+    task_repository: TaskRepositoryDep,
+    plan_repository: PlanRepositoryDep,
+    open_item_repository: OpenItemRepositoryDep,
+    page_plan_repository: PagePlanRepositoryDep,
+) -> PagePlanResponse:
+    """读取该任务**最近一次**页面规划；还没有规划时 404。
+
+    预览面板刷新（换任务、重进页面）时要靠这条接口恢复「上次规划到哪」，否则用户
+    增删过单页、一刷新就全丢了。单页增删每次都另存新规划，所以「最新」就是最接近
+    用户当前意图的那一份。
+    """
+    from app.api.gates import require_confirmed_plan
+
+    # 先过方案闸门：未确认方案的任务不该有规划，也不该能读到别家的规划。
+    require_confirmed_plan(
+        task_id,
+        task_repository,
+        plan_repository,
+        open_item_repository,
+        purpose="generate",
+    )
+    record = page_plan_repository.latest_for_task(task_id)
+    if record is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="该任务还没有页面规划",
+        )
+    pages = decode_page_plan(record["pages_json"])
+    return _page_plan_response(
+        {
+            "page_plan_id": record["id"],
+            "task_id": task_id,
+            "plan_id": record["plan_id"],
+            "target_pages": record["target_pages"],
+            "actual_pages": len(pages),
+            "pages": pages,
+        }
+    )
+
+
 @router.get("/{task_id}/page-plans/{plan_id}", response_model=PagePlanResponse)
 def get_page_plan(
     task_id: int,

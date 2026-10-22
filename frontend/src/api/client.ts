@@ -546,6 +546,76 @@ export function listGenerations(taskId: number): Promise<GenerationListResponse>
   return request<GenerationListResponse>(`/tasks/${taskId}/generations`)
 }
 
+/* ============================================================
+   页面规划（工单 25/26）：做 PPT 前定页数、预览归属、增删单页
+   权威来源：backend/app/models/page_plan.py、routes/pageplans.py
+   ============================================================ */
+
+/** 规划里的一页。 */
+export interface PlannedPage {
+  index: number
+  kind: 'cover' | 'content' | 'end'
+  title: string
+  chapter_seqs: number[]
+}
+
+/** 一次页面规划的结果（POST 创建 / GET 读取 / 增删页都返回它）。 */
+export interface PagePlanResponse {
+  page_plan_id: number
+  task_id: number
+  plan_id: number
+  target_pages: number
+  actual_pages: number
+  pages: PlannedPage[]
+}
+
+/** 生成页面规划：POST /api/tasks/{id}/page-plans（页数 3–60，区间外 422）。 */
+export function createPagePlan(taskId: number, targetPages: number): Promise<PagePlanResponse> {
+  return request<PagePlanResponse>(`/tasks/${taskId}/page-plans`, {
+    method: 'POST',
+    body: JSON.stringify({ target_pages: targetPages })
+  })
+}
+
+/** 读取某次规划：GET /api/tasks/{id}/page-plans/{planId}。 */
+export function getPagePlan(taskId: number, planId: number): Promise<PagePlanResponse> {
+  return request<PagePlanResponse>(`/tasks/${taskId}/page-plans/${planId}`)
+}
+
+/** 读取最近一次规划：GET /api/tasks/{id}/page-plans/latest（没有则 404）。 */
+export function getLatestPagePlan(taskId: number): Promise<PagePlanResponse> {
+  return request<PagePlanResponse>(`/tasks/${taskId}/page-plans/latest`)
+}
+
+/**
+ * 在规划里加一页：POST /api/tasks/{id}/page-plans/{planId}/pages。
+ *
+ * `afterIndex` 是**1 起的真实页码（含封面）**，表示「在这一页之后插入」——后端按
+ * 封面前/后与正文页复制拆分处理。返回**另存的新规划**（旧规划不动）。
+ */
+export function addPlanPage(
+  taskId: number,
+  planId: number,
+  afterIndex: number
+): Promise<PagePlanResponse> {
+  return request<PagePlanResponse>(`/tasks/${taskId}/page-plans/${planId}/pages`, {
+    method: 'POST',
+    body: JSON.stringify({ after_index: afterIndex })
+  })
+}
+
+/** 删一页：DELETE /api/tasks/{id}/page-plans/{planId}/pages/{atIndex}（另存新规划）。 */
+export function deletePlanPage(
+  taskId: number,
+  planId: number,
+  atIndex: number
+): Promise<PagePlanResponse> {
+  return request<PagePlanResponse>(
+    `/tasks/${taskId}/page-plans/${planId}/pages/${atIndex}`,
+    { method: 'DELETE' }
+  )
+}
+
 /** 模板清单：GET /api/templates（以模板目录实际情况为准）。 */
 export function getTemplates(): Promise<TemplateListResponse> {
   return request<TemplateListResponse>('/templates')
@@ -1514,6 +1584,11 @@ export default {
   confirmPlan,
   generateDeliverable,
   listGenerations,
+  createPagePlan,
+  getPagePlan,
+  getLatestPagePlan,
+  addPlanPage,
+  deletePlanPage,
   getTemplates,
   registerTemplate,
   setDefaultTemplate,

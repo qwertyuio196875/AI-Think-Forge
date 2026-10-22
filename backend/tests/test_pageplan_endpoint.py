@@ -216,3 +216,64 @@ def test_page_plan_rejected_when_plan_not_confirmed(
     assert response.status_code == 409
     assert "尚未确认" in response.json()["detail"]
     assert _page_plan_rows(db_path, fresh) == []
+
+
+# --- 工单 26：刷新预览能恢复「最近一次规划」 -----------------------------------
+
+
+def test_latest_page_plan_returns_most_recent(
+    grilling_client: TestClient, scripted_model_client: ScriptedModelClient, db_path: Path
+) -> None:
+    """`GET .../page-plans/latest` 返回最近一份规划（刷新面板据此恢复）。"""
+    task_id = _task_filled(grilling_client, scripted_model_client)
+    first = grilling_client.post(
+        f"/api/tasks/{task_id}/page-plans", json={"target_pages": 6}
+    ).json()
+
+    latest = grilling_client.get(f"/api/tasks/{task_id}/page-plans/latest")
+
+    assert latest.status_code == 200
+    body = latest.json()
+    assert body["page_plan_id"] == first["page_plan_id"]
+    assert body["actual_pages"] == first["actual_pages"]
+    assert body["pages"] == first["pages"]
+
+
+def test_latest_page_plan_is_404_before_any_plan(
+    grilling_client: TestClient, scripted_model_client: ScriptedModelClient
+) -> None:
+    """还没规划过时 404（不是空列表——前端据此保持「尚未规划」的初始态）。"""
+    task_id = _task_filled(grilling_client, scripted_model_client)
+
+    response = grilling_client.get(f"/api/tasks/{task_id}/page-plans/latest")
+
+    assert response.status_code == 404
+    assert "还没有页面规划" in response.json()["detail"]
+
+
+def test_latest_page_plan_survives_single_page_edit(
+    grilling_client: TestClient, scripted_model_client: ScriptedModelClient
+) -> None:
+    """单页增删另存新规划后，`latest` 指向**新的**那一份（工单 26 验收 ②）。"""
+    task_id = _task_filled(grilling_client, scripted_model_client)
+    created = grilling_client.post(
+        f"/api/tasks/{task_id}/page-plans", json={"target_pages": 6}
+    ).json()
+    original_id = created["page_plan_id"]
+
+    edited = grilling_client.post(
+        f"/api/tasks/{task_id}/page-plans/{original_id}/pages",
+        json={"after_index": 2},
+    )
+    assert edited.status_code == 200
+    new_id = edited.json()["page_plan_id"]
+    assert new_id != original_id
+
+    latest = grilling_client.get(f"/api/tasks/{task_id}/page-plans/latest").json()
+
+    assert latest["page_plan_id"] == new_id
+    assert latest["actual_pages"] == created["actual_pages"] + 1
+    # 旧规划仍在（历史不改），只是不再是「最新」。
+    assert grilling_client.get(
+        f"/api/tasks/{task_id}/page-plans/{original_id}"
+    ).status_code == 200

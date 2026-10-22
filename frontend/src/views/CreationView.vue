@@ -438,6 +438,14 @@
               <!-- 逐章填充：确认后出现，一章一写、可选引用（工单 24） -->
               <SectionFillCard v-if="plan.status === 'confirmed'" :task-id="plan.task_id" />
 
+              <!-- 页面规划：做 PPT / PDF 前定页数、预览归属、增删单页（工单 26）。
+                   放在生成面板之前——先定「几页、哪一章占哪几页」，再按下生成。 -->
+              <PagePlanPanel
+                v-if="plan.status === 'confirmed'"
+                :task-id="plan.task_id"
+                :unlocked="!panelLocked"
+              />
+
               <!-- 生成面板：确认且无未处置项后真实可用（Word 成品） -->
               <GenerationPanel
                 :task-id="plan.task_id"
@@ -586,6 +594,7 @@ import { formatDateTime, statusDotClass, statusLabel } from '../utils/taskMeta'
 import { awaitingLabel, awaitingResumeHint } from '../utils/resumeMeta'
 import GenerationPanel from '../components/GenerationPanel.vue'
 import FillPanel from '../components/FillPanel.vue'
+import PagePlanPanel from '../components/PagePlanPanel.vue'
 import ModelSelect from '../components/ModelSelect.vue'
 import SectionFillCard from '../components/SectionFillCard.vue'
 import SectionListCard from '../components/SectionListCard.vue'
