@@ -24,6 +24,7 @@ from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 
 from app.generation.deck import DeckBuild
+from app.generation.screenshots import VIEWPORT_HEIGHT, VIEWPORT_WIDTH
 
 
 class PdfDefinitionError(Exception):
@@ -43,6 +44,47 @@ class PlaywrightPdfRenderer(PdfRenderer):
 
     **延迟导入 playwright**：只在真正调用时才加载浏览器驱动，测试环境下模块导入本身
     不触碰浏览器（与 #28 截图渲染器同一取舍）。
+
+    打印前必须把 deck 从「舞台式演示」改成「顺序流式文档」：deck 里 `.slide` 是
+    `position:absolute; inset:0` 的叠放舞台（一次只显示一页，靠 JS 切 `.active`），
+    直接打印只会得到当前那一页。这里注入打印专用样式，让所有幻灯片按文档流依次排布、
+    每张恰好一页（`break-after:page`），从而与截图的逐页结果一一对应。
+    """
+
+    #: 打印时注入的样式：解除绝对定位与叠放，改为每张幻灯片一页。
+    #: 覆盖点来自 deck 的实际 CSS：`.deck` 是定位容器、`.slide` 为
+    #: `position:absolute; inset:0; opacity:0; pointer-events:none`（靠 JS 切 `.active`）。
+    #: 打印必须让**所有**幻灯片同时可见、按文档流依次排布、每张占一页。
+    PRINT_CSS = """
+    @page { size: 13.333in 7.5in; margin: 0; }
+    html, body {
+        margin: 0 !important; padding: 0 !important;
+        background: #fff !important; overflow: visible !important;
+        height: auto !important;
+    }
+    .deck {
+        position: static !important; inset: auto !important;
+        width: auto !important; height: auto !important;
+        overflow: visible !important; transform: none !important;
+        display: block !important;
+    }
+    .slide-counter, .progress-bar, .nav-controls, .keyboard-hint,
+    .speaker-notes, .deck-meta { display: none !important; }
+    section.slide {
+        position: relative !important; inset: auto !important;
+        display: flex !important;
+        opacity: 1 !important; visibility: visible !important;
+        pointer-events: auto !important;
+        transform: none !important;
+        width: 13.333in !important; height: 7.5in !important;
+        box-sizing: border-box !important;
+        overflow: hidden !important;
+        break-after: page !important; page-break-after: always !important;
+        break-inside: avoid !important; page-break-inside: avoid !important;
+    }
+    section.slide:last-of-type {
+        break-after: auto !important; page-break-after: auto !important;
+    }
     """
 
     def render(self, build: DeckBuild, output_path: Path) -> Path:
@@ -56,14 +98,19 @@ class PlaywrightPdfRenderer(PdfRenderer):
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch()
                 try:
-                    page = browser.new_page()
+                    page = browser.new_page(
+                        viewport={"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT}
+                    )
                     page.goto(Path(build.path).resolve().as_uri(), wait_until="load")
-                    # 每张幻灯片固定一页：打印尺寸与截图视口同比例（16:9）。
+                    # 让所有幻灯片同时可见并按页断开（见类文档）。
+                    page.add_style_tag(content=self.PRINT_CSS)
+                    page.emulate_media(media="print")
                     page.pdf(
                         path=str(staging),
                         width="13.333in",
                         height="7.5in",
                         print_background=True,
+                        margin={"top": "0", "bottom": "0", "left": "0", "right": "0"},
                     )
                 finally:
                     browser.close()

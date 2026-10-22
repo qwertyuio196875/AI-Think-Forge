@@ -35,6 +35,7 @@ from app.generation.deck import (
 from app.generation.pdfs import (
     PdfDefinitionError,
     PdfRenderer,
+    PlaywrightPdfRenderer,
     render_pdf,
     verify_pdf_deliverable,
 )
@@ -203,6 +204,24 @@ def test_verify_pdf_deliverable_reopens_and_checks_pages(tmp_path: Path) -> None
 
 
 # --- 验收 ②：成品异常 → 抛明确异常，不交付半成品 ---------------------------------
+
+
+def test_playwright_print_css_breaks_stacked_stage_into_pages() -> None:
+    """真实渲染器的打印样式必须把叠放式舞台改成逐页文档（**不启动浏览器**，只查样式）。
+
+    deck 的 `.slide` 是 `position:absolute; inset:0; opacity:0` 的演示舞台，一次只显示
+    一页。若打印时不给覆盖样式，`page.pdf()` 只会输出当前那一页——页数与规划对不上。
+    这条用例把「必须覆盖定位 / 透明度 / 分页」钉在样式字符串里，防止回归。
+    """
+    css = PlaywrightPdfRenderer.PRINT_CSS
+
+    # 必须解除绝对定位并恢复可见（否则打印只有一页）。
+    assert "position: relative" in css
+    assert "opacity: 1" in css
+    # 必须强制逐页断开。
+    assert "break-after: page" in css
+    # 必须把页面尺寸钉成 13.333×7.5 英寸（与 pptx / 截图同版式）。
+    assert "13.333in 7.5in" in css
 
 
 def test_verify_rejects_not_pdf(tmp_path: Path) -> None:
