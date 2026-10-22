@@ -946,7 +946,9 @@ async function loadTasks(): Promise<void> {
   listState.value = 'loading'
   try {
     const res = await listTasks({ kind: 'creation' })
-    items.value = res.items
+    // 软删除任务只在历史页回收站出现：/tasks 保留全部状态的通用语义不动，
+    // 这里只收敛创作页列表的展示；?task= 深链与删除后跳转不受影响。
+    items.value = res.items.filter((t) => t.status !== 'deleted')
     listState.value = 'ready'
   } catch (err) {
     items.value = []

@@ -336,14 +336,27 @@ onBeforeUnmount(() => {
   border-right: none;
   background: transparent;
 }
+/* 计数徽标：el-menu-item 标题行高 56px，不锁死就会被拉成竖条。
+   固定 18×18 + line-height: 1，1–9 时是正圆；两位数靠 min-width 撑宽成胶囊
+   （--r-pill 半径封顶半个高度，比 50% 好——50% 在变宽时退化成椭圆，
+   两位数字还会顶到左右弧边），既保「圆的」观感也不裁切。 */
 .nav-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+  box-sizing: border-box;
+  height: 18px;
+  min-width: 18px;
   margin-left: 8px;
+  padding: 0 4px;
+  border-radius: var(--r-pill);
   font-size: var(--fs-xs);
+  font-weight: 400;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
   color: var(--text-3);
   background: var(--bg-sunken);
-  border-radius: var(--r-pill);
-  padding: 0 7px;
-  font-weight: 400;
 }
 :deep(.el-menu-item.is-active) .nav-count {
   background: var(--bg-surface);
