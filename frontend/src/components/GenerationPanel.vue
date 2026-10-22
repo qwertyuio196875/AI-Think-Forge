@@ -116,6 +116,16 @@
         <el-button type="primary" size="large" :loading="generating" :icon="Box" @click="runGenerate()">
           {{ generating ? '正在生成…' : generateButtonText }}
         </el-button>
+        <!-- PDF 是**可选**产物（工单 31）：与 PPT 同源同版式，按需单独导出，
+             不占格式卡位置、也不阻塞 HTML / PPTX 的生成。 -->
+        <el-button
+          size="large"
+          :loading="pdfGenerating"
+          :disabled="generating"
+          @click="runGeneratePdf()"
+        >
+          {{ pdfGenerating ? '正在导出 PDF…' : '另存为 PDF（可选）' }}
+        </el-button>
         <span class="xs muted mono">产物落 data/deliverables/{{ taskId }}/</span>
       </div>
       <div v-if="generating" class="gp-bar indeterminate" aria-label="生成中"><i></i></div>
@@ -318,6 +328,8 @@ const deckDefaultState = ref<'loading' | 'ready' | 'error'>('loading')
 const generations = ref<Generation[]>([])
 const metaById = ref<Record<number, GenerationResponse>>({})
 const generating = ref(false)
+/** PDF 导出中（工单 31，可选动作，与主生成互不阻塞）。 */
+const pdfGenerating = ref(false)
 const viewerLoading = ref(false)
 const genError = ref('')
 const genErrorTitle = ref('')
@@ -494,6 +506,35 @@ async function runGenerate(override?: string | null): Promise<void> {
     handleGenError(err)
   } finally {
     generating.value = false
+  }
+}
+
+/**
+ * 另存为 PDF（工单 31，可选产物）。
+ *
+ * PDF 与截图版 PPT 同源同版式（同一份页面规划 → 同一份 deck），所以它不带格式卡、
+ * 只是一个随时可点的导出动作；失败不影响已生成的 HTML / PPTX。
+ * 主题沿用当前选择（没选就让后端按全局默认走）。
+ */
+async function runGeneratePdf(): Promise<void> {
+  if (pdfGenerating.value) return
+  pdfGenerating.value = true
+  genError.value = ''
+  genErrorTitle.value = ''
+  canRetryBuiltin.value = false
+  try {
+    const resp = await generateDeliverable(props.taskId, {
+      format: 'pdf',
+      template: null,
+      theme: theme.value || null
+    })
+    generations.value = [resp, ...generations.value]
+    metaById.value = { ...metaById.value, [resp.id]: resp }
+    ElMessage.success('已导出 PDF')
+  } catch (err) {
+    handleGenError(err)
+  } finally {
+    pdfGenerating.value = false
   }
 }
 

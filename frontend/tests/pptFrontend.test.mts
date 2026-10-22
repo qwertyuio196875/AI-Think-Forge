@@ -195,3 +195,43 @@ test('fetchDeliverable 命中 /api/deliverables/{generation_id}，pptx 走同一
     globalThis.fetch = original
   }
 })
+
+/* ---------- PDF 是可选产物（工单 31）：独立动作，可随时导出 ---------- */
+
+test('PDF 可单独请求：format=pdf 不带模板，仍按主题同源导出', async () => {
+  let body: Record<string, unknown> = {}
+  const original = globalThis.fetch
+  globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+    body = JSON.parse(String(init?.body)) as Record<string, unknown>
+    return new Response(
+      JSON.stringify({
+        id: 91,
+        task_id: 42,
+        plan_id: 12,
+        format: 'pdf',
+        file_path: 'E:/deliverables/body-12.pdf',
+        template_used: 'deck-theme:slate',
+        created_at: '2026-10-21T10:00:00+08:00',
+        integrity_ok: true
+      }),
+      { status: 201, headers: { 'Content-Type': 'application/json' } }
+    )
+  }) as typeof fetch
+  try {
+    const resp = await generateDeliverable(42, { format: 'pdf', theme: 'slate' })
+    // PDF 与 PPT 同源：带主题、不带 Word 模板，且自成一个格式（不占用 HTML/PPTX 路径）。
+    assert.equal(body.format, 'pdf')
+    assert.equal(body.theme, 'slate')
+    assert.equal(body.template, null)
+    assert.equal(resp.format, 'pdf')
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
+test('pdf 在成品卡上按「来自 deck」解释（主题即模板），不被当成 HTML', () => {
+  assert.equal(isThemeBased('pdf'), true)
+  assert.equal(isThemeBased('docx'), false)
+  // 但 pdf 不是格式卡选项：它由独立动作导出，不需要用户先选它。
+  assert.ok(!formatOptions().some((o) => o.format === 'pdf'))
+})
