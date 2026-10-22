@@ -78,7 +78,12 @@ def build_page_plan(
         for row in filled
     ]
 
-    result = plan_pages(target_pages=target_pages, chapters=chapters, deck_title=str(task_id))
+    # 封面标题用**任务标题**（用户起的题目），不能用 task_id：那会让封面渲染成
+    # 一个数字。取不到标题时退回一个中性占位，绝不把内部主键当内容展示。
+    task = task_repository.get(task_id) or {}
+    deck_title = str(task.get("title") or "").strip() or "演示"
+
+    result = plan_pages(target_pages=target_pages, chapters=chapters, deck_title=deck_title)
 
     record = page_plan_repository.create(
         task_id=task_id,

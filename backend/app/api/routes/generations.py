@@ -144,6 +144,8 @@ def request_generation(
             generation_repository=generation_repository,
             settings_repository=settings_repository,
             data_dir=data_dir,
+            section_repository=section_repository,
+            page_plan_repository=page_plan_repository,
         )
 
     try:
@@ -178,12 +180,16 @@ def _generate_deck(
     generation_repository,
     settings_repository,
     data_dir: str,
+    section_repository,
+    page_plan_repository,
 ) -> GenerationResponse:
     """单文件 HTML 演示一轨：解析主题 → 渲染 → 完整性检查 → 记录。
 
     未显式给 theme 时读取全局默认主题（US20）；显式 theme 始终优先。
     主题未知 → 400（明确报错，不静默退回默认主题）；完整性检查未通过（含外部网络引用）
     → 500 且产物已由服务层丢弃。
+
+    有页面规划时按规划渲染（页数 = 规划页数），没有才退回按标题切页（工单 27）。
     """
     theme_id = request.theme
     if theme_id is None:
@@ -205,6 +211,8 @@ def _generate_deck(
             theme=theme,
             data_dir=data_dir,
             generation_repository=generation_repository,
+            section_repository=section_repository,
+            page_plan_repository=page_plan_repository,
         )
     except DeliverableIntegrityError as exc:
         raise HTTPException(

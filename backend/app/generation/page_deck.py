@@ -27,7 +27,7 @@ from app.generation.deck import (
     DeckSlide,
 )
 from app.generation.plan_document import parse_plan_blocks
-from app.pageplan.planner import PAGE_KIND_CONTENT, PAGE_KIND_COVER
+from app.pageplan.planner import PAGE_KIND_CONTENT, PAGE_KIND_COVER, PAGE_KIND_END
 
 
 @dataclass(frozen=True)
@@ -52,8 +52,12 @@ def slides_for_page_plan(
 
     `pages`：`page_plans.pages_json` 的页列表（kind / title / chapter_seqs）。
     `sections`：`plan_sections` 的行（需含 `seq` / `title` / `content_md`）。
-    封面页 → 标题页；正文页 → 章节页（归属章节按 `chapter_seqs` 取内容）。
-    结尾追加一页「谢谢 / 提问环节」。
+    封面页 → 标题页；正文页 → 章节页（归属章节按 `chapter_seqs` 取内容）；
+    结尾页 → 结束页。
+
+    **页数严格等于 `pages` 的条数**：结尾页由规划器作为 `PAGE_KIND_END` 一页写进规划、
+    并计入目标页数（issue #25「说 16 页就是 16 页」）。因此这里既不能额外追加结尾页，
+    也不能丢掉规划里的结尾页——两者都会让 deck 页数与规划对不上（issue #27 验收 ①）。
     """
     by_seq: dict[int, str] = {}
     seq_titles: dict[int, str] = {}
@@ -62,6 +66,11 @@ def slides_for_page_plan(
         if body:
             by_seq[int(section["seq"])] = body
         seq_titles[int(section["seq"])] = section.get("title") or ""
+
+    # 拆页对账：同一章若被规划拆成连续多页（`chapter_seqs` 都指向它），必须把正文
+    # **顺次切分**到各页，否则每页都渲染整章、拆出来的几页内容全一样（issue #26
+    # 「富余时拆分重点章节」要的是内容摊开，不是同一段复印几份）。
+    spans = _chapter_spans(pages)
 
     slides: list[DeckSlide] = []
     for page in pages:
@@ -77,9 +86,29 @@ def slides_for_page_plan(
             )
             continue
 
-        # 内容页：收集归属章节的正文块。
+        if kind == PAGE_KIND_END:
+            # 规划器写入的结尾页（计入目标页数）：渲染为结束版式，不再另加。
+            slides.append(
+                DeckSlide(
+                    layout=LAYOUT_END,
+                    title=page.get("title") or END_TITLE,
+                    subtitle=END_SUBTITLE,
+                    notes="结束页：谢谢 / 提问环节",
+                )
+            )
+            continue
+
+        # 内容页：收集归属章节的正文块（拆页时只取本页那一段）。
         seqs = page.get("chapter_seqs") or []
-        pieces = _pieces_for_seqs(seqs, by_seq, seq_titles, page.get("title") or "")
+        ordinal = _page_ordinal_within_span(page, pages)
+        pieces = _pieces_for_seqs(
+            seqs,
+            by_seq,
+            seq_titles,
+            page.get("title") or "",
+            spans=spans,
+            ordinal=ordinal,
+        )
         slides.append(
             DeckSlide(
                 layout=_layout_of(pieces),
@@ -89,15 +118,64 @@ def slides_for_page_plan(
             )
         )
 
-    slides.append(
-        DeckSlide(
-            layout=LAYOUT_END,
-            title=END_TITLE,
-            subtitle=END_SUBTITLE,
-            notes="结束页：谢谢 / 提问环节",
-        )
-    )
     return tuple(slides)
+
+
+def _chapter_spans(pages: list[dict]) -> dict[int, int]:
+    """统计每个章节在规划里占了几页（> 1 说明它被拆开了）。"""
+    spans: dict[int, int] = {}
+    for page in pages:
+        if (page.get("kind") or PAGE_KIND_CONTENT) != PAGE_KIND_CONTENT:
+            continue
+        for seq in page.get("chapter_seqs") or []:
+            key = int(seq)
+            spans[key] = spans.get(key, 0) + 1
+    return spans
+
+
+def _page_ordinal_within_span(page: dict, pages: list[dict]) -> int:
+    """本页是「它所属章节」的第几页（0 起）；合并页 / 未拆分页恒为 0。"""
+    seqs = [int(s) for s in (page.get("chapter_seqs") or [])]
+    if len(seqs) != 1:
+        return 0
+    target = seqs[0]
+    ordinal = 0
+    for candidate in pages:
+        if candidate is page:
+            return ordinal
+        if (candidate.get("kind") or PAGE_KIND_CONTENT) != PAGE_KIND_CONTENT:
+            continue
+        if target in [int(s) for s in (candidate.get("chapter_seqs") or [])]:
+            ordinal += 1
+    return ordinal
+
+
+def _slice_body(text: str, spans: dict[int, int] | None, ordinal: int, seq: int) -> str:
+    """把一章正文按「该章占几页」均分成连续片段，取第 `ordinal` 段。
+
+    只在章节被**拆页**（spans[seq] > 1）时切片；未拆分的章原样返回，行为不变。
+    切分以段落为最小单位（不切断句子），保证每页拿到的是完整段落。
+    """
+    span = (spans or {}).get(seq, 1)
+    if span <= 1:
+        return text  # 未拆页：原样返回，行为与之前一致。
+
+    paragraphs = [part for part in text.split("\n\n") if part.strip()]
+    if len(paragraphs) <= 1:
+        # 只有一段时无从均分：首片给正文，其余页留空（由调用方以页标题兜底），
+        # 也好过把同一段在每一页重复一遍。
+        return text if ordinal == 0 else ""
+
+    # 均分成 span 份，尽量让每份段落数接近；余数从前面的份依次多给一段。
+    total = len(paragraphs)
+    base, extra = divmod(total, span)
+    start = 0
+    for index in range(span):
+        size = base + (1 if index < extra else 0)
+        if index == ordinal:
+            return "\n\n".join(paragraphs[start : start + size])
+        start += size
+    return ""
 
 
 def _pieces_for_seqs(
@@ -105,13 +183,22 @@ def _pieces_for_seqs(
     by_seq: dict[int, str],
     seq_titles: dict[int, str],
     page_title: str,
+    *,
+    spans: dict[int, int] | None = None,
+    ordinal: int = 0,
 ) -> list[DeckPiece]:
-    """把一章（或合并的多章）正文解析成内容块；缺失正文用页标题兜底。"""
+    """把一章（或合并的多章）正文解析成内容块；缺失正文用页标题兜底。
+
+    `spans` / `ordinal` 处理「同一章被拆成连续多页」的情形：章节按段落均分成
+    `spans[seq]` 份，本页只取第 `ordinal` 份，于是拆出来的几页内容各不相同、
+    合起来仍是完整的该章正文（不丢内容、不重复内容）。
+    """
     pieces: list[DeckPiece] = []
     body_parts: list[str] = []
     for seq in seqs:
-        if seq in by_seq:
-            body_parts.append(by_seq[seq])
+        text = by_seq.get(seq)
+        if text:
+            body_parts.append(_slice_body(text, spans, ordinal, int(seq)))
     raw = "\n\n".join(body_parts) if body_parts else ""
 
     if not raw:

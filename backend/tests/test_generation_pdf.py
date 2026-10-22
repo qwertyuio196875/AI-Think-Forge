@@ -296,10 +296,11 @@ def test_pdf_generation_endpoint_full_flow(
 
     out = Path(body["file_path"])
     assert out.exists() and out.suffix == ".pdf"
-    # 可选产物：合法 PDF、可被 pypdf 打开、页数 = 规划页数 + 结尾页。
+    # 可选产物：合法 PDF、可被 pypdf 打开、页数**严格等于**规划页数
+    # （与 pptx 同源同版式，issue #31 验收 ①）。
     assert out.read_bytes().startswith(b"%PDF-")
     reader = PdfReader(str(out))
-    assert len(reader.pages) == len(pages) + 1
+    assert len(reader.pages) == len(pages)
 
     with connect(db_path) as connection:
         row = connection.execute(

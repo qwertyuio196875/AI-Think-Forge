@@ -35,9 +35,13 @@ PAGES_PRESETS: tuple[int, ...] = (8, 12, 16, 20, 30)
 # 封面占一页（计入总数）。
 COVER_PAGE = True
 
-# 规划里页的类型：封面页 / 常规章节页。
+# 规划里页的类型：封面页 / 常规章节页 / 结尾页。
+# 结尾页（工单 27 收尾修正）同样**计入目标页数**：deck 完整性契约要求末张是结束页
+# （`verify_html_deliverable`），而 issue #25 要求「说 16 页就是 16 页」；只有把它
+# 算进规划、而不是渲染时额外追加，两个要求才能同时成立。
 PAGE_KIND_COVER = "cover"
 PAGE_KIND_CONTENT = "content"
+PAGE_KIND_END = "end"
 
 
 @dataclass(frozen=True)
@@ -118,7 +122,10 @@ def plan_pages(
     """把章节规划成恰好 `target_pages` 页。
 
     - 封面占第 1 页（`PAGE_KIND_COVER`，`deck_title` 作标题）。
-    - `target_pages - 1` 页分给章节：
+    - 结尾页占最后 1 页（`PAGE_KIND_END`，致谢 / 提问环节）——它**计入目标页数**：
+      deck 的完整性契约要求末张是结束页，只有把它算进规划才不违反「说 16 页就是
+      16 页」（issue #25 验收 ①）。
+    - 中间 `target_pages - 2` 页分给章节：
       - 恰好每章一页：直接一一对应；
       - 页数不足：把**权重最低**的章节并进相邻章，直到页数对上（不砍章节）；
       - 富余：把**权重最高**的章节拆分，让它在连续多页上摊开。
@@ -133,15 +140,19 @@ def plan_pages(
     if not chapter_list:
         raise PagePlanError("没有可规划正文的章节：请先完成填充再规划 PPT 页数")
 
-    if target_pages == 1:
-        # 封面本身就是目标页（理论态：上限之外几乎不会走到，兜底建一页封面）。
+    if target_pages <= 2:
+        # 下限之外（validate_target_pages 已拦），兜底：只有封面与结尾。
         return PagePlan(
             target_pages=target_pages,
             cover=COVER_PAGE,
-            pages=(_cover_page(index=1, deck_title=deck_title),),
+            pages=(
+                _cover_page(index=1, deck_title=deck_title),
+                _end_page(index=2),
+            )[:target_pages],
         )
 
-    content_pages = target_pages - 1
+    # 内容页 = 目标页数 - 封面 - 结尾（结尾页计入总数，见函数文档）。
+    content_pages = target_pages - 2
     groups = _initial_groups(chapter_list)
 
     if len(groups) < content_pages:
@@ -152,6 +163,8 @@ def plan_pages(
     pages: list[PlannedPage] = [_cover_page(index=1, deck_title=deck_title)]
     for group in groups:
         pages.extend(_group_pages(group, start_index=len(pages) + 1))
+    # 结尾页计入目标页数（见函数文档），追加在最后。
+    pages.append(_end_page(index=len(pages) + 1))
     return PagePlan(target_pages=target_pages, cover=COVER_PAGE, pages=tuple(pages))
 
 
@@ -160,6 +173,11 @@ def plan_pages(
 
 def _cover_page(*, index: int, deck_title: str) -> PlannedPage:
     return PlannedPage(index=index, kind=PAGE_KIND_COVER, title=deck_title)
+
+
+def _end_page(*, index: int) -> PlannedPage:
+    """结尾页（致谢 / 提问环节）：计入目标页数，保证 deck 末张是结束页。"""
+    return PlannedPage(index=index, kind=PAGE_KIND_END, title="谢谢")
 
 
 @dataclass(frozen=True)

@@ -119,12 +119,14 @@ def test_page_plan_returns_exactly_the_requested_pages(
     assert body["target_pages"] == 6
     assert body["actual_pages"] == 6
     assert len(body["pages"]) == 6
-    # 封面占第 1 页。
+    # 封面占第 1 页，结尾页占最后一页（两者都计入目标页数）。
     assert body["pages"][0]["kind"] == "cover"
     assert body["pages"][0]["index"] == 1
     assert body["pages"][0]["chapter_seqs"] == []
-    # 其余是内容页，index 连续、每页归属章节。
-    for i, page in enumerate(body["pages"][1:], start=2):
+    assert body["pages"][-1]["kind"] == "end"
+    assert body["pages"][-1]["index"] == 6
+    # 中间是内容页，index 连续、每页归属章节。
+    for i, page in enumerate(body["pages"][1:-1], start=2):
         assert page["kind"] == "content"
         assert page["index"] == i
         assert page["chapter_seqs"]
@@ -138,7 +140,7 @@ def test_page_plan_returns_exactly_the_requested_pages(
 def test_page_plan_six_chapters_to_three_pages_keeps_cover(
     grilling_client: TestClient, scripted_model_client: ScriptedModelClient, db_path: Path
 ) -> None:
-    """几章 → 请求 3 页：实际恰好 3 页且含封面（封面 + 2 正文页）。"""
+    """几章 → 请求 3 页：实际恰好 3 页且含封面（封面 + 1 正文页 + 结尾页）。"""
     task_id = _task_filled(grilling_client, scripted_model_client)
 
     response = grilling_client.post(f"/api/tasks/{task_id}/page-plans", json={"target_pages": 3})
@@ -149,7 +151,10 @@ def test_page_plan_six_chapters_to_three_pages_keeps_cover(
     assert body["pages"][0]["kind"] == "cover"
     assert body["pages"][0]["index"] == 1
     content = [p for p in body["pages"] if p["kind"] == "content"]
-    assert len(content) == 2
+    assert len(content) == 1
+    # 结尾页计入总数：它是第 3 页，仍是「恰好 3 页」的一部分。
+    assert body["pages"][-1]["kind"] == "end"
+    assert body["pages"][-1]["index"] == 3
 
 
 # --- 验收 ③：未填充 → 409 ------------------------------------------------------

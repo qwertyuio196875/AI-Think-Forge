@@ -48,9 +48,9 @@ def test_plan_pages_returns_exactly_target_pages_with_cover() -> None:
 
 
 def test_single_chapter_even_paging() -> None:
-    """3 章、目标 4 页：恰好每章一页（3 正文 + 封面），无合并无拆分。"""
-    result = plan_pages(target_pages=4, chapters=_chapters(1, 1, 1))
-    assert result.actual_pages == 4
+    """3 章、目标 5 页：恰好每章一页（3 正文 + 封面 + 结尾），无合并无拆分。"""
+    result = plan_pages(target_pages=5, chapters=_chapters(1, 1, 1))
+    assert result.actual_pages == 5
     assert len([p for p in result.pages if p.kind == PAGE_KIND_CONTENT]) == 3
     # 每章各一页，各自归属自己的章节。
     seqs = [p.chapter_seqs for p in result.pages if p.kind == PAGE_KIND_CONTENT]
@@ -61,11 +61,11 @@ def test_single_chapter_even_paging() -> None:
 
 
 def test_fewer_pages_merges_lowest_weight_chapter() -> None:
-    """6 章、目标 3 页（2 正文 + 封面）：2 个合并过头寸的正文页，6 章全部保留。"""
+    """6 章、目标 3 页（1 正文 + 封面 + 结尾）：单页装下全部 6 章，一个不砍。"""
     result = plan_pages(target_pages=3, chapters=_chapters(1, 1, 1, 1, 1, 1))
     assert result.actual_pages == 3
     pages = [p for p in result.pages if p.kind == PAGE_KIND_CONTENT]
-    assert len(pages) == 2
+    assert len(pages) == 1
     # 6 章全部出现在合并页的 chapter_seqs 里（不砍任何章）。
     merged = [seq for p in pages for seq in p.chapter_seqs]
     assert sorted(merged) == [1, 2, 3, 4, 5, 6]
@@ -73,12 +73,12 @@ def test_fewer_pages_merges_lowest_weight_chapter() -> None:
 
 def test_merging_keeps_lowest_weight_chapter_title_in_merged_page() -> None:
     """被合并的轻权重章节标题要在合并页标题里出现（内容不丢）。"""
-    result = plan_pages(target_pages=3, chapters=_chapters(3, 100, 3))
+    result = plan_pages(target_pages=4, chapters=_chapters(3, 100, 3))
     pages = [p for p in result.pages if p.kind == PAGE_KIND_CONTENT]
-    # 权重最低的是第 1 / 3 章；第 2 章权重最高保持独立。合并页标题应含被并章名。
+    # 内容页 = 目标 4 - 封面 - 结尾 = 2；权重最低的第 1 / 3 章被并，第 2 章保持独立。
     assert len(pages) == 2
     # 至少有一个合并页同时关联两章。
-    assert any(len(p.chapter_seqs) == 2 for p in pages)
+    assert any(len(p.chapter_seqs) >= 2 for p in pages)
     assert any("第 1 章" in p.title or "第 3 章" in p.title for p in pages)
 
 
@@ -94,11 +94,11 @@ def test_merging_never_drops_any_chapter() -> None:
 
 
 def test_more_pages_splits_heaviest_chapter() -> None:
-    """3 章、目标 6 页（5 正文 + 封面）：权重最高的那章拆成多页。"""
+    """3 章、目标 6 页（4 正文 + 封面 + 结尾）：权重最高的那章拆成多页。"""
     result = plan_pages(target_pages=6, chapters=_chapters(10, 5, 3))
     assert result.actual_pages == 6
     pages = [p for p in result.pages if p.kind == PAGE_KIND_CONTENT]
-    assert len(pages) == 5
+    assert len(pages) == 4
     # 权重最高的第 1 章被拆成多页。
     split = [p for p in pages if p.chapter_seqs == (1,)]
     assert len(split) > 1
@@ -136,8 +136,9 @@ def test_empty_chapters_raises() -> None:
 
 
 def test_missing_weights_fall_back_to_equal_split() -> None:
-    result = plan_pages(target_pages=3, chapters=_chapters(None, None, None))
-    assert result.actual_pages == 3
+    """权重全缺失 → 均分；目标 4 页 = 封面 + 2 正文 + 结尾，3 章并进 2 页。"""
+    result = plan_pages(target_pages=4, chapters=_chapters(None, None, None))
+    assert result.actual_pages == 4
     pages = [p for p in result.pages if p.kind == PAGE_KIND_CONTENT]
     assert len(pages) == 2
     merged = [seq for p in pages for seq in p.chapter_seqs]

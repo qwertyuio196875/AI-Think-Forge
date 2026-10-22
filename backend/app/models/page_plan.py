@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.pageplan.planner import (
     PAGE_KIND_CONTENT,
     PAGE_KIND_COVER,
+    PAGE_KIND_END,
 )
 
 
@@ -39,8 +40,8 @@ class PlannedPageItem(BaseModel):
 
     index: int
     kind: str = Field(
-        pattern=f"^(?:{PAGE_KIND_COVER}|{PAGE_KIND_CONTENT})$",
-        description="页类型：cover 封面 / content 内容页",
+        pattern=f"^(?:{PAGE_KIND_COVER}|{PAGE_KIND_CONTENT}|{PAGE_KIND_END})$",
+        description="页类型：cover 封面 / content 内容页 / end 结尾页",
     )
     title: str
     chapter_seqs: list[int] = Field(default_factory=list)

@@ -79,7 +79,11 @@ class PlaywrightScreenshotRenderer(SlideRenderer):
                     device_scale_factor=DEVICE_SCALE_FACTOR,
                 )
                 page.goto(
-                    f"file:///{html_path}", wait_until="load", timeout=self.timeout_ms
+                    # 用 as_uri() 而不是手拼 "file:///..."：Windows 的反斜杠绝对路径
+                    # 手拼出来不是合法 URI，as_uri() 会正确地转成 file:///E:/... 形式。
+                    Path(html_path).resolve().as_uri(),
+                    wait_until="load",
+                    timeout=self.timeout_ms,
                 )
                 page.wait_for_selector("section.slide", timeout=self.timeout_ms)
                 slide_count = page.locator("section.slide").count()

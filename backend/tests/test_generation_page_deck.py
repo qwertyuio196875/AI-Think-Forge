@@ -24,7 +24,7 @@ from app.generation.deck import (
     verify_html_deliverable,
 )
 from app.generation.page_deck import END_SUBTITLE, END_TITLE, slides_for_page_plan
-from app.pageplan.planner import PAGE_KIND_CONTENT, PAGE_KIND_COVER
+from app.pageplan.planner import PAGE_KIND_CONTENT, PAGE_KIND_COVER, PAGE_KIND_END
 
 
 def _pl(pages: list[dict]) -> list[dict]:
@@ -54,19 +54,25 @@ def _sections() -> list[dict]:
 # --- 验收 ①：页数 = 规划页 + 结尾页 -------------------------------------------
 
 
-def test_slides_count_matches_plan_plus_end() -> None:
+def test_slides_count_equals_plan_pages() -> None:
+    """页数**严格等于**规划页数（issue #27 验收 ①、#25「说 16 页就是 16 页」）。
+
+    结尾页由规划器写成 `end` 一页并计入目标页数，所以规划里已经有它；
+    渲染既不能额外追加、也不能丢掉它。
+    """
     pages = _pl(
         [
             {"kind": PAGE_KIND_COVER, "title": "演示", "chapter_seqs": []},
             {"kind": PAGE_KIND_CONTENT, "title": "产品全景", "chapter_seqs": [1]},
             {"kind": PAGE_KIND_CONTENT, "title": "第一次上手", "chapter_seqs": [2]},
             {"kind": PAGE_KIND_CONTENT, "title": "常见疑问", "chapter_seqs": [3]},
+            {"kind": PAGE_KIND_END, "title": "谢谢", "chapter_seqs": []},
         ]
     )
     slides = slides_for_page_plan(
         pages=pages, sections=_sections(), task_title="演示", plan_title="演示"
     )
-    assert len(slides) == len(pages) + 1  # 4 规划页 + 1 结尾
+    assert len(slides) == len(pages)
     assert slides[0].layout == LAYOUT_TITLE
     assert slides[-1].layout == LAYOUT_END
     assert slides[-1].title == END_TITLE
@@ -145,6 +151,7 @@ def test_build_html_from_plan_passes_integrity(
             {"kind": PAGE_KIND_COVER, "title": "演示", "chapter_seqs": []},
             {"kind": PAGE_KIND_CONTENT, "title": "产品全景", "chapter_seqs": [1]},
             {"kind": PAGE_KIND_CONTENT, "title": "第一次上手", "chapter_seqs": [2]},
+            {"kind": PAGE_KIND_END, "title": "谢谢", "chapter_seqs": []},
         ]
     )
     slides = slides_for_page_plan(

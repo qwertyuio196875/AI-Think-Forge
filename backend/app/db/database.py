@@ -522,15 +522,23 @@ def _relax_generations_format_check(connection: sqlite3.Connection) -> None:
         "created_at    TEXT NOT NULL"
         ")"
     )
+    # 旧库若已有 page_plan_id（工单 29 之后建的表），必须原样搬过去，不能写成 NULL
+    # ——那会把已登记的「来源页面规划」静默抹掉。旧库没有这列时才用 NULL 填充。
+    # 必须在 DROP 旧表**之前**读列清单。
+    existing_columns = {
+        row["name"] for row in connection.execute("PRAGMA table_info(generations)").fetchall()
+    }
+    page_plan_expr = "page_plan_id" if "page_plan_id" in existing_columns else "NULL"
+
     connection.execute("DROP TABLE IF EXISTS generations_new")
     connection.execute(create)
     connection.execute(
-        """
+        f"""
         INSERT INTO generations_new
             (id, task_id, plan_id, format, file_path, template_used,
              source, page_plan_id, created_at)
         SELECT id, task_id, plan_id, format, file_path, template_used,
-               source, NULL, created_at
+               source, {page_plan_expr}, created_at
         FROM generations
         """
     )

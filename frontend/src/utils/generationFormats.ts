@@ -41,9 +41,18 @@ export function formatOptions(): GenerationFormatOption[] {
   ]
 }
 
-/** 某格式对应的方法：true 走主题选择（html / pptx），false 走模板选择（docx）。 */
+/**
+ * 某格式在**成品卡展示**上按什么口径解释：true = 来自 deck（主题即模板）。
+ *
+ * html / pptx / pdf 三者同源（ADR-0004：同一份 deck 分别渲染、截图装配、打印），
+ * 记录里的 `template_used` 都是 `deck-theme:<id>`，因此都按主题解释；
+ * docx 走 Word 模板目录，按模板解释。
+ *
+ * 注意：这不等于「生成入口都提供 pdf」——PDF 是可选产物，由独立动作产生，
+ * 不出现在格式选择卡里（见 `formatOptions`）。
+ */
 export function isThemeBased(format: GenerationFormat): boolean {
-  return format === 'html' || format === 'pptx'
+  return format === 'html' || format === 'pptx' || format === 'pdf'
 }
 
 /** 按格式取卡片元数据（未知格式回退到以格式名本身兜底，保持返回类型完整）。 */

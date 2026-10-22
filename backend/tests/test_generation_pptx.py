@@ -288,8 +288,9 @@ def test_pptx_generation_endpoint_full_flow(
     out = Path(body["file_path"])
     assert out.exists() and out.suffix == ".pptx"
 
-    # 页数 = 规划页数 + 结尾页，每页一张满幅图。
-    expected_slides = len(pages) + 1
+    # 页数**严格等于**规划页数（issue #29 验收 ①/#27：说 16 页就是 16 页），
+    # 每页一张满幅图。
+    expected_slides = len(pages)
     presentation = Presentation(str(out))
     assert len(presentation.slides) == expected_slides
     for slide in presentation.slides:

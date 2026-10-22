@@ -362,6 +362,7 @@ function baseName(p: string): string {
 function formatLabel(g: Generation): string {
   if (g.format === 'docx') return 'Word'
   if (g.format === 'pptx') return '截图版 PPT'
+  if (g.format === 'pdf') return 'PDF'
   return '单文件 HTML'
 }
 

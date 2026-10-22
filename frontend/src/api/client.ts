@@ -471,8 +471,11 @@ export function generateDeliverable(
    术语：成品 / 单文件 HTML / 模板 / 默认模板 / 临时覆盖（临时选择不改变全局默认）。
    ============================================================ */
 
-/** 成品格式（工单 29/30：Word / 单文件 HTML / 截图版 PPT，ADR-0003 之双轨扩为三轨）。 */
-export type GenerationFormat = 'docx' | 'html' | 'pptx'
+/**
+ * 成品格式（工单 29/30/31：Word / 单文件 HTML / 截图版 PPT / 可选 PDF）。
+ * 后三者同源（ADR-0004）：HTML 与截图版 PPT、PDF 都由同一份 deck 导出；Word 走模板。
+ */
+export type GenerationFormat = 'docx' | 'html' | 'pptx' | 'pdf'
 
 /** 生成记录（GET 列表项的字段集）。 */
 export interface Generation {

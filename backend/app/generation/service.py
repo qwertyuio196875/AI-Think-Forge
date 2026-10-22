@@ -257,22 +257,31 @@ def generate_html_deliverable(
     theme: DeckTheme,
     data_dir: str | Path,
     generation_repository: GenerationRepository,
+    section_repository: PlanSectionRepository | None = None,
+    page_plan_repository: PagePlanRepository | None = None,
 ) -> dict:
     """生成一份**单文件 HTML 演示**并记录；返回记录 + 产物元数据。
 
     与 Word 一轨同一条纪律：渲染 → 完整性检查（无外部网络引用 + 结构可解析）→ 通过才落库。
     未通过则丢弃产物、不写记录（规格 US 22），绝不交付半成品。
+
+    **页数控制（工单 27）**：有页面规划的走「规划 → 幻灯片」主体路径，页数等于规划页数；
+    没有规划时才退回 `build_html_deck`（按 H1/H2 自动切页）——ADR-0004 明确兜底路径
+    只在规划缺失时使用，不是主体。
     """
     output_dir = Path(data_dir) / config.DELIVERABLES_SUBDIR / str(task_id)
     output_path = _unique_output_path(
         output_dir, plan["id"], suffix=".html", prefix=OUTLINE_FILE_PREFIX
     )
 
-    build = build_html_deck(
-        plan_md=plan["content_md"],
+    build = _build_deck_for_plan(
+        task_id=task_id,
+        plan=plan,
         task_title=task_title,
         theme=theme,
         output_path=output_path,
+        section_repository=section_repository,
+        page_plan_repository=page_plan_repository,
     )
     try:
         verify_html_deliverable(build)
@@ -300,6 +309,48 @@ def generate_html_deliverable(
         "network_resources_declared": list(theme.network_resources),
         "presenter_mode": "in-page-overlay",
     }
+
+
+def _build_deck_for_plan(
+    *,
+    task_id: int,
+    plan: dict,
+    task_title: str,
+    theme: DeckTheme,
+    output_path: Path,
+    section_repository: PlanSectionRepository | None,
+    page_plan_repository: PagePlanRepository | None,
+):
+    """渲染 HTML deck：有页面规划走主体路径，否则退回按标题切页的兜底路径。
+
+    兜底路径（`build_html_deck`）保留原样：规划缺失时仍能导出可用的 deck，只是页数
+    不受用户控制。一旦有规划，页数就严格由规划决定（工单 27 验收 ①）。
+    """
+    if section_repository is not None and page_plan_repository is not None:
+        page_plan = page_plan_repository.latest_for_task(task_id)
+        if page_plan is not None:
+            pages = _decode_pages(page_plan["pages_json"])
+            sections = section_repository.list_for_plan(int(page_plan["plan_id"]))
+            slides = slides_for_page_plan(
+                pages=pages,
+                sections=sections,
+                task_title=task_title,
+                plan_title=task_title,
+            )
+            return build_html_deck_from_slides(
+                slides=slides,
+                task_title=task_title,
+                plan_md=plan["content_md"],
+                theme=theme,
+                output_path=output_path,
+            )
+
+    return build_html_deck(
+        plan_md=plan["content_md"],
+        task_title=task_title,
+        theme=theme,
+        output_path=output_path,
+    )
 
 
 def generate_pptx_deliverable(
@@ -463,12 +514,15 @@ def generate_pdf_deliverable(
 
 
 def _decode_pages(pages_json: str) -> list[dict]:
-    """把 `page_plans.pages_json` 反序列化成页列表；损坏则抛明确错误。"""
-    import json as _json
+    """把 `page_plans.pages_json` 反序列化成页列表；损坏则抛明确错误。
 
+    与 `pageplan.service.decode_page_plan` 的区别是**失败语义**：那边把脏数据静默退回
+    空清单（列表展示可以容忍缺页），这边是成品生成的输入，脏规划必须明确报错而不是
+    静默产出一份页数不对的成品。因此这里不复用那个宽容版本，但共用模块顶部的 json。
+    """
     try:
-        pages = _json.loads(pages_json)
-    except (_json.JSONDecodeError, TypeError) as exc:
+        pages = json.loads(pages_json)
+    except (json.JSONDecodeError, TypeError) as exc:
         raise ValueError(f"页面规划 `pages_json` 无法解析：{exc}") from exc
     if not isinstance(pages, list):
         # 业务闸门（路由捕获 ValueError → 409「尚未规划」），不能用 TypeError。
