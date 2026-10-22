@@ -280,11 +280,15 @@
                 Word 模板的默认值与此无关，仍用上方「Word 模板 · 全局默认」。
               </p>
 
-              <!-- pptx 计划项（不可用） -->
-              <div class="tpl-row is-plan">
+              <!-- pptx / pdf 说明（可用，但不在设置页配默认） -->
+              <div class="tpl-row">
                 <div class="tpl-main">
-                  <b>PowerPoint .pptx<el-tag class="mini" size="small" type="info" effect="plain">v1.1 计划</el-tag></b>
-                  <div class="meta">v1 不生成 .pptx；汇报演示由单文件 HTML 承担，两条路互不转换。此项仅告知，不提供可用入口。</div>
+                  <b>PowerPoint .pptx / PDF</b>
+                  <div class="meta">
+                    这两种都由演示主题决定版式（与单文件 HTML 同源：同一份 deck 逐页截图装配成
+                    .pptx，或直接打印成 PDF），所以在创作页「生成面板」里选主题，这里不另设默认。
+                    截图版 PPT 的页面是图片，<strong>文字不可编辑、不可检索</strong>；需要改字请走 Word。
+                  </div>
                 </div>
               </div>
 
@@ -353,12 +357,13 @@
     </div>
 
     <!-- ============ 新增 / 编辑 对话框 ============ -->
-    <el-dialog
+    <ParamDialog
       v-model="dialogVisible"
       :title="editingId ? '编辑模型配置' : '新增模型配置'"
       width="560px"
-      :close-on-click-modal="false"
-      append-to-body
+      confirm-text="保存配置"
+      :loading="formSaving"
+      @confirm="saveProvider"
     >
       <el-form label-position="top" @submit.prevent>
         <p class="hint" style="margin-top: 0">
@@ -400,11 +405,7 @@
           </p>
         </el-form-item>
       </el-form>
-      <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="formSaving" @click="saveProvider">保存配置</el-button>
-      </template>
-    </el-dialog>
+    </ParamDialog>
   </section>
 </template>
 
@@ -445,6 +446,7 @@ import {
   type Template
 } from '../api/client'
 import { describeConnection, kindLabel, type ConnectionReport } from '../utils/providerMeta'
+import ParamDialog from '../components/ParamDialog.vue'
 
 type ListState = 'loading' | 'ready' | 'error'
 const providers = ref<Provider[]>([])

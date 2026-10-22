@@ -1,4 +1,7 @@
-"""资料分析的数据访问：来源 / 文档 / 分块 / 总结（嵌入表按 ADR-0002 预留不填）。
+"""资料分析的数据访问：来源 / 文档 / 分块 / 总结。
+
+嵌入（`embeddings`）不在这里：向量只由知识库入库路径写入，读写与维度校验
+集中在 `app.db.embedding_repository`（工单 20），避免两处各自实现序列化格式。
 
 表结构见 `app.db.database`。所有 JSON 字段以字符串落库，读出时由调用方解析；
 这样 SQLite 不依赖 JSON1 扩展，行为在各平台一致。
@@ -28,16 +31,28 @@ class AnalysisRepository:
         *,
         meta: dict[str, Any] | None = None,
         task_id: int | None = None,
+        index_status: str = "stored",
     ) -> dict:
-        """登记来源；`meta` 序列化为 `meta_json`。"""
+        """登记来源；`meta` 序列化为 `meta_json`。
+
+        `task_id` 为空即知识库资料（工单 19）；知识库上传在建分块前用
+        `index_status="indexing"` 落库，让「索引中」在进程中途也可见。
+        """
         now = utcnow_iso()
         with connect(self._db_path) as connection:
             cursor = connection.execute(
                 """
-                INSERT INTO sources (kind, ref, meta_json, task_id, created_at)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO sources (kind, ref, meta_json, task_id, index_status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (kind, ref, json.dumps(meta or {}, ensure_ascii=False), task_id, now),
+                (
+                    kind,
+                    ref,
+                    json.dumps(meta or {}, ensure_ascii=False),
+                    task_id,
+                    index_status,
+                    now,
+                ),
             )
             connection.commit()
             row = connection.execute(
@@ -146,8 +161,10 @@ class AnalysisRepository:
         self,
         document_id: int,
         *,
+        path: str | None = None,
         parse_status: str | None = None,
         parse_message: str | None = None,
+        clear_parse_message: bool = False,
         heading_source: str | None = None,
         parser: str | None = None,
         encoding: str | None = None,
@@ -156,11 +173,19 @@ class AnalysisRepository:
         unrecognized: dict | None = None,
         unrecognized_parts: list[dict] | None = None,
     ) -> dict | None:
-        """部分更新文档解析结果；只更新显式传入的字段。"""
+        """部分更新文档解析结果；只更新显式传入的字段。
+
+        `clear_parse_message=True` 显式清空上一次的失败说明（重新解析成功后必须清掉，
+        否则界面会一直挂着旧的错误文案）；它比「传 None 表示清空」更不易误用。
+        """
         fields: dict[str, Any] = {}
+        if path is not None:
+            fields["path"] = path
         if parse_status is not None:
             fields["parse_status"] = parse_status
-        if parse_message is not None:
+        if clear_parse_message:
+            fields["parse_message"] = None
+        elif parse_message is not None:
             fields["parse_message"] = parse_message
         if heading_source is not None:
             fields["heading_source"] = heading_source

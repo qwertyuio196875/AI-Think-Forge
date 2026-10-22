@@ -19,3 +19,17 @@ dist/
 .slim/
 .env
 *.local
+
+# 本机测试辅助（DSH 沙箱下 pytest 临时目录需落在工作区内；见 .scratch/pytest-helper）
+.ptroot/
+.probe*
+.tmp-*/
+.pytest-tmp/
+.ruff-cache-*/
+
+# 本机调试产物（ACL 修复报告与回滚脚本等），不入库
+.scratch/
+
+# 工单实现者用的临时工作树（git worktree add 到 .wt-* 下），只在本机存在
+/.wt-*/
+

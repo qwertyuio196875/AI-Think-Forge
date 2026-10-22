@@ -4,7 +4,7 @@
 
 ### Issue tracker
 
-issue 和规格以本地 markdown 文件形式跟踪在 `.scratch/<feature-slug>/` 下。见 `docs/agents/issue-tracker.md`。
+issue 和规格以 GitHub issue 形式跟踪在本仓库（使用 `gh` CLI）。见 `docs/agents/issue-tracker.md`。
 
 ### Triage labels
 

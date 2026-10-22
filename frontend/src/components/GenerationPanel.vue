@@ -6,7 +6,7 @@
       <span class="right">
         <el-tag size="small" :type="locked ? 'warning' : 'success'" effect="plain">
           <el-icon class="tag-ico"><Lock v-if="locked" /><Select v-else /></el-icon>
-          {{ locked ? '未解锁 · 方案还没确认' : '已解锁 · 可生成 Word / 单文件 HTML' }}
+          {{ locked ? '未解锁 · 方案还没确认' : '已解锁 · 可生成 Word / HTML / PPT' }}
         </el-tag>
       </span>
     </div>
@@ -26,25 +26,14 @@
       <div class="gfield">
         <label>成品格式</label>
         <div class="fmt-grid" role="radiogroup" aria-label="成品格式">
-          <label class="fmt" :class="{ sel: format === 'docx' }">
-            <input v-model="format" type="radio" name="gpfmt" value="docx" />
-            <span><b>Word 文档</b><span class="d">python-docx 按模板写入并回读校验；产出 .docx</span></span>
-          </label>
-          <label class="fmt" :class="{ sel: format === 'html' }">
-            <input v-model="format" type="radio" name="gpfmt" value="html" />
-            <span><b>单文件 HTML 演示</b><span class="d">样式 / 脚本 / 西文字体内联，中文系统字体回退；自包含 .html，file:// 双击可开</span></span>
-          </label>
-          <label class="fmt is-plan" title="v1.1 计划">
-            <input type="radio" name="gpfmt" disabled />
-            <span>
-              <b>PowerPoint .pptx<el-tag class="mini" size="small" type="info" effect="plain">v1.1 计划</el-tag></b>
-              <span class="d">v1 不生成 .pptx，也不会把 HTML 或截图冒充 PPT；演示汇报走单文件 HTML</span>
-            </span>
+          <label class="fmt" :class="{ sel: format === opt.format }" v-for="opt in formatOptions" :key="opt.format">
+            <input v-model="format" type="radio" name="gpfmt" :value="opt.format" />
+            <span><b>{{ opt.title }}</b><span class="d">{{ opt.desc }}</span></span>
           </label>
         </div>
       </div>
 
-      <!-- Word：任务级临时覆盖模板 -->
+      <!-- 模板 / 主题：Word 走模板；html 与 pptx（截图版 PPT）都按主题（deck 同源） -->
       <div v-if="format === 'docx'" class="gfield">
         <label>Word 模板 · 本任务临时选择</label>
         <el-select v-model="templateSel" class="tpl-select" placeholder="跟随全局默认模板">
@@ -63,7 +52,7 @@
         </p>
       </div>
 
-      <!-- HTML：演示主题（清单来自 GET /api/deck-themes，色板不硬编码；空值 = 跟随全局默认） -->
+      <!-- 主题：html 与 pptx（截图版 PPT）同源，都按主题选（清单来自 GET /api/deck-themes，色板不硬编码；空值 = 跟随全局默认） -->
       <div v-else class="gfield">
         <label>演示主题 · 本任务临时选择</label>
         <div class="theme-grid" role="radiogroup" aria-label="演示主题">
@@ -125,7 +114,17 @@
       <!-- 生成动作 -->
       <div class="gp-actions">
         <el-button type="primary" size="large" :loading="generating" :icon="Box" @click="runGenerate()">
-          {{ generating ? '正在生成…' : format === 'html' ? '生成单文件 HTML 演示' : '生成 Word 成品' }}
+          {{ generating ? '正在生成…' : generateButtonText }}
+        </el-button>
+        <!-- PDF 是**可选**产物（工单 31）：与 PPT 同源同版式，按需单独导出，
+             不占格式卡位置、也不阻塞 HTML / PPTX 的生成。 -->
+        <el-button
+          size="large"
+          :loading="pdfGenerating"
+          :disabled="generating"
+          @click="runGeneratePdf()"
+        >
+          {{ pdfGenerating ? '正在导出 PDF…' : '另存为 PDF（可选）' }}
         </el-button>
         <span class="xs muted mono">产物落 data/deliverables/{{ taskId }}/</span>
       </div>
@@ -174,7 +173,7 @@
                 <span class="art-name">{{ baseName(g.file_path) }}</span>
                 <span class="sp"></span>
                 <el-tag size="small" :type="g.format === 'docx' ? 'primary' : 'success'" effect="plain">
-                  {{ g.format === 'docx' ? 'Word' : '单文件 HTML' }}
+                  {{ formatLabel(g) }}
                 </el-tag>
                 <el-tag
                   size="small"
@@ -186,10 +185,10 @@
               </div>
 
               <dl class="art-kv">
-                <dt>{{ g.format === 'html' ? '所用主题' : '实际所用模板' }}</dt>
+                <dt>{{ isThemeBased(g.format) ? '所用主题' : '实际所用模板' }}</dt>
                 <dd>
-                  {{ g.format === 'html' ? themeNameOf(g) : g.template_used }}
-                  <span class="muted">（{{ g.format === 'html' ? '主题即模板' : tplSource(g.template_used) }}）</span>
+                  {{ isThemeBased(g.format) ? themeNameOf(g) : g.template_used }}
+                  <span class="muted">（{{ isThemeBased(g.format) ? '主题即模板' : tplSource(g.template_used) }}）</span>
                 </dd>
                 <dt>生成时间</dt>
                 <dd>{{ formatDateTime(g.created_at) }}</dd>
@@ -232,7 +231,9 @@
                   {{
                     g.format === 'html'
                       ? '主题内联 / 页数等明细仅随本次生成响应返回，历史列表项只能从 deck-theme 记录推断主题。'
-                      : '样式映射 / 标题数等明细仅随本次生成响应返回，历史列表项不附带。'
+                      : g.format === 'pptx'
+                        ? '截图版 PPT：页面由 HTML deck 逐页截图装配，文字不可编辑；页数等明细仅随本次生成响应返回。'
+                        : '样式映射 / 标题数等明细仅随本次生成响应返回，历史列表项不附带。'
                   }}
                 </p>
               </dl>
@@ -242,7 +243,7 @@
                   打开演示
                 </el-button>
                 <el-button size="small" :loading="viewerLoading" @click="openArtifact(g)">
-                  {{ g.format === 'html' ? '下载 .html' : '打开文件' }}
+                  {{ g.format === 'html' ? '下载 .html' : g.format === 'pptx' ? '下载 .pptx' : '打开文件' }}
                 </el-button>
                 <span class="xs muted">也可在文件管理器按上方路径直接双击打开</span>
               </div>
@@ -294,6 +295,10 @@ import {
   type Template
 } from '../api/client'
 import { formatDateTime } from '../utils/taskMeta'
+import {
+  formatOptions as builtInFormatOptions,
+  isThemeBased
+} from '../utils/generationFormats'
 import DeckViewer from './DeckViewer.vue'
 
 const props = defineProps<{
@@ -323,6 +328,8 @@ const deckDefaultState = ref<'loading' | 'ready' | 'error'>('loading')
 const generations = ref<Generation[]>([])
 const metaById = ref<Record<number, GenerationResponse>>({})
 const generating = ref(false)
+/** PDF 导出中（工单 31，可选动作，与主生成互不阻塞）。 */
+const pdfGenerating = ref(false)
 const viewerLoading = ref(false)
 const genError = ref('')
 const genErrorTitle = ref('')
@@ -342,12 +349,35 @@ const globalDefaultName = computed(
   () => docxTemplates.value.find((t) => t.is_default)?.name || ''
 )
 
+/** 格式选择卡元数据（pptFrontend util 统一给文案，选择前即说明可编辑 vs 截图差异）。 */
+const formatOptions = computed(() => builtInFormatOptions())
+/** 生成按钮文案，按当前格式定（html / pptx 都叫「演示」，docx 叫 Word）。 */
+const generateButtonText = computed(() => {
+  if (format.value === 'html') return '生成单文件 HTML 演示'
+  if (format.value === 'pptx') return '生成截图版 PPT'
+  return '生成 Word 成品'
+})
+/** 生成成功的弹层文案，按当前格式定。 */
+const generateSuccessText = computed(() => {
+  if (format.value === 'html') return '已生成单文件 HTML 演示'
+  if (format.value === 'pptx') return '已生成截图版 PPT'
+  return '已生成 Word 成品'
+})
+
 function meta(g: Generation): GenerationResponse | null {
   return metaById.value[g.id] ?? null
 }
 function baseName(p: string): string {
   return p.split(/[\\/]/).pop() || p
 }
+/** 成品格式的中文标签（成品卡 tag / 缩略副标题共用）。 */
+function formatLabel(g: Generation): string {
+  if (g.format === 'docx') return 'Word'
+  if (g.format === 'pptx') return '截图版 PPT'
+  if (g.format === 'pdf') return 'PDF'
+  return '单文件 HTML'
+}
+
 /** HTML 记录的 template_used 形如 `deck-theme:slate`，据此推断主题。 */
 function themeIdOf(g: Generation): string {
   const fromMeta = meta(g)?.theme_used
@@ -466,15 +496,45 @@ async function runGenerate(override?: string | null): Promise<void> {
     const resp = await generateDeliverable(props.taskId, {
       format: format.value,
       template: format.value === 'docx' ? template : null,
-      theme: format.value === 'html' ? theme.value || null : null
+      // html 与 pptx（截图版 PPT）同源：都按主题选择；docx 不带主题。
+      theme: format.value === 'docx' ? null : theme.value || null
     })
     generations.value = [resp, ...generations.value]
     metaById.value = { ...metaById.value, [resp.id]: resp }
-    ElMessage.success(format.value === 'html' ? '已生成单文件 HTML 演示' : '已生成 Word 成品')
+    ElMessage.success(generateSuccessText.value)
   } catch (err) {
     handleGenError(err)
   } finally {
     generating.value = false
+  }
+}
+
+/**
+ * 另存为 PDF（工单 31，可选产物）。
+ *
+ * PDF 与截图版 PPT 同源同版式（同一份页面规划 → 同一份 deck），所以它不带格式卡、
+ * 只是一个随时可点的导出动作；失败不影响已生成的 HTML / PPTX。
+ * 主题沿用当前选择（没选就让后端按全局默认走）。
+ */
+async function runGeneratePdf(): Promise<void> {
+  if (pdfGenerating.value) return
+  pdfGenerating.value = true
+  genError.value = ''
+  genErrorTitle.value = ''
+  canRetryBuiltin.value = false
+  try {
+    const resp = await generateDeliverable(props.taskId, {
+      format: 'pdf',
+      template: null,
+      theme: theme.value || null
+    })
+    generations.value = [resp, ...generations.value]
+    metaById.value = { ...metaById.value, [resp.id]: resp }
+    ElMessage.success('已导出 PDF')
+  } catch (err) {
+    handleGenError(err)
+  } finally {
+    pdfGenerating.value = false
   }
 }
 
@@ -489,8 +549,8 @@ function handleGenError(err: unknown): void {
     genErrorTitle.value = '生成闸门未放行'
     genError.value = '方案未确认或仍有未处置的待确认事项：' + tailDetail(msg)
   } else if (isApiStatus(err, 400)) {
-    // Word 模板不可用 或 HTML 未知主题：都明确报错、不静默退回。
-    const isTheme = format.value === 'html'
+    // Word 模板不可用 或 HTML/PPT 未知主题：都明确报错、不静默退回。
+    const isTheme = format.value !== 'docx'
     genErrorTitle.value = isTheme
       ? '主题不可用，已按规则拒绝生成（不静默退回默认主题）'
       : '模板不可用，已按规则拒绝生成（不会静默产出空白文档）'
@@ -573,9 +633,9 @@ watch(() => props.taskId, () => {
   theme.value = ''
   refresh()
 })
-// 切到 HTML 轨时刷新一次全局默认，反映设置页里刚改过的值（不阻塞、不报错打扰）
+// 切到 html / pptx（都按主题）时刷新一次全局默认，反映设置页里刚改过的值（不阻塞、不报错打扰）
 watch(format, (next) => {
-  if (next === 'html') void loadDeckDefault()
+  if (next !== 'docx') void loadDeckDefault()
 })
 onMounted(() => {
   loadThemes()

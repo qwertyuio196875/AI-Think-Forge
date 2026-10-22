@@ -9,14 +9,42 @@ from __future__ import annotations
 
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class GenerationFormat(str, Enum):
-    """成品格式（ADR-0003 首版双轨：Word 与单文件 HTML）。"""
+    """成品格式（ADR-0003：Word、单文件 HTML；工单 29 增 PPT 截图版；工单 31 增 PDF）。
+
+    - `docx`：Word 成品（方案 / 正文）；
+    - `html`：单文件 HTML 演示（deck）；
+    - `pptx`：截图版 PPT（HTML deck → 逐页截图 → 装配，ADR-0004）；
+    - `pdf`：由同一份 deck 打印导出（可选产物，ADR-0004）。
+    """
 
     docx = "docx"
     html = "html"
+    pptx = "pptx"
+    pdf = "pdf"
+
+
+class GenerationSource(str, Enum):
+    """成品来源（规格 §4：新增一列记录某次生成是否来自填充）。
+
+    - `outline`：**大纲导出**——直接把方案正文渲染成文件（跳过填充）；
+    - `body`：**正文成品**——来自填充写出的章节正文。
+
+    术语（GLOSSARY）把两者明确区分开，因此它们在成品记录里必须是两个不同的值，
+    不能靠文件名猜。中文标签由后端统一给，前端不另写一套翻译。
+    """
+
+    outline = "outline"
+    body = "body"
+
+
+GENERATION_SOURCE_LABELS: dict[str, str] = {
+    "outline": "大纲导出",
+    "body": "正文成品",
+}
 
 
 class GenerationRequest(BaseModel):
@@ -54,7 +82,19 @@ class Generation(BaseModel):
     format: GenerationFormat
     file_path: str
     template_used: str
+    # 截图版 PPT 所依据的来源页面规划（工单 29）；无规划的成品为 None。
+    page_plan_id: int | None = None
+    # 来源（正文成品 / 大纲导出）。这一列现在由后端给出，#18 收口文件名前缀时
+    # 前端就能据此把两者一眼分开。
+    source: GenerationSource = GenerationSource.outline
+    source_label: str = GENERATION_SOURCE_LABELS["outline"]
     created_at: str
+
+    @model_validator(mode="after")
+    def _derive_source_label(self) -> Generation:
+        """中文标签永远由来源派生：不让「状态说正文、标签说大纲」这种事发生。"""
+        self.source_label = GENERATION_SOURCE_LABELS.get(self.source.value, self.source.value)
+        return self
 
 
 class GenerationResponse(Generation):

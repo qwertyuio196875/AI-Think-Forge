@@ -15,7 +15,9 @@ from app.api.deps import (
     OpenItemRepositoryDep,
     PlanRepositoryDep,
     PlanRevisionRepositoryDep,
+    PlanSectionRepositoryDep,
     ProviderRepositoryDep,
+    RetrievalServiceDep,
     TaskRepositoryDep,
 )
 from app.api.errors import require_task
@@ -27,6 +29,7 @@ from app.grilling.open_items import (
     is_skip_answer,
     skipped_items,
 )
+from app.grilling.retrieval import rejected_citations_content
 from app.grilling.service import (
     AdvanceError,
     PlanGenerationError,
@@ -58,6 +61,7 @@ from app.models.plan import (
 )
 from app.models.task import Task
 from app.providers.model_client import ModelCallError
+from app.sections.service import sync_plan_sections
 
 router = APIRouter(prefix="/grilling", tags=["grilling"])
 
@@ -113,6 +117,7 @@ def start_grilling_task(
     open_item_repository: OpenItemRepositoryDep,
     provider_repository: ProviderRepositoryDep,
     model_client: ModelClientDep,
+    retrieval: RetrievalServiceDep,
 ) -> GrillingStartResponse:
     """从一句话 / 一段描述发起主题创作，产出第一轮前沿问题集。"""
     if (
@@ -140,6 +145,7 @@ def start_grilling_task(
             open_item_repository=open_item_repository,
             model_client=client,
             model_name=model_name,
+            retrieval=retrieval,
         )
     except FrontierParseError as exc:
         raise HTTPException(
@@ -193,6 +199,17 @@ def submit_answers(
         content = SKIP_ANSWER_MARKER if is_skip_answer(answer) else (answer or "").strip()
         message_repository.append(task_id, payload.round_no, "user", content)
 
+    # 记录本轮取消采用的引用（工单 23）。存成一条 system 消息而不是新表：
+    # 这是对话的一部分（「我这次不用这些资料」），与轮次同生命周期，
+    # 而且下一轮渲染提示词时正好在同一条消息流里读到它。
+    if payload.rejected_chunk_ids:
+        message_repository.append(
+            task_id,
+            payload.round_no,
+            "system",
+            rejected_citations_content(payload.rejected_chunk_ids),
+        )
+
     return build_dialogue(task_id, message_repository.list_for_task(task_id))
 
 
@@ -205,6 +222,7 @@ def advance(
     plan_repository: PlanRepositoryDep,
     provider_repository: ProviderRepositoryDep,
     model_client: ModelClientDep,
+    retrieval: RetrievalServiceDep,
 ) -> AdvanceResponse:
     """按上一轮回答重算下一轮前沿；前沿为空即收敛并生成结构化方案草稿。"""
     task = _require_task(task_repository, task_id)
@@ -218,6 +236,7 @@ def advance(
             model_client=client,
             plan_repository=plan_repository,
             model_name=model_name,
+            retrieval=retrieval,
         )
     except AdvanceError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -268,12 +287,17 @@ def confirm_plan(
     task_repository: TaskRepositoryDep,
     plan_repository: PlanRepositoryDep,
     open_item_repository: OpenItemRepositoryDep,
+    section_repository: PlanSectionRepositoryDep,
 ) -> Plan:
     """方案确认：draft → confirmed 并记录 `confirmed_at`（进入生成阶段的唯一闸门）。
 
     仍有未处置的待确认事项时拒绝确认（409）：原型语义是「待确认事项已全部定下，可以确认
     方案」，规格 US 9 也要求未经确认的推测不得当作已定需求；若在此放行，就会造出
     「方案已确认、却因仍有 open 条目而无法生成」的尴尬中间态。
+
+    确认同时切出成品章节并落库（ADR-0006「确认后写入」）：章节清单从此成为填充、字数
+    控制与页面规划共同依赖的唯一真源。方案里没有「章节」一节时切出空清单——**不报错**，
+    因为旧格式方案确实可能没有这一节，此时填充入口自会按自己的闸门拒绝（工单 9）。
     """
     _require_task(task_repository, task_id)
 
@@ -301,6 +325,11 @@ def confirm_plan(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"方案 {current['id']} 不存在"
         )
+
+    # 用**已确认的行**切分（含 confirm 后的状态），避免拿确认前的快照做源。
+    sync_plan_sections(
+        task_id=task_id, plan=confirmed, section_repository=section_repository
+    )
     return Plan(**confirmed)
 
 
@@ -316,6 +345,7 @@ def revise(
     open_item_repository: OpenItemRepositoryDep,
     plan_repository: PlanRepositoryDep,
     revision_repository: PlanRevisionRepositoryDep,
+    section_repository: PlanSectionRepositoryDep,
     provider_repository: ProviderRepositoryDep,
     model_client: ModelClientDep,
 ) -> PlanRevisionResponse:
@@ -323,6 +353,10 @@ def revise(
 
     旧版本留痕（修订前 / 修订后 / 时间）落在方案版本记录里；方案本体回到 draft，
     原确认不再覆盖新内容。
+
+    修订可能增删章节或把章节改到别的标题下，所以同时按新正文**重新切分**章节
+    （ADR-0006：修订后必须重切，否则下游会按过期目录填充）。重切规则是按标题匹配，
+    匹配不上的旧章废弃重建；方案回到 draft 期间清单照旧可读，只是不再代表「已确认」。
     """
     task = require_task(task_repository, task_id)
     client, model_name = _model_for_task(task, provider_repository, model_client)
@@ -351,6 +385,11 @@ def revise(
             detail=f"模型调用失败：{exc}",
         ) from exc
 
+    sync_plan_sections(
+        task_id=task_id,
+        plan=outcome.plan.model_dump(),
+        section_repository=section_repository,
+    )
     return PlanRevisionResponse(plan=outcome.plan, revision=outcome.revision)
 
 

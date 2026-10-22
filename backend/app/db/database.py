@@ -17,7 +17,23 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
+# 成品格式的**权威清单**：SCHEMA 建表与迁移共用，避免两处各写一遍漏掉某个格式。
+# 顺序即历史演进顺序（docx / html → pptx（工单 29）→ pdf（工单 31））：
+# 迁移按「当前库缺哪个就放宽到哪个」处理，不关心旧库停在哪一代。
+GENERATION_FORMATS = ("docx", "html", "pptx", "pdf")
+
+
+def _generations_format_check_sql() -> str:
+    """`format` 列的 CHECK 片段（与 `GENERATION_FORMATS` 保持一致）。"""
+    allowed = ", ".join(f"'{name}'" for name in GENERATION_FORMATS)
+    return f"CHECK (format IN ({allowed}))"
+
+
 # 建表幂等：应用启动时执行，重复运行不改变已有表。
+# 用占位符而非 f-string：SCHEMA 内含 `{}` 字面量，f-string 会误解析；
+# `init_db` 执行前把占位符替换成 `GENERATION_FORMATS` 派生的 CHECK 片段。
+_FORMAT_CHECK_PLACEHOLDER = "__GENERATION_FORMAT_CHECK__"
+
 SCHEMA = """
 -- 任务（规格 §4 + 术语「任务」）。状态机：in_progress（进行中）/ completed（已完成）
 -- / deleted（已删除）。删除是**软删除**（规格 US 27：一次误操作不毁掉本地数据）：
@@ -88,6 +104,40 @@ CREATE TABLE IF NOT EXISTS plans (
 
 CREATE INDEX IF NOT EXISTS idx_plans_task ON plans (task_id, id);
 
+-- 成品章节（规格 §4；工单 7 / ADR-0006）：成品正文的章，一章一行。
+-- 唯一真源：只从方案「章节」一节的条目切分而来（`app.grilling.plan_sections`），
+-- **不是**方案里的 `##` 分节——方案分节 ≠ 成品章节（GLOSSARY 与 ADR-0006）。
+-- - seq：序号（按方案条目行序，从 1 开始）；与 plan_id 组成唯一键「方案 + 序号」；
+-- - target_length：方案给的建议字数（旧格式方案可能为 NULL，下游按缺省权重处理）；
+-- - content_md：已写正文（填充阶段写入）；字数**不落列**，读时用 `app.hanzi.count_hanzi`
+--   现算——落一份缓存列就等于多一套口径，违反「计量函数是唯一入口」；
+-- - status：pending（待写）/ completed（已完成）/ failed（失败）；
+-- - completed_at：该章完成时刻（未完成为 NULL）；
+-- - references_json：本章实际采用的引用片段（工单 24），正文写成功时随正文落库，
+--   供拼装成品时聚合为「参考资料」清单。
+-- 纪律：清单只读，**不提供**改名 / 排序 / 增删章节（ADR-0006 的决定，不是遗漏）；
+-- 方案修订或重复确认后按标题匹配重建，匹配不上的旧章节一律废弃。
+CREATE TABLE IF NOT EXISTS plan_sections (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id         INTEGER NOT NULL REFERENCES tasks(id),
+    plan_id         INTEGER NOT NULL REFERENCES plans(id),
+    seq             INTEGER NOT NULL,
+    title           TEXT NOT NULL,
+    key_points      TEXT NOT NULL DEFAULT '',
+    target_length   INTEGER,
+    content_md      TEXT NOT NULL DEFAULT '',
+    status          TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending', 'completed', 'failed')),
+    completed_at    TEXT,
+    references_json TEXT NOT NULL DEFAULT '',
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    UNIQUE (plan_id, seq)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_sections_seq ON plan_sections (plan_id, seq);
+CREATE INDEX IF NOT EXISTS idx_plan_sections_task ON plan_sections (task_id, seq);
+
 -- 待确认事项（规格 §4 术语「待确认事项」；工单 13）：系统标记的、尚未决定的关键信息清单。
 -- - round_no：来源轮次（该条目由哪一轮的「暂时跳过」产生），供前端回指；
 -- - text：条目内容（跳过的前沿问题标题）；
@@ -131,13 +181,23 @@ CREATE INDEX IF NOT EXISTS idx_plan_revisions_plan ON plan_revisions (plan_id, i
 -- - template_used：**本次生成实际所用的模板**（规格 US 20「每次生成实际所用模板的记录」），
 --   取模板目录下的相对路径（内置默认模板为 `_builtin/minimal-default.docx`）。任务级
 --   **临时覆盖**只体现在本列，绝不改写全局默认（术语「默认模板 / 临时覆盖」）。
+-- - source：本次成品的**来源**（规格 §4「新增一列记录某次生成是否来自填充」）：
+--   outline（大纲导出：直接渲染方案正文）/ body（正文成品：来自填充的章节正文）。
+--   这一列是「正文成品」与「大纲导出」的唯一区分点，缺省 outline 保持既有行为不变。
+-- - page_plan_id：成品所依据的来源页面规划（工单 29，可空）。NULL = 无页面规划的
+--   走大纲/方案渲染的成品（如 Word 正文）；非空 = 截图版 PPT 由某一次页面规划而来。
+--   这列只追溯「来源规划」，不加 CHECK 引用 page_plans——规划可被增删页重规划出新的，
+--   旧成品仍应持有其落库时可回溯的那一次规划。兼容既有库：`_migrate` 补列。
 CREATE TABLE IF NOT EXISTS generations (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     task_id       INTEGER NOT NULL REFERENCES tasks(id),
     plan_id       INTEGER NOT NULL REFERENCES plans(id),
-    format        TEXT NOT NULL CHECK (format IN ('docx', 'html')),
+    format        TEXT NOT NULL __GENERATION_FORMAT_CHECK__,
     file_path     TEXT NOT NULL,
     template_used TEXT NOT NULL,
+    page_plan_id  INTEGER,
+    source        TEXT NOT NULL DEFAULT 'outline'
+                  CHECK (source IN ('outline', 'body')),
     created_at    TEXT NOT NULL
 );
 
@@ -163,14 +223,22 @@ CREATE TABLE IF NOT EXISTS templates (
 -- - kind：file（本地上传）/ url（TB-9；本单只落 file）；
 -- - ref：文件类为 `data/` 下的相对路径（带唯一前缀），URL 类为原始地址；
 -- - meta_json：原始文件名 / 大小 / 扩展名等非结构化元信息；
--- - task_id：该来源所属的资料分析任务（任务状态与历史列表复用既有 `tasks`）。
+-- - task_id：该来源所属的资料分析任务（任务状态与历史列表复用既有 `tasks`）；
+--   **为空即知识库资料**（工单 19 / ADR-0005：复用本表族，不建平行表）；
+-- - index_status / index_message / indexed_at：知识库资料的索引状态
+--   （stored 已入库 / indexing 索引中 / failed 索引失败）与失败原因。
+--   分析管线的来源也带默认值，但知识库接口只读 `task_id IS NULL`，两边不串味。
 CREATE TABLE IF NOT EXISTS sources (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    kind       TEXT NOT NULL CHECK (kind IN ('file', 'url')),
-    ref        TEXT NOT NULL,
-    meta_json  TEXT NOT NULL DEFAULT '{}',
-    task_id    INTEGER REFERENCES tasks(id),
-    created_at TEXT NOT NULL
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind          TEXT NOT NULL CHECK (kind IN ('file', 'url')),
+    ref           TEXT NOT NULL,
+    meta_json     TEXT NOT NULL DEFAULT '{}',
+    task_id       INTEGER REFERENCES tasks(id),
+    index_status  TEXT NOT NULL DEFAULT 'stored'
+                  CHECK (index_status IN ('stored', 'indexing', 'failed')),
+    index_message TEXT,
+    indexed_at    TEXT,
+    created_at    TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_sources_task ON sources (task_id, id);
@@ -205,8 +273,9 @@ CREATE TABLE IF NOT EXISTS documents (
 
 CREATE INDEX IF NOT EXISTS idx_documents_source ON documents (source_id, id);
 
--- 文本分块（规格 §4；工单 16）：分析管线的分块，含位置 locator。
--- 注意：这是「分块 → 逐块分析 → 综合」的分析管线数据，**不是 RAG 索引**（ADR-0002）。
+-- 文本分块（规格 §4；工单 16 / 19）：分析管线与知识库共用的分块，含位置 locator。
+-- 注意：ADR-0005 起分块**同时**是知识库检索的粒度（`embeddings.chunk_id` 指向本表），
+-- 分块参数只有一套（`analysis/chunking.py`：1200 / 1800，按标题边界），不另造分块器。
 CREATE TABLE IF NOT EXISTS document_chunks (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     document_id  INTEGER NOT NULL REFERENCES documents(id),
@@ -239,8 +308,12 @@ CREATE TABLE IF NOT EXISTS summaries (
 
 CREATE INDEX IF NOT EXISTS idx_summaries_source ON summaries (source_id, id);
 
--- 嵌入（规格 §4 预留；ADR-0002）：v1 **不填充**，v1.1 检索层追加时再加索引与写入。
--- 保留本表是为了让 v1.1 的跨文档检索不重构既有资料 / 分块 / 总结路径。
+-- 嵌入（规格 §4；ADR-0005；工单 20 起写入）：分块粒度是检索单位，一行 = 一个分块的向量。
+-- - `vector_json` 是**固定格式**的紧凑 JSON 浮点数组（写入端 `embedding_repository.dump_vector`），
+--   读取端必须校验维度：同文档内维度不一致 / `model_name` 不一致即报错，绝不当成可比较的相似度；
+-- - `model_name` / `version` 随向量落库，重建索引时整份替换（先删后插，同一事务），
+--   因此换嵌入模型后不会出现新旧向量混存；
+-- - v1 用文本存向量 + 内存 numpy 暴力余弦，不引入向量库（零新增服务）。
 CREATE TABLE IF NOT EXISTS embeddings (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     chunk_id       INTEGER NOT NULL REFERENCES document_chunks(id),
@@ -249,6 +322,8 @@ CREATE TABLE IF NOT EXISTS embeddings (
     vector_json    TEXT,
     created_at     TEXT
 );
+
+CREATE INDEX IF NOT EXISTS idx_embeddings_chunk ON embeddings (chunk_id);
 
 -- 总结的 Word 交付记录（工单 16 / US16）：由「总结 + 引用」按模板生成，
 -- 与方案成品（generations）分开记账——总结没有结构化方案，绝不伪造 plan。
@@ -266,6 +341,49 @@ CREATE TABLE IF NOT EXISTS summary_deliverables (
 
 CREATE INDEX IF NOT EXISTS idx_summary_deliverables_source
     ON summary_deliverables (source_id, id);
+
+-- 填充任务（规格 §4；工单 9 / ADR-0006）：一次「填充为正文」的尝试，一章一行正文存在
+-- `plan_sections`，这里只记**这次尝试**的整体进度与失败原因。
+-- - target_length：本次正文的目标字数（按汉字计，唯一计量入口 app.hanzi.count_hanzi）；
+-- - completed_sections：已写完的章节数（由逐章填充工单随写随更新，本单只写初值 0）；
+-- - status：进行中 / 已完成 / 中断 / 失败（机器值 running / completed / cancelled / failed）。
+--   中断保留已完成章节（规格 §4），故「中断」不是删除；
+-- - error：当前错误信息；空着表示还没出错。失败必须留痕，不能只在前端弹一下就没了。
+-- 为什么单独一张表而不复用 generations：填充是写作阶段、生成是渲染阶段，两者生命周期
+-- 完全不同（填充可能进行中、被中断、失败重试；成品是最终产物），混在一张表里必然要加
+-- 一堆互斥的可空列。
+CREATE TABLE IF NOT EXISTS fill_tasks (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id            INTEGER NOT NULL REFERENCES tasks(id),
+    plan_id            INTEGER NOT NULL REFERENCES plans(id),
+    target_length      INTEGER NOT NULL,
+    completed_sections INTEGER NOT NULL DEFAULT 0,
+    status             TEXT NOT NULL DEFAULT 'running'
+                       CHECK (status IN ('running', 'completed', 'cancelled', 'failed')),
+    error              TEXT,
+    cancel_requested   INTEGER NOT NULL DEFAULT 0 CHECK (cancel_requested IN (0, 1)),
+    created_at         TEXT NOT NULL,
+    updated_at         TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_fill_tasks_task ON fill_tasks (task_id, id);
+
+-- 页面规划（工单 25 / ADR-0004）：一次「已填充章节 → 页列表」规划的落库。
+-- - 一份方案可以先后规划成不同页数（改页数即重新规划），故按 (task_id, plan_id, target_pages)
+--   存多行；实际页数**恒等于** target_pages（含封面占一页）。
+-- - pages_json：规划后的页列表（封面 + 内容页），每页记 kind / title / chapter_seqs。
+--   这是 #26 单页到增删的载体：增删页即改这份 JSON，再由此重截（ADR-0004 决策）。
+-- - source：规划依据 = 已填充章节。未填充就请求规划 → 服务层 409，绝不落空规划。
+CREATE TABLE IF NOT EXISTS page_plans (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id       INTEGER NOT NULL REFERENCES tasks(id),
+    plan_id       INTEGER NOT NULL REFERENCES plans(id),
+    target_pages  INTEGER NOT NULL,
+    pages_json    TEXT NOT NULL,
+    created_at    TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_page_plans_task ON page_plans (task_id, id);
 """
 
 
@@ -285,11 +403,16 @@ def connect(db_path: str | Path) -> Iterator[sqlite3.Connection]:
         connection.close()
 
 
+def schema_sql() -> str:
+    """建表 SQL：把格式 CHECK 占位符替换成 `GENERATION_FORMATS` 派生的清单。"""
+    return SCHEMA.replace(_FORMAT_CHECK_PLACEHOLDER, _generations_format_check_sql())
+
+
 def init_db(db_path: str | Path) -> None:
     """幂等建表；父目录不存在时创建（data/ 运行时目录）。"""
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     with connect(db_path) as connection:
-        connection.executescript(SCHEMA)
+        connection.executescript(schema_sql())
         _migrate(connection)
         connection.commit()
 
@@ -301,6 +424,25 @@ MIGRATION_COLUMNS: dict[str, dict[str, str]] = {
     "tasks": {"deleted_at": "TEXT", "provider_id": "INTEGER"},
     # TB-8：文档补「解析器标识」（pypdf / python-pptx / python-docx / plain-text）。
     "documents": {"parser": "TEXT"},
+    # 工单 19：知识库资料的索引状态（来源表复用，靠 task_id 为空判定归属）。
+    "sources": {
+        "index_status": "TEXT NOT NULL DEFAULT 'stored'",
+        "index_message": "TEXT",
+        "indexed_at": "TEXT",
+    },
+    # 工单 10：成品来源（正文成品 / 大纲导出）。既有库补列时缺省 outline，
+    # 行为与补列前完全一致（既有成品本来就都是大纲导出）。
+    "generations": {
+        "source": "TEXT NOT NULL DEFAULT 'outline'",
+        # 工单 29：截图版 PPT 成品登记其来源页面规划。可空；NULL = 无规划的成品。
+        "page_plan_id": "INTEGER",
+    },
+    # 工单 13：填充中断标记。既有库里的历史填充记录都是「没请求过中断」，
+    # 补列缺省 0 与补列前语义一致。
+    "fill_tasks": {"cancel_requested": "INTEGER NOT NULL DEFAULT 0"},
+    # 工单 24：本章实际采用的引用片段。既有章节都是「填充阶段引入前」的，引用为空串
+    # 表示「没用过知识库资料」，与补列前语义一致。
+    "plan_sections": {"references_json": "TEXT NOT NULL DEFAULT ''"},
 }
 
 
@@ -314,3 +456,62 @@ def _migrate(connection: sqlite3.Connection) -> None:
         for name, column_type in columns.items():
             if name not in existing:
                 connection.execute(f"ALTER TABLE {table} ADD COLUMN {name} {column_type}")
+    _relax_generations_format_check(connection)
+
+
+def _relax_generations_format_check(connection: sqlite3.Connection) -> None:
+    """把既有库的 `generations.format` CHECK 放宽到 `GENERATION_FORMATS`。
+
+    `ALTER TABLE` 不能改约束，故按「新建 → COPY → 弃旧 → 改名」重建该表。旧库可能停在
+    任一历史代际（docx/html，或已含 pptx），这里统一以当前清单为准：
+    - 幂等：CHECK 已覆盖全部格式（所有格式名都出现在表定义里）则直接跳过；
+    - 保留旧表全部数据，并在重建时补上 `page_plan_id`（若旧库还没有）；
+    - 重建后补齐索引，与 SCHEMA 对齐。重复运行无副作用。
+    """
+    sql = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='generations'"
+    ).fetchone()
+    table_sql = (sql["sql"] or "") if sql is not None else None
+    if table_sql is None or all(name in table_sql for name in GENERATION_FORMATS):
+        return  # 新库或已放宽到当前代际，无需重建。
+
+    create = (
+        "CREATE TABLE generations_new ("
+        "id            INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "task_id       INTEGER NOT NULL,"
+        "plan_id       INTEGER NOT NULL,"
+        f"format        TEXT NOT NULL {_generations_format_check_sql()},"
+        "file_path     TEXT NOT NULL,"
+        "template_used TEXT NOT NULL,"
+        "page_plan_id  INTEGER,"
+        "source        TEXT NOT NULL DEFAULT 'outline'"
+        "               CHECK (source IN ('outline', 'body')),"
+        "created_at    TEXT NOT NULL"
+        ")"
+    )
+    # 旧库若已有 page_plan_id（工单 29 之后建的表），必须原样搬过去，不能写成 NULL
+    # ——那会把已登记的「来源页面规划」静默抹掉。旧库没有这列时才用 NULL 填充。
+    # 必须在 DROP 旧表**之前**读列清单。
+    existing_columns = {
+        row["name"] for row in connection.execute("PRAGMA table_info(generations)").fetchall()
+    }
+    page_plan_expr = "page_plan_id" if "page_plan_id" in existing_columns else "NULL"
+
+    connection.execute("DROP TABLE IF EXISTS generations_new")
+    connection.execute(create)
+    connection.execute(
+        f"""
+        INSERT INTO generations_new
+            (id, task_id, plan_id, format, file_path, template_used,
+             source, page_plan_id, created_at)
+        SELECT id, task_id, plan_id, format, file_path, template_used,
+               source, {page_plan_expr}, created_at
+        FROM generations
+        """
+    )
+    connection.execute("DROP TABLE generations")
+    connection.execute("ALTER TABLE generations_new RENAME TO generations")
+    # 重建后补齐既有库可能缺的索引（保留一致性，与 SCHEMA 对齐）。
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_generations_task ON generations (task_id, id)"
+    )

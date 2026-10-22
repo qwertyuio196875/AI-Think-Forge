@@ -1,7 +1,8 @@
 """资料分析管线：解析结果 → 分块 → 逐块分析 → 综合（map-reduce）。
 
-**命名纪律（ADR-0002）**：这是分析管线，不是 RAG。它只处理用户刚上传的单份资料，
-不建索引、不做跨文档检索、不填充嵌入表（`embeddings` 仅按 ADR-0002 预留）。
+**命名纪律（ADR-0005）**：这是分析管线，不是 RAG。它只处理用户刚上传的单份资料，
+不建索引、不做跨文档检索、不写嵌入（向量写入属知识库入库路径，见
+`app/api/routes/knowledge.py`；嵌入失败时本管线不受影响）。
 
 - 未识别内容命中即**短路**：没有文本块就不调用模型、不生成空总结；
 - 总结默认 ≤500 汉字；模型给长了就按句读收敛并记 `truncated`；
@@ -21,6 +22,7 @@ from app.analysis.prompts import (
     render_chunk_messages,
     render_summary_messages,
 )
+from app.hanzi import count_hanzi, is_hanzi
 from app.providers.model_client import complete_text
 from app.providers.tiered_client import (
     SUMMARY_PROVIDER_KIND,
@@ -141,22 +143,6 @@ def analyze_chunks(
         chunk_count=total,
         truncated=truncated,
         resolved=resolved,
-    )
-
-
-def count_hanzi(text: str) -> int:
-    """统计汉字数量（含扩展 A / 兼容区 / 扩展 B+；不含标点与西文）。"""
-    return sum(1 for character in text if is_hanzi(character))
-
-
-def is_hanzi(character: str) -> bool:
-    """单个字符是否为汉字。"""
-    codepoint = ord(character)
-    return (
-        0x3400 <= codepoint <= 0x4DBF
-        or 0x4E00 <= codepoint <= 0x9FFF
-        or 0xF900 <= codepoint <= 0xFAFF
-        or 0x20000 <= codepoint <= 0x2FA1F
     )
 
 

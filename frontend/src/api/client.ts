@@ -268,8 +268,45 @@ export function testProvider(id: number): Promise<ConnectionTestResult> {
    ============================================================ */
 
 /**
+ * 一条引用卡片（工单 23）：文件名 · 段落号 · 相关度，可折叠、默认采用。
+ *
+ * 与 backend/app/models/grilling.py::CitationCard 逐字段对齐。
+ * `adopted` 默认 true（规格：默认全选、逐条可取消）；`collapsible` 由后端给，
+ * 前端不自己判断「这条能不能折叠」——展示形态是后端契约的一部分。
+ */
+export interface CitationCard {
+  chunk_id: number
+  document_id: number
+  source_id: number
+  /** 文件名（展示用）。 */
+  name: string
+  /** 该资料内的分块序号。 */
+  seq: number
+  /** 相关度（0–1）。 */
+  similarity: number
+  /** 段落号；PDF / PPT 类资料可能为空（用页 / 幻灯片定位）。 */
+  paragraph: number | null
+  /** 可读定位标签，前端直接显示，不自己拼。 */
+  locator_label: string
+  /** 将注入的正文片段（折叠时隐藏）。 */
+  text: string
+  adopted: boolean
+  collapsible: boolean
+}
+
+/** 本次检索的状态（降级 / 未使用知识库时必须明示，不静默隐藏）。 */
+export interface RetrievalStatusInfo {
+  status: string
+  status_label: string
+  message: string | null
+  degraded: boolean
+  truncated: boolean
+}
+
+/**
  * 前沿中的一个问题：标题、正文、推荐答案，以及 TB-4 新增的
  * `why`（为什么现在问，缺失为 null）与 `alternatives`（备选方向，缺失为空列表）。
+ * 工单 23 追加 `citations`（引用卡片）与 `retrieval_status`（检索状态）。
  * 与 backend/app/models/grilling.py::FrontierQuestion 逐字段对齐。
  */
 export interface FrontierQuestion {
@@ -278,6 +315,10 @@ export interface FrontierQuestion {
   recommended_answer: string
   why: string | null
   alternatives: string[]
+  /** 引用卡片：决策型问题恒为空清单（判定过、不需要检索）。 */
+  citations: CitationCard[]
+  /** 检索状态：未检索 / 决策型时为 null。 */
+  retrieval_status: RetrievalStatusInfo | null
 }
 
 /**
@@ -341,15 +382,20 @@ export function startGrillingTask(
 /**
  * 提交某轮回答：POST /api/grilling/tasks/{id}/answers（数量须与前沿问题一致）。
  * answers 项为 null（或纯空白）= 该题「暂时跳过」，入待确认事项、保持未定。返回写后对话状态。
+ *
+ * `rejectedChunkIds`（工单 23）：本次**取消采用**的引用片段。引用卡片默认全选、
+ * 逐条可取消；取消过的片段必须带上来，后端会确保它们不进本次提示词——
+ * 否则「界面上取消了、实际仍喂给了模型」，用户看到的与发生的就成了两回事。
  */
 export function submitAnswers(
   taskId: number,
   roundNo: number,
-  answers: Array<string | null>
+  answers: Array<string | null>,
+  rejectedChunkIds: number[] = []
 ): Promise<Dialogue> {
   return request<Dialogue>(`/grilling/tasks/${taskId}/answers`, {
     method: 'POST',
-    body: JSON.stringify({ round_no: roundNo, answers })
+    body: JSON.stringify({ round_no: roundNo, answers, rejected_chunk_ids: rejectedChunkIds })
   })
 }
 
@@ -425,8 +471,11 @@ export function generateDeliverable(
    术语：成品 / 单文件 HTML / 模板 / 默认模板 / 临时覆盖（临时选择不改变全局默认）。
    ============================================================ */
 
-/** 成品格式（ADR-0003 双轨：Word 与单文件 HTML；pptx 不在枚举 = v1.1 计划）。 */
-export type GenerationFormat = 'docx' | 'html'
+/**
+ * 成品格式（工单 29/30/31：Word / 单文件 HTML / 截图版 PPT / 可选 PDF）。
+ * 后三者同源（ADR-0004）：HTML 与截图版 PPT、PDF 都由同一份 deck 导出；Word 走模板。
+ */
+export type GenerationFormat = 'docx' | 'html' | 'pptx' | 'pdf'
 
 /** 生成记录（GET 列表项的字段集）。 */
 export interface Generation {
@@ -495,6 +544,76 @@ export interface TemplateRegisterResponse {
 /** 某任务的成品记录列表：GET /api/tasks/{id}/generations。 */
 export function listGenerations(taskId: number): Promise<GenerationListResponse> {
   return request<GenerationListResponse>(`/tasks/${taskId}/generations`)
+}
+
+/* ============================================================
+   页面规划（工单 25/26）：做 PPT 前定页数、预览归属、增删单页
+   权威来源：backend/app/models/page_plan.py、routes/pageplans.py
+   ============================================================ */
+
+/** 规划里的一页。 */
+export interface PlannedPage {
+  index: number
+  kind: 'cover' | 'content' | 'end'
+  title: string
+  chapter_seqs: number[]
+}
+
+/** 一次页面规划的结果（POST 创建 / GET 读取 / 增删页都返回它）。 */
+export interface PagePlanResponse {
+  page_plan_id: number
+  task_id: number
+  plan_id: number
+  target_pages: number
+  actual_pages: number
+  pages: PlannedPage[]
+}
+
+/** 生成页面规划：POST /api/tasks/{id}/page-plans（页数 3–60，区间外 422）。 */
+export function createPagePlan(taskId: number, targetPages: number): Promise<PagePlanResponse> {
+  return request<PagePlanResponse>(`/tasks/${taskId}/page-plans`, {
+    method: 'POST',
+    body: JSON.stringify({ target_pages: targetPages })
+  })
+}
+
+/** 读取某次规划：GET /api/tasks/{id}/page-plans/{planId}。 */
+export function getPagePlan(taskId: number, planId: number): Promise<PagePlanResponse> {
+  return request<PagePlanResponse>(`/tasks/${taskId}/page-plans/${planId}`)
+}
+
+/** 读取最近一次规划：GET /api/tasks/{id}/page-plans/latest（没有则 404）。 */
+export function getLatestPagePlan(taskId: number): Promise<PagePlanResponse> {
+  return request<PagePlanResponse>(`/tasks/${taskId}/page-plans/latest`)
+}
+
+/**
+ * 在规划里加一页：POST /api/tasks/{id}/page-plans/{planId}/pages。
+ *
+ * `afterIndex` 是**1 起的真实页码（含封面）**，表示「在这一页之后插入」——后端按
+ * 封面前/后与正文页复制拆分处理。返回**另存的新规划**（旧规划不动）。
+ */
+export function addPlanPage(
+  taskId: number,
+  planId: number,
+  afterIndex: number
+): Promise<PagePlanResponse> {
+  return request<PagePlanResponse>(`/tasks/${taskId}/page-plans/${planId}/pages`, {
+    method: 'POST',
+    body: JSON.stringify({ after_index: afterIndex })
+  })
+}
+
+/** 删一页：DELETE /api/tasks/{id}/page-plans/{planId}/pages/{atIndex}（另存新规划）。 */
+export function deletePlanPage(
+  taskId: number,
+  planId: number,
+  atIndex: number
+): Promise<PagePlanResponse> {
+  return request<PagePlanResponse>(
+    `/tasks/${taskId}/page-plans/${planId}/pages/${atIndex}`,
+    { method: 'DELETE' }
+  )
 }
 
 /** 模板清单：GET /api/templates（以模板目录实际情况为准）。 */
@@ -732,6 +851,192 @@ export function resolveOpenItem(
   return request<OpenItem>(`/grilling/tasks/${taskId}/open-items/${itemId}/resolve`, {
     method: 'POST',
     body: JSON.stringify({ status })
+  })
+}
+
+/* ============================================================
+   成品章节清单（只读）—— 工单 7 / 8 / ADR-0006
+   权威来源：backend/app/models/plan_section.py、routes/sections.py
+   ============================================================ */
+
+/**
+ * 成品章节状态：待写 / 已完成 / 失败。
+ *
+ * 三态必须分开（ADR-0006）：把「没写」和「写挂了」并成一态，界面就没法说清
+ * 到底哪一章需要重写。保留 string 兜底以防后端后续扩展。
+ */
+export type PlanSectionStatus = 'pending' | 'completed' | 'failed' | (string & {})
+
+/**
+ * 成品目录里的一章。
+ *
+ * **不含已写正文**：清单只回答「目录长什么样、写到哪一步」，正文由填充模块
+ * 写库、由成品文件呈现。字段与后端 `PlanSectionItem` 逐一对应：
+ * - `target_length` 是方案给的**建议字数**，旧格式方案可能为 null（前端说「字数未定」）；
+ * - `hanzi_count` 是**已写汉字数**，由后端唯一入口 `app.hanzi.count_hanzi` 现算，前端不另算；
+ * - `status_label` 是后端给的中文标签，前端优先用它，避免两边各翻一套。
+ */
+export interface PlanSectionItem {
+  seq: number
+  title: string
+  key_points: string
+  target_length: number | null
+  hanzi_count: number
+  status: PlanSectionStatus
+  status_label: string
+  completed_at: string | null
+}
+
+/**
+ * 某任务的成品章节清单（只读）。
+ *
+ * `plan_id` 标出这份清单属于哪一版方案：方案修订会换一版，前端据此判断清单是否过期。
+ * 方案没有可切分章节时是**空清单而不是错误**（`items: []`、`total: 0`）。
+ */
+export interface PlanSectionListResponse {
+  plan_id: number
+  items: PlanSectionItem[]
+  total: number
+}
+
+/**
+ * 成品章节清单：GET /api/tasks/{id}/sections（只读）。
+ *
+ * 刻意**只有这一个**章节接口——改名、拖拽排序、增删章节一律不做（ADR-0006：
+ * 那等于把「方案直接编辑」提前，超出范围）。要改章节就回去对话修订方案。
+ */
+export function listPlanSections(taskId: number): Promise<PlanSectionListResponse> {
+  return request<PlanSectionListResponse>(`/tasks/${taskId}/sections`)
+}
+
+/**
+ * 单章填充的响应（工单 10 / 24）：刚写好的那章（章节项）与随即拼装出的正文成品。
+ *
+ * 与后端 `SectionWriteResponse` 逐字段对齐：`section` 是章节项（含字数 / 状态），
+ * `deliverable` 是成品记录（`source` 标正文成品，文件名可下载）。单章端点成功即返回
+ * 一个真实成品，`deliverable` 恒非空（被中断为 None 的那条属于全篇串行的回调，不在此处）。
+ */
+export interface SectionWriteResponse {
+  task_id: number
+  fill_id: number
+  section: PlanSectionItem
+  deliverable: GenerationResponse
+}
+
+/* ============================================================
+   填充：目标字数分摊（工单 15）—— ADR-0006
+   权威来源：backend/app/models/fill.py、routes/fill.py、fill/budget.py
+   ============================================================ */
+
+/**
+ * 分摊预览里的一章。
+ *
+ * 只有「分到多少字」，不含正文与状态：预览发生在**尚未开始填充**时，
+ * 那时还没有正文可谈。
+ */
+export interface FillAllocationItem {
+  seq: number
+  title: string
+  target_length: number
+}
+
+/**
+ * 目标字数的分摊预览（**只算不写**）。
+ *
+ * 与 `startFill` 的区别至关重要：预览不改章节表、不建填充任务。用户在参数弹窗里
+ * 来回试字数时，系统不该因此留下一串填充记录。
+ */
+export interface FillAllocationResponse {
+  plan_id: number
+  target_length: number
+  items: FillAllocationItem[]
+  total: number
+}
+
+/** 开始填充的请求体（与后端 `FillRequest` 对应，`extra="forbid"`）。 */
+export interface FillRequest {
+  /** 目标字数（按汉字计）；省略时后端按方案各章建议字数求和。 */
+  target_length?: number
+  /** 逐章改过的字数（序号 → 字数）；只含改动的章。 */
+  section_lengths?: Record<number, number>
+}
+
+/**
+ * 试算字数分摊：POST /api/tasks/{id}/fill/allocation（只算不写）。
+ *
+ * 分摊规则只在后端实现一份（`app.fill.budget`），前端绝不自己摊一遍——
+ * 两套实现一旦漂移，用户看到的预览与实际写出的正文就是两回事。
+ *
+ * 拒绝口径与 `startFill` 一致：无方案 / 未确认 → 409，无可切分章节 → 422，
+ * 字数超 300–20000 或分摊不成立 → 422（detail 说明原因，不静默夹到边界值）。
+ */
+export function previewFillAllocation(
+  taskId: number,
+  payload: FillRequest = {}
+): Promise<FillAllocationResponse> {
+  return request<FillAllocationResponse>(`/tasks/${taskId}/fill/allocation`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  })
+}
+
+/* ============================================================
+   填充·单章引用与正文（工单 24）
+   权威来源：backend/app/models/fill.py、routes/fill.py
+   ============================================================ */
+
+/**
+ * 一章可用引用片段的预览（工单 24）：**只读不改库**。
+ *
+ * 用户在写这一章之前先看到将注入哪些资料片段（默认全选、可逐条取消），再决定
+ * 要不要真的用它们。`cards` 复用检索的 `CitationCard` 形状；`retrieval_status`
+ * 复用 `RetrievalStatusInfo`——界面据此明示「降级 / 本次未使用知识库」。
+ */
+export interface SectionReferencesResponse {
+  task_id: number
+  seq: number
+  /** 引用卡片（默认全选，可逐条取消）。 */
+  cards: CitationCard[]
+  retrieval_status: RetrievalStatusInfo | null
+}
+
+/** 单章填充的请求体（与后端 `SectionFillRequest` 对应，`extra="forbid"`）。 */
+export interface SectionFillRequest {
+  /**
+   * 用户在该章**保留**的引用片段（从引用预览里勾选后带回）。
+   * 省略表示本章不使用知识库。后端只把 `adopted=true` 的注入正文。
+   */
+  reference_cards?: CitationCard[]
+}
+
+/**
+ * 给一章算一份可用引用片段预览：POST /api/tasks/{id}/sections/{seq}/references。
+ *
+ * 只读不改库——反复预览不会留下填充记录，也不会触发写正文。
+ */
+export function previewSectionReferences(
+  taskId: number,
+  seq: number
+): Promise<SectionReferencesResponse> {
+  return request<SectionReferencesResponse>(`/tasks/${taskId}/sections/${seq}/references`, {
+    method: 'POST'
+  })
+}
+
+/**
+ * 写一章正文并随即拼装成品：POST /api/tasks/{id}/sections/{seq}/fill。
+ *
+ * `payload.reference_cards` 只在带引用片段时传：后端把保留的片段注入提示词、并在
+ * 正文写成功后落库。返回 `SectionWriteResponse`（内含章节项与成品记录）。
+ */
+export function fillSection(
+  taskId: number,
+  seq: number,
+  payload: SectionFillRequest = {}
+): Promise<SectionWriteResponse> {
+  return request<SectionWriteResponse>(`/tasks/${taskId}/sections/${seq}/fill`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
   })
 }
 
@@ -1113,6 +1418,150 @@ export function sendToCreation(
   })
 }
 
+/* ============================================================
+   知识库（工单 19 / ADR-0005）—— 上传即入库、清单、删除、重建索引
+   权威来源：backend/app/models/knowledge.py、routes/knowledge.py。
+   术语：知识库 / 索引状态（已入库 / 索引中 / 索引失败）。
+   归属约定：知识库资料复用资料分析的来源 / 文档 / 分块三表，以「不隶属任何任务」
+   （task_id IS NULL）表示；因此这里没有 task_id 字段，也不会出现在资料分析清单里。
+   嵌入与检索属工单 20 / 21：本层只读状态，状态本身已经能表达「索引中」。
+   ============================================================ */
+
+/**
+ * 知识库资料（清单条目）。
+ * - index_status：`stored` 已入库 / `indexing` 索引中 / `failed` 索引失败；
+ * - index_message：失败原因（解析失败、未识别到文本、重建索引失败等），成功时为 null；
+ * - chunk_count 为真实落库分块数，0 表示没有切出可用内容（配合状态一起看）。
+ */
+export interface KnowledgeSourceItem {
+  source_id: number
+  name: string
+  kind: string
+  ref: string
+  size: number | null
+  document_id: number | null
+  parse_status: string | null
+  parse_message: string | null
+  chunk_count: number
+  index_status: string
+  index_status_label: string
+  index_message: string | null
+  indexed_at: string | null
+  created_at: string
+}
+
+/** GET /api/knowledge/sources 返回体（按 id 倒序）。 */
+export interface KnowledgeSourceListResponse {
+  items: KnowledgeSourceItem[]
+  total: number
+  limit: number
+  offset: number
+}
+
+/** 上传结果：失败（解析不出内容）同样是 201，item.index_status 为 failed。 */
+export interface KnowledgeUploadResponse {
+  item: KnowledgeSourceItem
+  message: string | null
+}
+
+/** 删除结果：连带清掉的分块数，供界面回显真实影响。 */
+export interface KnowledgeDeleteResponse {
+  source_id: number
+  deleted_chunk_count: number
+}
+
+/** 重建索引的单条结果（逐条回报，单份失败不影响其他资料）。 */
+export interface KnowledgeReindexItem {
+  source_id: number
+  index_status: string
+  index_status_label: string
+  message: string | null
+}
+
+/** POST /api/knowledge/reindex 返回体。 */
+export interface KnowledgeReindexResponse {
+  items: KnowledgeReindexItem[]
+  total: number
+}
+
+/**
+ * 上传资料入知识库（multipart 字段 file）：走 XHR 以便回报真实上传进度。
+ * 支持 TXT / MD / DOCX / PDF / PPTX（与资料分析同一白名单 + 50MB 上限）。
+ * 失败语义与 request() 一致：网络失败 → BackendUnavailableError；非 2xx → ApiHttpError。
+ */
+export function uploadKnowledgeSource(
+  file: File,
+  onProgress?: (percent: number) => void
+): Promise<KnowledgeUploadResponse> {
+  return new Promise((resolve, reject) => {
+    const body = new FormData()
+    body.append('file', file, file.name)
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', `${API_BASE_URL}/knowledge/sources`)
+    xhr.responseType = 'text'
+    xhr.upload.onprogress = (event) => {
+      if (onProgress && event.lengthComputable) {
+        onProgress(Math.min(100, Math.round((event.loaded / event.total) * 100)))
+      }
+    }
+    xhr.onerror = () => reject(new BackendUnavailableError())
+    xhr.ontimeout = () => reject(new Error('上传超时，请检查后端是否在运行后重试'))
+    xhr.onload = () => {
+      let payload: unknown = null
+      try {
+        payload = JSON.parse(xhr.responseText)
+      } catch {
+        /* 非 JSON 响应体，保持 null */
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(payload as KnowledgeUploadResponse)
+        return
+      }
+      const detail =
+        payload &&
+        typeof payload === 'object' &&
+        'detail' in payload &&
+        typeof (payload as { detail?: unknown }).detail === 'string'
+          ? (payload as { detail: string }).detail
+          : ''
+      reject(new ApiHttpError(xhr.status, xhr.statusText || '', detail))
+    }
+    xhr.send(body)
+  })
+}
+
+/** 知识库清单：GET /api/knowledge/sources?limit=&offset=（按 id 倒序）。 */
+export function listKnowledgeSources(params: {
+  limit?: number
+  offset?: number
+} = {}): Promise<KnowledgeSourceListResponse> {
+  const query = new URLSearchParams()
+  if (params.limit != null) query.set('limit', String(params.limit))
+  if (params.offset != null) query.set('offset', String(params.offset))
+  const qs = query.toString()
+  return request<KnowledgeSourceListResponse>(
+    qs ? `/knowledge/sources?${qs}` : '/knowledge/sources'
+  )
+}
+
+/** 删除知识库资料：DELETE /api/knowledge/sources/{id}（连带清掉文档、分块与嵌入）。 */
+export function deleteKnowledgeSource(sourceId: number): Promise<KnowledgeDeleteResponse> {
+  return request<KnowledgeDeleteResponse>(`/knowledge/sources/${sourceId}`, {
+    method: 'DELETE'
+  })
+}
+
+/**
+ * 重建索引：POST /api/knowledge/reindex（不传 source_id 表示全部资料）。
+ * 逐条回报状态；单份失败不影响其他资料。
+ */
+export function reindexKnowledge(sourceId?: number): Promise<KnowledgeReindexResponse> {
+  return request<KnowledgeReindexResponse>('/knowledge/reindex', {
+    method: 'POST',
+    body: JSON.stringify(sourceId != null ? { source_id: sourceId } : {})
+  })
+}
+
 export default {
   API_BASE_URL,
   checkHealth,
@@ -1135,6 +1584,11 @@ export default {
   confirmPlan,
   generateDeliverable,
   listGenerations,
+  createPagePlan,
+  getPagePlan,
+  getLatestPagePlan,
+  addPlanPage,
+  deletePlanPage,
   getTemplates,
   registerTemplate,
   setDefaultTemplate,
@@ -1148,6 +1602,10 @@ export default {
   listRevisions,
   listOpenItems,
   resolveOpenItem,
+  listPlanSections,
+  previewFillAllocation,
+  previewSectionReferences,
+  fillSection,
   listHistory,
   getHistoryDetail,
   getDeletionImpact,
@@ -1161,5 +1619,9 @@ export default {
   getAnalysisSummary,
   createSummaryWord,
   summaryWordDownloadUrl,
-  sendToCreation
+  sendToCreation,
+  uploadKnowledgeSource,
+  listKnowledgeSources,
+  deleteKnowledgeSource,
+  reindexKnowledge
 }

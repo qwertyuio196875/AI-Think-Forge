@@ -11,6 +11,10 @@ TB-3 扩展（工单 12）：
 
 状态存储纪律：轮次与消息的持久化只走规格 §4 的 SQLite `messages` 表，
 `rounds` / `determined` 都是请求内由消息复原的临时值，**不引入第二套隐藏状态存储**。
+
+工单 23 扩展（ADR-0005）：前沿问题生成后先判定「哪些需要外部依据」，只对事实型问题
+检索知识库，并把引用挂到问题上。判定规则在 `fact_check_v1.md` 资产里，不在代码里。
+检索不可用不阻断拷问——`retrieval_status` 会明示「本次未使用知识库」。
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ from app.db.message_repository import MessageRepository
 from app.grilling.frontier import parse_frontier
 from app.grilling.open_items import is_skip_answer
 from app.grilling.prompts import render_frontier_messages
+from app.grilling.retrieval import attach_citations, judge_questions
 from app.providers.model_client import ModelClient, complete_text
 
 
@@ -39,8 +44,27 @@ class GrillingState(TypedDict, total=False):
     determined: list[str]
     # 未定的待确认事项条目（跳过的问题），单列并不参与「已定」判定。
     open_items: list[str]
+    # 本轮已采用的知识库引用（工单 23）：上一轮用户勾选保留的片段。
+    citations: list[dict]
     frontier: list[dict]
     frontier_empty: bool
+
+
+def knowledge_base_has_sources(retrieval) -> bool:
+    """知识库里是否有已入库的资料（没有就完全跳过判定与检索）。
+
+    为什么这条短路放在这里而不是让检索层「查了但没有结果」：判定本身要花一次模型
+    调用。知识库空着的时候，这次调用必然得出「没资料」，是纯粹的浪费；而且它会让
+    「没有知识库」这个正常状态在调用序列上留下痕迹，干扰所有不关心检索的路径。
+    """
+    store = getattr(retrieval, "_store", None)
+    counter = getattr(store, "stored_source_count", None)
+    if not callable(counter):
+        return False
+    try:
+        return int(counter()) > 0
+    except Exception:  # noqa: BLE001 - 计数失败按「没有资料」处理，不阻断拷问
+        return False
 
 
 def _normalize_rounds(rounds: list[dict]) -> list[dict]:
@@ -75,8 +99,14 @@ def build_grilling_graph(
     message_repository: MessageRepository,
     *,
     model_name: str | None = None,
+    retrieval=None,
 ):
-    """构建并编译拷问最小节点图（依赖以闭包注入，路由按请求构造）。"""
+    """构建并编译拷问最小节点图（依赖以闭包注入，路由按请求构造）。
+
+    `retrieval` 是 `RetrievalService`（工单 23）；为 None 时不检索——引用卡片为空，
+    拷问照常推进。测试与「知识库还没建」的场景都走这条路径，因此它不是特例分支，
+    而是「没有知识库也能用」的正常形态。
+    """
 
     def analyze_input(state: GrillingState) -> GrillingState:
         """分析输入：归一已知信息，把历轮问答解析为已确定决策，并保留未定项。"""
@@ -89,17 +119,33 @@ def build_grilling_graph(
         }
 
     def generate_frontier(state: GrillingState) -> GrillingState:
-        """生成前沿问题：把已知信息 + 已确定决策 + 未定 + 历轮问答喂进提示词重算。"""
+        """生成前沿问题：把已知信息 + 已确定决策 + 未定 + 历轮问答喂进提示词重算。
+
+        生成后立刻判断「哪些问题需要外部依据」，只对事实型问题检索（工单 23）。
+        判定与检索都在这里做，因为它们是「出题」的一部分：出题时就该带上依据，
+        等用户作答后再补资料已经晚了。
+
+        **知识库为空时整段跳过**：既没有资料可检索，判定就没有意义，多调一次模型
+        只是白花额度。这条短路不是性能优化而是语义正确——没有知识库时不该表现出
+        任何检索迹象（引用卡片为空，也不该有「未使用知识库」的提示去打扰用户）。
+        """
         messages = render_frontier_messages(
             state["known_input"],
             state.get("rounds", []),
             state.get("determined", []),
             state.get("open_items", []),
+            state.get("citations", []),
         )
         raw = complete_text(model_client, messages, model=model_name)
         questions = parse_frontier(raw)
+        payloads = [question.model_dump() for question in questions]
+
+        if payloads and retrieval is not None and knowledge_base_has_sources(retrieval):
+            checks = judge_questions(payloads, model_client=model_client, model_name=model_name)
+            payloads = attach_citations(payloads, checks, retrieval=retrieval)
+
         return {
-            "frontier": [question.model_dump() for question in questions],
+            "frontier": payloads,
             "frontier_empty": not questions,
         }
 

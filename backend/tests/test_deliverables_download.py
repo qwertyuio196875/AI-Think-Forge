@@ -36,6 +36,9 @@ DOCX_MEDIA_TYPE = (
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 )
 HTML_MEDIA_TYPE = "text/html; charset=utf-8"
+PPTX_MEDIA_TYPE = (
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+)
 
 
 def _frontier_json(*triples: tuple[str, str, str]) -> str:
@@ -125,6 +128,33 @@ def test_html_deliverable_is_downloaded_as_renderable_inline_page(
     # 产物是自包含单文件（样式 / 脚本全内联）：不得用 CSP 阻断它自己的内联资源，
     # 否则应用内预览会变成一张白页。
     assert "content-security-policy" not in response.headers
+
+
+def test_pptx_deliverable_is_downloaded_with_attachment_disposition(
+    grilling_client: TestClient,
+    db_path: Path,
+    data_dir: Path,
+) -> None:
+    """截图版 PPT 成品：白名单放了 `.pptx`，`attachment` 下载、Content-Type 正确、字节一致。
+
+    负测把 `.pptx` 挡在白名单之外会直接破坏前端「生成截图版 PPT 后能下载」的验收
+    （工单 30 / ADR-0004），因此这里必须给 `.pptx` 一个正向投递断言。
+    """
+    artifact = Path(data_dir) / "deliverables" / "demo.pptx"
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_bytes(b"PK\x03\x04 fake pptx bytes")
+
+    record = _generation_record(
+        db_path, file_path=str(artifact), format="pptx"
+    )
+    response = grilling_client.get(f"/api/deliverables/{record['id']}")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == PPTX_MEDIA_TYPE
+    assert response.content == artifact.read_bytes()
+    disposition = response.headers["content-disposition"]
+    assert disposition.startswith("attachment;")
+    assert f'filename="{artifact.name}"' in disposition
 
 
 def test_chinese_filename_is_encoded_in_content_disposition(

@@ -68,6 +68,10 @@
           <el-icon><Document /></el-icon>
           <template #title>资料分析<span v-if="counts.analysis" class="nav-count">{{ counts.analysis }}</span></template>
         </el-menu-item>
+        <el-menu-item index="/knowledge">
+          <el-icon><Collection /></el-icon>
+          <template #title>知识库</template>
+        </el-menu-item>
         <el-menu-item index="/history">
           <el-icon><Clock /></el-icon>
           <template #title>任务历史</template>
@@ -141,14 +145,14 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Clock, Document, EditPen, Lock, Setting } from '@element-plus/icons-vue'
+import { Clock, Collection, Document, EditPen, Lock, Setting } from '@element-plus/icons-vue'
 import { checkHealth, listHistory, type HistoryCounts, type HistoryItem } from '../api/client'
 import { statusFromTask } from '../utils/resumeMeta'
 
 const route = useRoute()
 const router = useRouter()
 
-// 侧栏高亮跟随当前路由（/creation、/analysis、/history、/settings）。
+// 侧栏高亮跟随当前路由（/creation、/analysis、/knowledge、/history、/settings）。
 const activeRoute = computed(() => route.path)
 
 // A1/A2：折叠态。全站仅此处一份状态，驱动 .side-head 折叠控件与品牌标记同步。

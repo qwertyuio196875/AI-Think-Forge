@@ -221,8 +221,35 @@ def build_html_deck(
     theme: DeckTheme,
     output_path: str | Path,
 ) -> DeckBuild:
-    """把已确认的方案渲染成单文件 `.html`（原子落盘；检查由 `verify_html_deliverable` 做）。"""
+    """把已确认的方案渲染成单文件 `.html`（原子落盘；检查由 `verify_html_deliverable` 做）。
+
+    页数由 `slides_from_plan` 按 H1/H2 自动切页（**兜底路径**）。当有页面规划时应改用
+    `build_html_deck_from_slides`（工单 27 / ADR-0004 主体路径），本函数保留给规划缺失时。
+    """
     slides = slides_from_plan(plan_md, task_title)
+    return build_html_deck_from_slides(
+        slides=slides,
+        task_title=task_title,
+        plan_md=plan_md,
+        theme=theme,
+        output_path=output_path,
+    )
+
+
+def build_html_deck_from_slides(
+    *,
+    slides: tuple[DeckSlide, ...],
+    task_title: str,
+    plan_md: str,
+    theme: DeckTheme,
+    output_path: str | Path,
+) -> DeckBuild:
+    """把**已排好的幻灯片**渲染成单文件 `.html`（原子落盘）。
+
+    这是工单 27 / ADR-0004 的主体路径：页数与版式由页面规划决定（`slides_for_page_plan`），
+    而不是按 H1/H2 自动切页。其余纪律与 `build_html_deck` 相同——确定性渲染、自包含、
+    外部引用由 `verify_html_deliverable` 单独检查。
+    """
     provenance = _provenance(task_title, plan_md, theme)
     html = _render(slides, theme, provenance)
 
@@ -238,7 +265,8 @@ def build_html_deck(
         path=output,
         theme=theme,
         task_title=task_title,
-        plan_title=slides[0].title,
+        # 统一以幻灯片首张标题作为计划标题（无论是否来自规划）。
+        plan_title=slides[0].title if slides else task_title,
         slides=slides,
         external_resources=references,
         provenance=provenance,

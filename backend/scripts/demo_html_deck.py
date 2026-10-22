@@ -60,7 +60,14 @@ class _ScriptedModelClient:
         self._results = list(results)
         self._index = 0
 
-    def complete(self, messages: list[dict], *, model: str | None = None) -> str:
+    def complete(
+        self,
+        messages: list[dict],
+        *,
+        model: str | None = None,
+        max_tokens: int | None = None,
+        timeout: float | None = None,
+    ) -> str:
         index = min(self._index, len(self._results) - 1)
         self._index += 1
         return self._results[index]

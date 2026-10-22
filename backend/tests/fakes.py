@@ -4,17 +4,33 @@
 - `InMemoryKeyStore` 保证测试永不触碰 Windows 凭据管理器；
 - `ScriptedModelClient(Factory)` 让连接测试在不联网、零花费的前提下覆盖
   成功与三类失败路径（网络异常 / 鉴权失败 / 模型名无效）；
-- `FakeUrlFetcher`（fake 注入点 2）返回预置网页或预置失败，**绝不发起真实请求**。
+- `FakeUrlFetcher`（fake 注入点 2）返回预置网页或预置失败，**绝不发起真实请求**；
+- `FakeEmbeddingClient`（fake 注入点 3，工单 20）返回确定性假向量：同一文本
+  永远得到同一向量，**绝不真调百炼**；也能预置嵌入失败或维度不一致。
 """
 
 from __future__ import annotations
 
+import hashlib
+import math
+from collections.abc import Sequence
+
+from app.providers.embedding_client import VECTOR_FORMAT_VERSION
 from app.providers.model_client import ModelClientConfig
 from app.providers.url_fetcher import (
     DEFAULT_MAX_BYTES,
     DEFAULT_TIMEOUT_SECONDS,
     FetchedPage,
 )
+
+# 摘要调用的识别标记：摘要提示词带这一节，正文提示词不带（只有「本章要点」）。
+# 替身靠它把「摘要失败」与「正文失败」分开——两者共用同一个客户端。
+_SUMMARY_MARKER = "## 本章正文（已写完）"
+
+
+def _is_summary_call(messages: list[dict]) -> bool:
+    """这次调用是不是摘要调用（工单 12）。"""
+    return any(_SUMMARY_MARKER in str(message.get("content", "")) for message in messages)
 
 
 class InMemoryKeyStore:
@@ -42,6 +58,10 @@ class ScriptedModelClient:
     支持两种脚本方式（TB-3 多轮推进需要「本轮前沿 / 收敛 / 方案」三次不同应答）：
     - `set_result`：之后每次调用返回同一条应答；
     - `set_sequence`：按调用顺序逐条返回，超出后重复最后一条。
+
+    另有一个「写到第几章才失败」的失败点（`fail_after`）：逐章写作需要表达
+    「第一章写成了、第二章挂了」这种中途失败，`set_error` 是「从现在起全挂」，
+    表达不了。
     """
 
     def __init__(self, *, result: str = "ok", error: BaseException | None = None) -> None:
@@ -49,11 +69,31 @@ class ScriptedModelClient:
         self._error = error
         self._sequence: list[str] = []
         self._sequence_index = 0
+        self._fail_after = 0
+        self._summary_error: BaseException | None = None
         self.calls: list[dict] = []
 
-    def complete(self, messages: list[dict], *, model: str | None = None) -> str:
-        self.calls.append({"messages": messages, "model": model})
-        if self._error is not None:
+    def complete(
+        self,
+        messages: list[dict],
+        *,
+        model: str | None = None,
+        max_tokens: int | None = None,
+        timeout: float | None = None,
+    ) -> str:
+        self.calls.append(
+            {
+                "messages": messages,
+                "model": model,
+                "max_tokens": max_tokens,
+                "timeout": timeout,
+            }
+        )
+        # 摘要调用的专用失败（工单 12）：只打摘要，正文照常。
+        if self._summary_error is not None and _is_summary_call(messages):
+            raise self._summary_error
+        if self._error is not None and self._sequence_index >= self._fail_after:
+            self._sequence_index += 1
             raise self._error
         if self._sequence:
             index = min(self._sequence_index, len(self._sequence) - 1)
@@ -72,10 +112,30 @@ class ScriptedModelClient:
         self._sequence = list(results)
         self._sequence_index = 0
         self._error = None
+        self._fail_after = 0
 
     def set_error(self, error: BaseException | None) -> None:
         """让后续调用抛出指定异常（测试模型失败路径）。"""
         self._error = error
+        self._fail_after = 0
+
+    def fail_after(self, successes: int, error: BaseException) -> None:
+        """前 `successes` 次调用正常应答，之后每次都抛错。
+
+        用于表达「写到第 N 章才失败」：成功次数要连同拷问阶段的几次调用一起数，
+        所以调用方用 `len(client.calls)` 之类的已知偏移量来定这个数。
+        """
+        self._error = error
+        self._fail_after = successes
+
+    def fail_summary_calls(self, error: BaseException) -> None:
+        """只让**摘要**调用抛错，正文调用照常应答（工单 12 的降级验收）。
+
+        摘要与正文共用同一个客户端，靠提示词里的固定小节标题区分：摘要提示词含
+        「## 本章正文（已写完）」，正文提示词含「## 本章要点」。用调用序号区分不行——
+        正文与摘要交错发生，序号会随章节数变化。
+        """
+        self._summary_error = error
 
 
 class ScriptedModelClientFactory:
@@ -94,6 +154,83 @@ class ScriptedModelClientFactory:
         self.configs.append(config)
         self.create_count += 1
         return self._client
+
+
+class FakeEmbeddingClient:
+    """嵌入客户端替身（fake 注入点 3，工单 20）：确定性假向量，全程不联网。
+
+    同一文本永远得到同一向量（用 `sha256(模型名 + 文本)` 展开成固定维度的
+    浮点数组），因此「换模型后重建索引，向量确实变了」「同一段文字两次入库
+    得到同一向量」都能被断言。另可预置三类失败，覆盖降级路径：
+    - `set_error`：调用直接抛错（模拟未配置 / 服务不可用）；
+    - `set_ragged`：返回一条少一维的向量（模拟模型维度不一致）；
+    - `set_model`：换模型名与维度（模拟用户切换嵌入模型）。
+
+    **按字符袋散列，不按整段散列**：整段散列会让「查询与分块内容相近」的
+    余弦接近 0，检索阈值断言就变成靠运气。字符袋散列让共享字符越多、余弦
+    越接近 1，于是「相关文本能命中、无关文本被阈值挡掉」可被稳定断言。
+    """
+
+    def __init__(
+        self,
+        *,
+        dimensions: int = 8,
+        model_name: str = "fake-embedding",
+        error: BaseException | None = None,
+    ) -> None:
+        self.dimensions = dimensions
+        self.model_name = model_name
+        self.version = VECTOR_FORMAT_VERSION
+        self._error = error
+        self._ragged = False
+        self.calls: list[list[str]] = []
+
+    def embed(
+        self, texts: Sequence[str], *, timeout: float | None = None
+    ) -> list[list[float]]:
+        self.calls.append(list(texts))
+        if self._error is not None:
+            raise self._error
+        vectors = [self._vector(text) for text in texts]
+        if self._ragged and vectors:
+            vectors[-1] = vectors[-1][:-1]
+        return vectors
+
+    def _vector(self, text: str) -> list[float]:
+        """把文本散列成 `dimensions` 个 `[-1, 1]` 浮点（同一文本恒定不变）。
+
+        用**字符袋**（每个字符各贡献一维）而非整段散列：这样「查询与分块
+        共享的字符越多，余弦越接近 1」，与真实嵌入模型的语义相似行为一致；
+        整段散列会得到互不相关的伪随机向量，阈值断言将完全靠运气。
+        """
+        vector = [0.0] * self.dimensions
+        for character in text:
+            slot = hashlib.sha256(
+                f"{self.model_name}:{character}".encode()
+            ).digest()
+            index = int.from_bytes(slot[:2], "big") % self.dimensions
+            vector[index] += 1.0
+        norm = math.sqrt(sum(value * value for value in vector))
+        if norm == 0.0:
+            # 空文本（或全部字符都撞到同一维）：给一个固定的非零向量，
+            # 否则余弦无定义，检索层会把它当成不相关。
+            vector[0] = 1.0
+            return vector
+        return [value / norm for value in vector]
+
+    def set_error(self, error: BaseException | None) -> None:
+        """预置嵌入失败（未配置 / 网络 / 服务端错误）。"""
+        self._error = error
+
+    def set_ragged(self, ragged: bool = True) -> None:
+        """预置「最后一条向量维度与其余不一致」的坏响应。"""
+        self._ragged = ragged
+
+    def set_model(self, model_name: str, *, dimensions: int | None = None) -> None:
+        """换成另一个嵌入模型（名与维度），用于验证重建索引不混存旧向量。"""
+        self.model_name = model_name
+        if dimensions is not None:
+            self.dimensions = dimensions
 
 
 class FakeUrlFetcher:
