@@ -26,6 +26,7 @@ from app.db.settings_repository import SettingsRepository
 from app.db.summary_deliverable_repository import SummaryDeliverableRepository
 from app.db.task_repository import TaskRepository
 from app.db.template_repository import TemplateRepository
+from app.generation.pdfs import PdfRenderer
 from app.generation.screenshots import SlideRenderer
 from app.providers.embedding_client import EmbeddingClient
 from app.providers.key_store import KeyStore
@@ -177,6 +178,15 @@ def get_pptx_renderer(request: Request) -> SlideRenderer:
     return request.app.state.pptx_renderer
 
 
+def get_pdf_renderer(request: Request) -> PdfRenderer:
+    """PDF 打印渲染器依赖（fake 注入点 5，工单 31）。
+
+    与截图渲染器对称：生产默认是 `app.state.pdf_renderer`（Playwright 打印 deck），
+    测试注入**写真实可读 PDF 的假实现**，任何用例都不打开 Chromium。
+    """
+    return request.app.state.pdf_renderer
+
+
 def get_retrieval_service(
     request: Request,
     db_path: str = Depends(get_db_path),
@@ -231,4 +241,5 @@ TieredModelClientDep = Annotated[TieredModelClient, Depends(get_tiered_model_cli
 UrlFetcherDep = Annotated[UrlFetcher, Depends(get_url_fetcher)]
 EmbeddingClientDep = Annotated[EmbeddingClient, Depends(get_embedding_client)]
 PptxRendererDep = Annotated[SlideRenderer, Depends(get_pptx_renderer)]
+PdfRendererDep = Annotated[PdfRenderer, Depends(get_pdf_renderer)]
 RetrievalServiceDep = Annotated[RetrievalService, Depends(get_retrieval_service)]

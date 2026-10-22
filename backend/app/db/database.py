@@ -17,7 +17,23 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
+# 成品格式的**权威清单**：SCHEMA 建表与迁移共用，避免两处各写一遍漏掉某个格式。
+# 顺序即历史演进顺序（docx / html → pptx（工单 29）→ pdf（工单 31））：
+# 迁移按「当前库缺哪个就放宽到哪个」处理，不关心旧库停在哪一代。
+GENERATION_FORMATS = ("docx", "html", "pptx", "pdf")
+
+
+def _generations_format_check_sql() -> str:
+    """`format` 列的 CHECK 片段（与 `GENERATION_FORMATS` 保持一致）。"""
+    allowed = ", ".join(f"'{name}'" for name in GENERATION_FORMATS)
+    return f"CHECK (format IN ({allowed}))"
+
+
 # 建表幂等：应用启动时执行，重复运行不改变已有表。
+# 用占位符而非 f-string：SCHEMA 内含 `{}` 字面量，f-string 会误解析；
+# `init_db` 执行前把占位符替换成 `GENERATION_FORMATS` 派生的 CHECK 片段。
+_FORMAT_CHECK_PLACEHOLDER = "__GENERATION_FORMAT_CHECK__"
+
 SCHEMA = """
 -- 任务（规格 §4 + 术语「任务」）。状态机：in_progress（进行中）/ completed（已完成）
 -- / deleted（已删除）。删除是**软删除**（规格 US 27：一次误操作不毁掉本地数据）：
@@ -176,7 +192,7 @@ CREATE TABLE IF NOT EXISTS generations (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     task_id       INTEGER NOT NULL REFERENCES tasks(id),
     plan_id       INTEGER NOT NULL REFERENCES plans(id),
-    format        TEXT NOT NULL CHECK (format IN ('docx', 'html', 'pptx')),
+    format        TEXT NOT NULL __GENERATION_FORMAT_CHECK__,
     file_path     TEXT NOT NULL,
     template_used TEXT NOT NULL,
     page_plan_id  INTEGER,
@@ -420,11 +436,16 @@ def connect(db_path: str | Path) -> Iterator[sqlite3.Connection]:
         connection.close()
 
 
+def schema_sql() -> str:
+    """建表 SQL：把格式 CHECK 占位符替换成 `GENERATION_FORMATS` 派生的清单。"""
+    return SCHEMA.replace(_FORMAT_CHECK_PLACEHOLDER, _generations_format_check_sql())
+
+
 def init_db(db_path: str | Path) -> None:
     """幂等建表；父目录不存在时创建（data/ 运行时目录）。"""
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     with connect(db_path) as connection:
-        connection.executescript(SCHEMA)
+        connection.executescript(schema_sql())
         _migrate(connection)
         connection.commit()
 
@@ -472,24 +493,27 @@ def _migrate(connection: sqlite3.Connection) -> None:
 
 
 def _relax_generations_format_check(connection: sqlite3.Connection) -> None:
-    """既有库的 `generations.format` CHECK 只收 docx/html（工单 29 之前），
-    `ALTER TABLE` 不能改约束，故按「新建 → COPY → 弃旧 → 改名」重建该表以放宽到 pptx。
+    """把既有库的 `generations.format` CHECK 放宽到 `GENERATION_FORMATS`。
 
-    幂等：新库或已放宽过的库，其 format CHECK 已含 pptx，直接跳过重建。保留旧表全部数据
-    与新表已有列；只在重建时补上 `page_plan_id`（若还没有）。重复运行无副作用。
+    `ALTER TABLE` 不能改约束，故按「新建 → COPY → 弃旧 → 改名」重建该表。旧库可能停在
+    任一历史代际（docx/html，或已含 pptx），这里统一以当前清单为准：
+    - 幂等：CHECK 已覆盖全部格式（所有格式名都出现在表定义里）则直接跳过；
+    - 保留旧表全部数据，并在重建时补上 `page_plan_id`（若旧库还没有）；
+    - 重建后补齐索引，与 SCHEMA 对齐。重复运行无副作用。
     """
     sql = connection.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='generations'"
     ).fetchone()
-    if sql is None or "pptx" in (sql["sql"] or ""):
-        return  # 新库或已放宽，无需重建。
+    table_sql = (sql["sql"] or "") if sql is not None else None
+    if table_sql is None or all(name in table_sql for name in GENERATION_FORMATS):
+        return  # 新库或已放宽到当前代际，无需重建。
 
     create = (
         "CREATE TABLE generations_new ("
         "id            INTEGER PRIMARY KEY AUTOINCREMENT,"
         "task_id       INTEGER NOT NULL,"
         "plan_id       INTEGER NOT NULL,"
-        "format        TEXT NOT NULL CHECK (format IN ('docx', 'html', 'pptx')),"
+        f"format        TEXT NOT NULL {_generations_format_check_sql()},"
         "file_path     TEXT NOT NULL,"
         "template_used TEXT NOT NULL,"
         "page_plan_id  INTEGER,"

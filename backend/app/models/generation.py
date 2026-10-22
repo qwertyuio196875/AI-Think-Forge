@@ -13,16 +13,18 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 
 class GenerationFormat(str, Enum):
-    """成品格式（ADR-0003：Word、单文件 HTML；工单 29 增 PPT 截图版）。
+    """成品格式（ADR-0003：Word、单文件 HTML；工单 29 增 PPT 截图版；工单 31 增 PDF）。
 
     - `docx`：Word 成品（方案 / 正文）；
     - `html`：单文件 HTML 演示（deck）；
-    - `pptx`：截图版 PPT（HTML deck → 逐页截图 → 装配，ADR-0004）。
+    - `pptx`：截图版 PPT（HTML deck → 逐页截图 → 装配，ADR-0004）；
+    - `pdf`：由同一份 deck 打印导出（可选产物，ADR-0004）。
     """
 
     docx = "docx"
     html = "html"
     pptx = "pptx"
+    pdf = "pdf"
 
 
 class GenerationSource(str, Enum):
