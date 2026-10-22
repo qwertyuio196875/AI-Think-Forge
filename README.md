@@ -25,18 +25,26 @@
 
 面向单份资料（DOCX / PDF / TXT / MD / PPTX 或公开网页 URL）的「解析 → 总结」快捷路径，默认不走拷问：总结 ≤500 汉字、分块 map-reduce 不遗漏、识别不了的内容明示、结论可一键送入主题创作。
 
+### 填充正文（v1.1）
+
+方案确认后，生成面板顶部问一次「填充为正文 / 仅导出大纲」：选填充就按成品章节逐章写正文（先定总字数、可逐章调），进度显示「第 3 / 8 章」，可中断、下次续写，也可只重写某一章；选大纲则一次点击拿到 `outline-` 文件。填充后的 Word 带真实段落与小标题，末尾附本次实际用到的「参考资料」。
+
+### 知识库与检索（v1.1）
+
+上传自己的资料即入库并建索引。拷问问到需要外部依据的事实型问题时检索，命中片段以可折叠卡片显示（文件名 · 位置 · 相关度），默认全选、逐条可取消；决策型问题不检索。填充时同样可取消引用，成品只列真正用到的来源。嵌入不可用时自动降级关键词检索，并明确显示降级状态。
+
 ---
 
 ## 当前状态
 
-领域文档与规格已就位，**TB-0 ~ TB-10 的后端与前端均已落地并带自动化测试**：行走骨架、模型配置与连接测试、拷问闭环（第一轮 / 收敛 / 方案确认 / 修订与待确认事项）、资料分析（TXT / MD / DOCX / PDF / PPTX / URL）、历史与续作、Word 与单文件 HTML 演示。除下表标 ✅ 者外，请以规格为准，勿当作已实现能力。
+领域文档与规格已就位，**TB-0 ~ TB-10 以及 v1.1 收尾（issue #2）的后端与前端均已落地并带自动化测试**：行走骨架、模型配置与连接测试、拷问闭环（第一轮 / 收敛 / 方案确认 / 修订与待确认事项）、资料分析（TXT / MD / DOCX / PDF / PPTX / URL）、历史与续作、Word 与单文件 HTML 演示，以及填充正文与字数控制、页面规划与截图版 PPT / PDF、知识库与最小版 RAG。除下表标 ✅ 者外，请以规格为准，勿当作已实现能力。
 
 | 部分 | 现状 |
 | --- | --- |
-| 领域文档 | ✅ `GLOSSARY.md`、`docs/adr/0001~0003` |
-| 规格与工单 | ✅ 权威规格 `.scratch/workbench-v1/issues/08-v1-unified-spec.md`；曳光弹工单 TB-0 ~ TB-10 |
+| 领域文档 | ✅ `GLOSSARY.md`、`docs/adr/0001~0006` |
+| 规格与工单 | ✅ 权威规格 `.scratch/workbench-v1/issues/08-v1-unified-spec.md`；曳光弹工单 TB-0 ~ TB-10；v1.1 规格与工单见 GitHub issue #2 / #3~#31 |
 | 页面原型 | ✅ `.scratch/workbench-v1/prototype/index.html`（静态自包含四视图，含评审标注 `REVIEW.md`） |
-| 前端工作台 | ✅ 三栏壳 + 四路由（创作 / 分析 / 历史 / 设置）；任务级模型选择、分析回看与总结 Word、HTML 全局默认主题均已接入；`npm run build` / `type-check` 通过 |
+| 前端工作台 | ✅ 三栏壳 + 五路由（创作 / 分析 / 知识库 / 历史 / 设置）；任务级模型选择、分析回看与总结 Word、HTML 全局默认主题、填充与页数参数弹窗、引用卡片均已接入；`npm run build` / `type-check` 通过 |
 | 后端 | ✅ 行走骨架 TB-0：FastAPI 应用（`backend/app`）、`tasks` 最小表、健康检查与任务创建 / 列表 / 读取、模型客户端与 URL 抓取两个 fake 注入点接缝 |
 | 模型配置与连接测试 | ✅ TB-1：`providers` / `settings` 表、DeepSeek 默认播种（3 档角色）、密钥存 Windows 凭据管理器、OpenAI 兼容 httpx 客户端、配置 CRUD 与连接测试（错误分级）、开发期仅本机源的 CORS |
 | 拷问第一轮 | ✅ TB-2：`messages` 表（轮次 / 角色 / 内容 / 时间，问答同序落库）、版本化提示词资产（MIT 署名，见 ADR-0001）、LangGraph 最小节点图（分析输入 → 生成前沿 → 落库返回，前沿为空即停）、`/api/grilling/*` 发起 / 作答 / 读取对话 |
@@ -44,11 +52,14 @@
 | 方案修订与待确认事项 | ✅ TB-4：`plan_revisions`（修订前 / 修订后 / 时间 / 差异提示，旧版本不丢）、`open_items`（来源轮次 / 条目 / 状态）、对话式修订（`POST …/plan/revisions`）与差异提示、前沿问题新增 `why`（为什么现在问）/ `alternatives`（备选方向）（资产升 `grilling-v2`）、「暂时跳过」入待确认事项、未处置条目拦截生成（409） |
 | Word 成品与模板机制 | ✅ TB-5：`generations`（任务 / 方案 / 格式 / 产物位置 / **本次实际所用模板** / 时间）、`templates`（模板登记：名称 / 格式 / 是否默认）、确认方案后经 `python-docx` 生成 .docx（标题 / 正文 / 列表 / 表格按模板样式映射）、内置最小默认模板按需幂等生成、全局默认模板与任务级**临时覆盖**分离、产物**回读**完整性检查（US 22）、模板缺失 / 损坏 / 非 `.docx` 明确报错不静默空白生成 |
 | 单文件 HTML 演示 | ✅ TB-6：同一张 `generations` 表（`format=html`、`template_used=deck-theme:<id>`）、三套内建主题（`slate` / `ember` / `mono`，调色板以原型 `DECKT` 为准）、方案确定性排成幻灯片、样式 / 翻页脚本 / **西文字体（latin 子集 woff2）全部内联**、中文走系统字体回退、产物**扫描断言 0 条外部网络引用**、`file://` 直开可用（键盘翻页 + 页码 + 页内演讲者模式）、`THIRD-PARTY-LICENSES` 与产物署名齐备 |
-| 资料分析（文本类） | ✅ TB-7：`sources` / `documents` / `document_chunks`（含 locator）/ `summaries`（含引用与档位证据）；`embeddings` 仅按 ADR-0002 预留不填；上传校验（TXT / MD / DOCX + 50MB）→ 解析（TXT 编码顺序 `utf-8-sig → gb18030 → charset-normalizer`；MD 走 `markdown-it-py` token 流；DOCX 标题按 `paragraph.style.name` + 启发式回退并标 `heading_source`）→ 分块 → **逐块分析 + 综合（map-reduce，不称 RAG）** → ≤500 汉字总结；未识别是一级输出字段（无文本层短路、不冒充成功）；模型失败可读 502 且不丢已存数据；总结走 **turbo 档**、缺失时回退默认并如实记录；一键送入主题创作只预填、不调用模型；模板 multipart 上传（仅 `.docx`） |
+| 资料分析（文本类） | ✅ TB-7：`sources` / `documents` / `document_chunks`（含 locator）/ `summaries`（含引用与档位证据）；分析管线自身**不写向量**（`embeddings` 由 v1.1 知识库检索填充，见 ADR-0005）；上传校验（TXT / MD / DOCX + 50MB）→ 解析（TXT 编码顺序 `utf-8-sig → gb18030 → charset-normalizer`；MD 走 `markdown-it-py` token 流；DOCX 标题按 `paragraph.style.name` + 启发式回退并标 `heading_source`）→ 分块 → **逐块分析 + 综合（map-reduce，不称 RAG）** → ≤500 汉字总结；未识别是一级输出字段（无文本层短路、不冒充成功）；模型失败可读 502 且不丢已存数据；总结走 **turbo 档**、缺失时回退默认并如实记录；一键送入主题创作只预填、不调用模型；模板 multipart 上传（仅 `.docx`） |
 | 资料分析（版式类） | ✅ TB-8：`pypdf` 解析 PDF 正文与字号启发式标题、`python-pptx` 解析每页标题 / 正文 / 表格；`documents.parser` 记录解析器；页 / 幻灯片级 locator 进入分块与引用；扫描件 / 纯图片文件 → `no_text_layer` + `needs_ocr=true` 短路；图片 / 图表 / 组合形状逐项进 `unrecognized_parts`；加密或损坏 PDF 明确失败，不绕过 |
 | 资料分析（URL） | ✅ TB-9：`POST /api/analysis/sources/url` 抓取公开网页后进入同一分析管线；纯函数 SSRF 校验（仅 http/https、拒绝内嵌凭据 / 环回 / 私网 / 链路本地 / 云元数据、解析前后双检）；重定向最多 3 跳且逐跳复检、超时 15s、下载上限 5MB；`trafilatura` 提取正文并过滤导航 / 广告；需登录 / 超时 / 超限如实提示且不绕过；无正文 → `no_main_text` / `empty_page` 明示 |
+| 填充正文 · 字数控制 | ✅ 工单 #3~#18：`plan_sections`（一章一行，`(plan_id, seq)` 唯一）在方案确认时落库；`POST /api/tasks/{id}/fill` 三道闸（未确认 409 / 无可切章节 422 / 未处置待确认事项 409）；逐章串行填充带前情提要，可中断续写、可单章重写；总字数 300–20000，各章建议字数之和**恒等于**目标；±15% 偏差只对最短一章重生成一次，仍偏差则如实上报；8000 字级长章分段生成；汉字计量只有 `app/hanzi.py` 一个入口；大纲导出文件名带 `outline-`，正文成品带 `body-` |
+| 页面规划 · 截图版 PPT · PDF | ✅ 工单 #25~#31：`POST /page-plans` 按章节权重合并 / 拆页，页数 3–60 是**硬约束**且封面计入；预览可单页增删，实际页数以修改后的规划为准；Playwright 内置 Chromium 逐页截图（1280×720、2x → 2560×1440 PNG），python-pptx 按 13.333×7.5 英寸满幅装配 `.pptx`；PDF 与 PPT 同源同版式，作为可选动作单独导出；测试注入假渲染器，**不启动浏览器** |
+| 知识库 · 最小版 RAG | ✅ 工单 #19~#24：知识库资料复用 `sources` / `documents` / `document_chunks`（以 `task_id IS NULL` 表示不隶属任务）；嵌入默认百炼 `text-embedding-v4`，向量以固定 JSON 存 SQLite，检索用 numpy 内存暴力余弦；top-k = 6、相似度 <0.3 丢弃、单次注入 ≤3000 汉字；嵌入不可用降级为二元组关键词检索，双失败明示「本次未使用知识库」且填充仍可完成；拷问事实型问题带可折叠引用卡片，填充前可逐条取消，成品末尾「参考资料」只列实际使用的来源 |
 | 运行时目录 | ✅ `data/`（运行时 SQLite 落此处，gitignored）、`启动.bat`、根 `.gitignore`（覆盖 `/data/`、`/templates/`、`.slim/`） |
-| 自动化测试 | ✅ `backend/tests`（pytest，进程内 HTTP 接缝，不联网；**360 项通过**，`ruff check` 全绿）+ `frontend/tests`（`node --test` 纯函数测试，**46 项通过**） |
+| 自动化测试 | ✅ `backend/tests`（pytest，进程内 HTTP 接缝，不联网；**666 项通过**，`ruff check` 全绿）+ `frontend/tests`（`node --test` 纯函数测试，**170 项通过**） |
 
 ### v1 收尾补齐（2026-10-19 评审）
 
@@ -64,6 +75,21 @@
 
 规格层面的补充决策见 `.scratch/workbench-v1/issues/08-v1-unified-spec.md`：模板「可打开但缺样式」维持 `template_style_applied=false` 降级；「存在 open 待确认事项时拒绝确认与生成」维持服务端纵深防御。
 
+### v1.1 收尾（issue #2，2026-10）
+
+| 能力 | 落地 |
+| --- | --- |
+| 填充闸门与二选一 | 方案确认后，生成面板顶部是内联二选一：「填充为正文」跳到填充参数弹窗；「仅导出大纲」一次点击生成并下载 `outline-` 文件。未确认 / 有未处置待确认事项 → 409；切不出章节 → 422。 |
+| 字数与偏差 | 汉字字数唯一入口；分摊和恒等于目标；逐章可改；±15% 偏差只对最短章重写一次；长章按段落分段调用，任一段命中长度上限即硬错误。 |
+| 页数与截图版 PPT | 页面规划把「章节 → 页列表」定死，说 16 页就是 16 页；单页可增删；截图版 `.pptx` 一页一张满幅图（文字不可编辑 / 不可检索，选择前已说明）；PDF 可选导出。 |
+| 知识库与引用 | 上传即入库并建索引；拷问的事实型问题显示引用卡片（默认全选、逐条可取消），决策型不检索；填充引用只注入被保留的片段，成品末尾附实际用到的「参考资料」。 |
+
+与规格的已知偏差（按实际接口调用即可，行为不受影响）：
+
+- 页面规划接口实际为 `/api/tasks/{id}/page-plans`（规格写作 `/page-plan`）；单章重写为 `/api/tasks/{id}/sections/{seq}/rewrite`（规格写作 `regenerate`）；另有 `/fill/run` 用于真正开跑串行填充（`/fill` 只登记任务与返回初始进度）。
+- 截图 / PDF 复用同一份 HTML deck，因此仍内联西文 latin 子集 woff2；规格建议截图轨不内联字体文件。产物视觉与 HTML 演示一致，中文仍走 Windows 系统字体回退。
+- 生成面板的 `docx` 轨始终是**大纲导出**；填充后的正文 Word 由填充流程自动产出并同样出现在成品记录里，两者靠文件名前缀区分。
+
 ---
 
 ## 技术栈
@@ -73,22 +99,24 @@
 | 后端 | Python 3.12 + FastAPI 单进程，仅监听 `127.0.0.1:8720`，同时托管前端构建产物与 `/api/*` |
 | Agent 工作流 | LangGraph 状态机（拷问节点、逐轮持久化、任务可恢复） |
 | 模型接入 | 统一 OpenAI 兼容客户端（`httpx` 直连，不引入厂商 SDK）；默认服务商 DeepSeek，档位 plus / turbo / max 为角色标签，可任务级切换 |
-| 存储 | SQLite（任务、对话、方案、模板元数据、非敏感配置、生成记录）+ 文件系统（原始资料、模板、成品） |
+| 嵌入 | 同一套 OpenAI 兼容客户端打 `/embeddings`，默认百炼 `text-embedding-v4`；未配置 / 调用失败时降级为二元组关键词检索（ADR-0005） |
+| 存储 | SQLite（任务、对话、方案、成品章节、页面规划、知识库与向量、模板元数据、非敏感配置、生成记录）+ 文件系统（原始资料、模板、成品） |
 | 密钥 | Windows 凭据管理器，SQLite 与日志均不落密钥 |
 | 前端 | Vue 3 + TypeScript + Vite + Element Plus，布局与工作台同构（左导航 / 中会话流 / 底部输入胶囊） |
-| 成品 | Word（python-docx + 用户模板）+ 单文件 HTML 演示（OpenDesign 主题族适配，资源内联、`file://` 直开） |
+| 成品 | Word（python-docx + 用户模板）+ 单文件 HTML 演示（OpenDesign 主题族适配，资源内联、`file://` 直开）+ 截图版 `.pptx`（Playwright 逐页出图、python-pptx 满幅装配）+ 可选 PDF（同一 deck 打印导出） |
 
 ---
 
 ## 目录结构
 
 ```
-backend/          # FastAPI 应用包 app/（api、db、models、providers、grilling、analysis、generation、security）+ tests/ + scripts/（演示脚本）
+backend/          # FastAPI 应用包 app/（api、db、models、providers、grilling、analysis、fill、sections、pageplan、retrieval、generation、security）+ tests/ + scripts/（演示脚本）
 frontend/         # Vue3 + TS + Vite + Element Plus；src/{api,layouts,router,views,utils,components}
+fixtures/         # 15 份中文语料（技术文档 / 产品说明 / 调研摘要 / 访谈笔记），RAG 验收与回归夹具
 data/             # 运行时数据（SQLite、上传件、生成产物 data/deliverables/）—— gitignore
 templates/        # 用户 Word / PPT 模板 + 内置默认模板 templates/_builtin/ —— gitignore
 docs/
-  adr/            # 架构决策记录（ADR-0001 ~ 0003）
+  adr/            # 架构决策记录（ADR-0001 ~ 0006）
   agents/         # 智能体工作约定（issue 跟踪、分诊标签、领域文档）
 .scratch/
   workbench-v1/
@@ -124,10 +152,12 @@ npm run dev      # Vite 开发服务器，默认 http://localhost:5173
 
 ```powershell
 python -m venv backend\.venv
-backend\.venv\Scripts\python.exe -m pip install fastapi "uvicorn[standard]" pydantic httpx keyring langgraph python-docx charset-normalizer markdown-it-py pypdf python-pptx python-multipart trafilatura pytest ruff
+backend\.venv\Scripts\python.exe -m pip install fastapi "uvicorn[standard]" pydantic httpx keyring langgraph python-docx charset-normalizer markdown-it-py pypdf python-pptx python-multipart trafilatura numpy playwright pytest ruff
+backend\.venv\Scripts\python.exe -m playwright install chromium
 ```
 
 > 依赖记录在根 `pyproject.toml`（运行时依赖 + `dev` extras），不另设 `requirements.txt`。
+> `playwright install chromium` 需要联网下载约 150MB 的内置 Chromium；只有生成截图版 PPT / PDF 时才用得到，失败会明确报错，不会静默降级成「没有 PPT」。
 
 运行测试（在仓库根；进程内 HTTP 接缝，不起端口、不联网）：
 
@@ -169,9 +199,25 @@ cd backend
 | GET | `/api/grilling/tasks/{id}/plan/revisions` | 方案的修订历史（逐条含修订前 / 修订后内容与时间）`{"items":[...],"total":n}` |
 | GET | `/api/grilling/tasks/{id}/open-items` | **待确认事项**清单 `{"items":[{id,task_id,round_no,text,status,created_at,resolved_at}],"total":n}` |
 | POST | `/api/grilling/tasks/{id}/open-items/{item_id}/resolve` | 处置一条待确认事项：body `{"status":"confirmed"\|"dismissed"}`（用户确认动作） |
-| POST | `/api/tasks/{id}/generations` | **成品生成入口（硬闸门）**：方案未确认 / 无方案 → 409；**仍有未处置的待确认事项 → 409**；已确认且无未定条目 → 按 `format` 生成成品 → 201。可选 body `{"format":"docx"\|"html","template":string?,"theme":"slate"\|"ember"\|"mono"\|null}`：`template` 为 Word 的**任务级临时覆盖**（不改变全局默认）；`theme` 为**单文件 HTML 演示**的主题，**省略或 null = 跟随设置页的全局默认主题**，显式值只覆盖本次（未知主题 → 400，不静默退回默认）。Word 返回 `template_style_applied` / `missing_styles` / `headings`；HTML 返回 `theme_used` / `inlined_fonts` / `cjk_fallback` / `slides` / `external_resources` / `network_resources_declared` / `presenter_mode`。模板缺失 / 损坏 / 非 `.docx` → 400（明确报错，不产出成品）；完整性检查未通过（含产物含外部网络引用）→ 500 且产物已丢弃、不落库 |
+| POST | `/api/tasks/{id}/generations` | **成品生成入口（硬闸门）**：方案未确认 / 无方案 → 409；**仍有未处置的待确认事项 → 409**；已确认且无未定条目 → 按 `format` 生成成品 → 201。可选 body `{"format":"docx"\|"html"\|"pptx"\|"pdf","template":string?,"theme":"slate"\|"ember"\|"mono"\|null,"page_plan_id":int?}`（`pptx` / `pdf` 需要已有页面规划，省略 `page_plan_id` 时用最新一份）：`template` 为 Word 的**任务级临时覆盖**（不改变全局默认）；`theme` 为**单文件 HTML 演示**的主题，**省略或 null = 跟随设置页的全局默认主题**，显式值只覆盖本次（未知主题 → 400，不静默退回默认）。Word 返回 `template_style_applied` / `missing_styles` / `headings`；HTML 返回 `theme_used` / `inlined_fonts` / `cjk_fallback` / `slides` / `external_resources` / `network_resources_declared` / `presenter_mode`。模板缺失 / 损坏 / 非 `.docx` → 400（明确报错，不产出成品）；完整性检查未通过（含产物含外部网络引用）→ 500 且产物已丢弃、不落库 |
 | GET | `/api/tasks/{id}/generations` | 某任务已生成的成品记录 `{"items":[{id,task_id,plan_id,format,file_path,template_used,created_at}],"total":n}`（HTML 一轨的 `template_used` 为 `deck-theme:<主题 id>`） |
 | GET | `/api/deliverables/{generation_id}` | **成品投递**：按 generation id 取产物字节（浏览器无法读 `file://`，前端「打开成品」与「应用内预览演示」都走这里）。`.docx` → `application/vnd.openxmlformats-officedocument.wordprocessingml.document`（`attachment`）；`.html` → `text/html; charset=utf-8`（`inline`，不加 CSP，可在 `iframe` 内直接渲染）；中文文件名用 `filename*=UTF-8''…`。只投递 `data/deliverables/` 内的真实文件（`resolve()` 后校验，越界 / 缺失 / 未知 id 一律 404，响应体不带路径） |
+| POST | `/api/tasks/{id}/fill` | **开始填充（工单 9）**：未确认方案 / 仍有未处置的待确认事项 → 409；方案切不出章节 → 422 并提示返回修订；成功 → 200，登记填充任务并返回目标字数、章节清单与初始进度 |
+| POST | `/api/tasks/{id}/fill/allocation` | **字数分摊试算（工单 15）**：只算不写。body `{"target_length":int,"overrides":{seq:int}}`；300–20000 越界或分摊不成立 → 422 并说明差多少，不静默改成边界值 |
+| POST | `/api/tasks/{id}/fill/run` | **串行填充（工单 11）**：逐章写正文，全部完成后拼装一次正文 Word；任一章失败 → 报错且不产残缺成品；返回逐章进度与偏差 |
+| POST | `/api/tasks/{id}/fill/cancel` | **中断填充（工单 13）**：已完成章节保留、不产成品；再次 `fill/run` 从下一章继续 |
+| GET | `/api/tasks/{id}/sections` | **成品章节只读清单（工单 7）**：`(plan_id, seq)` 唯一，返回每章标题 / 建议字数 / 已写字数 / 状态；不提供改名、排序、增删 |
+| POST | `/api/tasks/{id}/sections/{seq}/fill` | **单章填充（工单 10 / 24）**：可带 `reference_cards` 指定本章保留的引用片段 |
+| POST | `/api/tasks/{id}/sections/{seq}/references` | **本章引用预览（工单 24）**：只读，返回引用卡片与检索状态 |
+| POST | `/api/tasks/{id}/sections/{seq}/rewrite` | **单章重写（工单 14）**：只改目标章，重新拼装同一份正文成品；仅已完成 / 失败章可重写，其余 → 409 |
+| POST | `/api/tasks/{id}/page-plans` | **创建页面规划（工单 25）**：body `{"target_pages":int}`，3–60；未填充完成 → 409；规划页数恒等于目标，封面与结尾页计入 |
+| GET | `/api/tasks/{id}/page-plans/latest` | 最新页面规划；`GET /page-plans/{plan_id}` 取指定一份，供预览与增删页 |
+| POST | `/api/tasks/{id}/page-plans/{plan_id}/pages` | **单页增页（工单 26）**：生成新规划，实际页数以修改后的规划为准 |
+| DELETE | `/api/tasks/{id}/page-plans/{plan_id}/pages/{at_index}` | **单页删页（工单 26）**：封面不可删 |
+| POST | `/api/knowledge/sources` | **知识库上传（工单 19，multipart `file`）**：TXT / MD / DOCX / PDF / PPTX，落库并建索引；解析或索引失败仍可看可删，状态明确 |
+| GET | `/api/knowledge/sources` | **知识库清单**：文件名 / 分块数 / 索引状态（已入库 / 索引中 / 索引失败） |
+| DELETE | `/api/knowledge/sources/{id}` | **删除知识库资料**：连带删除分块与向量 |
+| POST | `/api/knowledge/reindex` | **重建索引（工单 20）**：换嵌入模型后整体替换旧向量，不与新向量混存 |
 | GET | `/api/deck-themes` | **演示主题族清单**：三套内建主题的 `id` / `name` / `palette`（以原型 `DECKT` 为准）/ 内联字体 / 来源署名 / 许可 / 需保留的网络资源；与生成入口读同一份事实 |
 | GET | `/api/settings/deck-theme` | **HTML 全局默认主题（US20）**：`{"theme":"slate\|ember\|mono","available":[...]}` |
 | PUT | `/api/settings/deck-theme` | 设置 HTML 全局默认主题，body `{"theme":string}`；未知主题 → 400 |
@@ -236,7 +282,10 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8720/api/providers/1/test | Conv
 | --- | --- |
 | [0001](docs/adr/0001-grilling-uses-ported-rules.md) | 拷问工作流**规则移植**，不调用原始技能、不驱动外部 Agent CLI（应用自包含、状态可控） |
 | [0002](docs/adr/0002-defer-rag-to-v1-1.md) | 首版**不做 RAG**，schema 预留，v1.1 第一优先补齐（空知识库上实现 RAG 零收益） |
-| [0003](docs/adr/0003-output-formats-dual-track.md) | 输出**双轨**：v1 = Word + 单文件 HTML；PPTX 推迟到 v1.1，且与 OpenDesign HTML deck 分轨 |
+| [0003](docs/adr/0003-output-formats-dual-track.md) | 输出**双轨**：v1 = Word + 单文件 HTML；PPTX 推迟到 v1.1，且与 OpenDesign HTML deck 分轨（「PPTX 分轨 / 推迟」两条已被 0004 取代） |
+| [0004](docs/adr/0004-ppt-via-html-page-screenshots.md) | 输出扩为四种；PPT 走 **HTML 逐页截图**装配 `.pptx`（图片型、文字不可编辑），PDF 同源可选导出 |
+| [0005](docs/adr/0005-adopt-minimal-rag.md) | 引入**最小版 RAG**：显式入库、本地索引、可降级检索（取代 0002「首版不做 RAG」的结论） |
+| [0006](docs/adr/0006-introduce-fill-stage.md) | 引入**填充阶段**：逐章扩写正文；生成模块从此会调模型（推翻「生成模块不调模型」的旧契约） |
 
 ---
 
@@ -258,26 +307,28 @@ v1 以曳光弹方式推进，编号即依赖顺序；每条工单的验收证�
 | TB-9 | URL 分析 + SSRF 防护 |
 | TB-10 | 历史、续作与删除 |
 
-v1.1 队列（顺序即优先级）：RAG 最小版 → PPTX 填用户模板 → 文档型 HTML → 方案直接编辑 → exe 打包 → 模板版本管理。
+v1.1 已完成：RAG 最小版（#19~#24）、填充正文与字数控制（#3~#18）、页面规划与截图版 PPT / PDF（#25~#31）。
+
+剩余队列（顺序即优先级）：PPTX 填用户模板 → 文档型 HTML → 方案直接编辑 → exe 打包 → 模板版本管理。
 
 ---
 
 ## 测试与验收
 
-- **后端自动化测试接缝 = 本地工作台 HTTP API 边界**：进程内客户端驱动，不起真实端口、不开浏览器、不联网。前端另有 `node --test` 纯函数单测（46 项），不替代 API 接缝；UI 走手工验收。
+- **后端自动化测试接缝 = 本地工作台 HTTP API 边界**：进程内客户端驱动，不起真实端口、不开浏览器、不联网。前端另有 `node --test` 纯函数单测（170 项），不替代 API 接缝；UI 走手工验收。
 - 断言三类可观察结果：API 状态、持久化数据（「重启续作」靠重建客户端再读验证）、数据目录中的成品文件。
-- 外部世界只有两个 fake 注入点：模型客户端（脚本化应答，零真实花费）与 URL 抓取（假响应 + 纯函数式 URL 安全校验负测）。
+- 外部世界有四个 fake 注入点：模型客户端（脚本化应答，零真实花费）、URL 抓取（假响应 + 纯函数式 URL 安全校验负测）、嵌入客户端（同文本恒得同一假向量）、页面渲染器（预置 PNG / PDF 字节，**测试绝不启动 Chromium**）。
 - 不对模型输出的语义质量做自动化断言，语义质量由人看证据链验收；前端走手工验收。
 
 ### 验证命令（集成分支）
 
 ```powershell
-# 后端（在 backend/ 下）：360 passed，ruff 全绿
+# 后端（在 backend/ 下）：666 passed，ruff 全绿
 .\.venv\Scripts\python.exe -m pytest --no-header -q --tb=short
 .\.venv\Scripts\python.exe -m ruff check .
 
-# 前端（在 frontend/ 下）：46 passed，type-check / build 通过
-npm run test:unit
+# 前端（在 frontend/ 下）：170 passed，type-check / build 通过
+npm run test:unit   # node --test "tests/*.test.mts"，覆盖全部纯函数测试
 npm run type-check
 npm run build
 ```
@@ -293,6 +344,7 @@ npm run build
 - URL 抓取：仅 http/https；解析前后双检封禁环回 / 私网 / 链路本地 / 元数据地址；最大重定向 3、超时 15s、下载上限 5MB；需登录或受访问控制的站点如实提示且不绕过。
 - 密钥存 Windows 凭据管理器，不入 SQLite、不入日志、不进前端。
 - 调用云端模型前明确告知：提示词与资料片段可能发送给所配置的服务商——「本地运行」不等于「数据不出机」。
+- 知识库入库时，分块文本会发送给嵌入服务商换取向量；检索只在本地 SQLite + numpy 里做，不再外发。未配置嵌入时自动降级为本地关键词检索。
 
 ---
 
@@ -313,7 +365,7 @@ npm run build
 
 ### 资料分析（文件与 URL → 总结）
 
-- **命名纪律**：这是「分块 → 逐块分析 → 综合」的**分析管线**，**不是 RAG**（ADR-0002）。只处理刚上传的单份资料，不建索引、不做跨文档检索；`embeddings` 表仅按 ADR-0002 预留、本版不填充。
+- **命名纪律**：这是「分块 → 逐块分析 → 综合」的**分析管线**，**不是 RAG**（ADR-0002 的命名纪律仍有效）。只处理刚上传的单份资料，不建索引、不做跨文档检索；跨资料的向量检索属于 v1.1 知识库（ADR-0005），两条路径不共用入口。
 - **入口与校验**：`POST /api/analysis/sources` 收 TXT / MD / DOCX / PDF / PPTX，扩展名白名单 + 50MB 上限；`POST /api/analysis/sources/url` 收公开网页 URL。上传件落在 `data/uploads/`，路径不越出 `data/` 白名单。
 - **解析规则**（调研 A1 / A5）：
   - TXT 编码顺序 `utf-8-sig` → `gb18030` → `charset-normalizer`，并把实际编码回传（`document.encoding`）；

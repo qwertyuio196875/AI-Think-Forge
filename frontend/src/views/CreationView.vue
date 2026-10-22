@@ -200,6 +200,65 @@
                       </div>
                     </div>
 
+                    <!-- 参考资料（工单 23）：只在本轮有引用时出现；决策型（0 条）不给「0 条」噪声。
+                         默认全部采用、逐条可取消；取消的编号要随提交带给后端——
+                         否则「界面上取消了、实际仍喂给模型」，看到的与发生的就成了两回事。 -->
+                    <div v-if="copiesOf(qi).length" class="cites">
+                      <button
+                        type="button"
+                        class="cites-toggle"
+                        :aria-expanded="citesOpen[qi] ? 'true' : 'false'"
+                        :aria-controls="`cites-${r.round_no}-${qi}`"
+                        @click="toggleCites(qi)"
+                      >
+                        <el-icon class="chev" :class="{ 'is-open': citesOpen[qi] }"><ArrowRight /></el-icon>
+                        <b>{{ citeSummary(qi) }}</b>
+                      </button>
+                      <!-- 检索降级 / 未使用知识库的提示不折叠：不看引用的人也要被告知依据不完整 -->
+                      <p v-if="retrievalNotice(q.retrieval_status)" class="cite-notice">
+                        <el-icon class="ico"><WarningFilled /></el-icon>
+                        <span>{{ retrievalNotice(q.retrieval_status) }}</span>
+                      </p>
+                      <ul
+                        v-show="citesOpen[qi]"
+                        :id="`cites-${r.round_no}-${qi}`"
+                        class="cites-list"
+                      >
+                        <li v-for="c in copiesOf(qi)" :key="c.chunk_id" class="cite">
+                          <input
+                            :id="`cite-box-${qi}-${c.chunk_id}`"
+                            class="cite-box"
+                            type="checkbox"
+                            :checked="isAdopted(c)"
+                            :aria-label="`采用该引用：${citationHeadline(c)}`"
+                            @change="
+                              toggleCitation(qi, c.chunk_id, ($event.target as HTMLInputElement).checked)
+                            "
+                          />
+                          <div class="cite-main">
+                            <label class="cite-line" :for="`cite-box-${qi}-${c.chunk_id}`">
+                              {{ citationHeadline(c) }}
+                            </label>
+                            <p class="cite-text">{{ citeExcerpt(c.text, qi, c.chunk_id) }}</p>
+                            <button
+                              v-if="citeIsLong(c.text)"
+                              type="button"
+                              class="cite-more"
+                              :aria-expanded="citeFullOpen[`${qi}:${c.chunk_id}`] ? 'true' : 'false'"
+                              @click="toggleCiteFull(qi, c.chunk_id)"
+                            >
+                              {{ citeFullOpen[`${qi}:${c.chunk_id}`] ? '收起全文' : '展开全文' }}
+                            </button>
+                          </div>
+                        </li>
+                      </ul>
+                    </div>
+                    <!-- 无引用但检索给过降级 / 未使用结论时，仍要明示（不能因为没卡片就静默） -->
+                    <p v-else-if="retrievalNotice(q.retrieval_status)" class="cite-notice bare">
+                      <el-icon class="ico"><WarningFilled /></el-icon>
+                      <span>{{ retrievalNotice(q.retrieval_status) }}</span>
+                    </p>
+
                     <div v-if="isSkipped(qi)" class="ans ans-skipped">
                       <span class="skip-note">已标记「暂时跳过」—— 提交后该题保持未定，并进入待确认事项</span>
                       <div class="ans-actions">
@@ -432,8 +491,11 @@
               />
 
               <!-- 填充面板：确认后才有篇幅可定（工单 15）。与生成面板分开——
-                   填充是写作（唯一会调模型），生成是确定性渲染，混在一起分不清点下去花不花额度。 -->
-              <FillPanel v-if="plan.status === 'confirmed'" :task-id="plan.task_id" />
+                   填充是写作（唯一会调模型），生成是确定性渲染，混在一起分不清点下去花不花额度。
+                   外层 div 只作滚动锚点：生成面板的「填充为正文」要把人带到这里再开弹窗（工单 #9）。 -->
+              <div v-if="plan.status === 'confirmed'" ref="fillWrap">
+                <FillPanel ref="fillPanel" :task-id="plan.task_id" />
+              </div>
 
               <!-- 逐章填充：确认后出现，一章一写、可选引用（工单 24） -->
               <SectionFillCard v-if="plan.status === 'confirmed'" :task-id="plan.task_id" />
@@ -446,11 +508,13 @@
                 :unlocked="!panelLocked"
               />
 
-              <!-- 生成面板：确认且无未处置项后真实可用（Word 成品） -->
+              <!-- 生成面板：确认且无未处置项后真实可用（Word 成品）。
+                   「填充为正文」按钮在这里（工单 #9），弹窗在 FillPanel——入口与执行分离，各守职责。 -->
               <GenerationPanel
                 :task-id="plan.task_id"
                 :locked="panelLocked"
                 :lock-reason="panelLockReason"
+                @request-fill="openFillDialog"
               />
             </template>
           </template>
@@ -590,6 +654,15 @@ import {
   type Task
 } from '../api/client'
 import { splitPlanSections } from '../utils/markdown'
+import { citationHeadline, isAdopted, retrievalNotice } from '../utils/citationCard'
+import {
+  citationsHeaderText,
+  copiesOfQuestion,
+  initCopies,
+  roundRejectedChunkIds,
+  withAdopted,
+  type CitationCopies
+} from '../utils/citationSelection'
 import { formatDateTime, statusDotClass, statusLabel } from '../utils/taskMeta'
 import { awaitingLabel, awaitingResumeHint } from '../utils/resumeMeta'
 import GenerationPanel from '../components/GenerationPanel.vue'
@@ -639,6 +712,23 @@ const savingChatProvider = ref(false)
 const drafts = ref<string[]>([])
 const skippedQ = ref<number[]>([])
 const ideaRef = ref<HTMLTextAreaElement | null>(null)
+
+/** 填充面板与其滚动锚点：生成面板的「填充为正文」入口（工单 #9）用。 */
+const fillPanel = ref<InstanceType<typeof FillPanel> | null>(null)
+const fillWrap = ref<HTMLElement | null>(null)
+
+/**
+ * 引用勾选状态（工单 23）：本轮回调卡片的 `{...card, adopted}` 浅拷贝，
+ * 只在换轮 / 重新加载时由 syncDrafts 从当前轮响应重新播种——引用按轮检索，
+ * 上一轮勾了哪几条对新一轮没有意义。勾选语义复用 citationCard 的现成 helper，
+ * 界面显示与提交清单共用同一份副本，不会出现两处口径分叉。
+ */
+const citeCopies = ref<CitationCopies>({})
+const citesOpen = ref<Record<number, boolean>>({})
+const citeFullOpen = ref<Record<string, boolean>>({})
+
+/** 引用正文的截断长度：卡片密度优先，全文用「展开全文」二次点开。 */
+const CITE_TEXT_LIMIT = 140
 
 const awaiting = ref<ResumeNext | null>(null)
 
@@ -833,16 +923,23 @@ function toggleRound(n: number): void {
 }
 
 function syncDrafts(d: Dialogue): void {
+  // 展开态每次都清空：面板开合跟着「当前轮」走，不跨轮保留。
+  citesOpen.value = {}
+  citeFullOpen.value = {}
   const rs = d.rounds
   for (let i = rs.length - 1; i >= 0; i--) {
     if (rs[i].frontier.length > 0 && rs[i].answers.length < rs[i].frontier.length) {
       drafts.value = rs[i].frontier.map(() => '')
       skippedQ.value = []
+      // 引用勾选重新从当前轮响应播种（工单 23）：引用按轮检索，
+      // 把上一轮的取消状态带进新一轮就是脏数据，界面显示与提交清单必须同源重置。
+      citeCopies.value = initCopies(rs[i].frontier)
       return
     }
   }
   drafts.value = []
   skippedQ.value = []
+  citeCopies.value = {}
 }
 
 async function loadTasks(): Promise<void> {
@@ -1054,6 +1151,39 @@ function undoSkip(qi: number): void {
   skippedQ.value = skippedQ.value.filter((x) => x !== qi)
 }
 
+/* ---------- 引用勾选（工单 23）：状态与语义都走现成 helper + citationSelection.ts，这里只做接线 ---------- */
+
+function toggleCites(qi: number): void {
+  citesOpen.value = { ...citesOpen.value, [qi]: !citesOpen.value[qi] }
+}
+/** 当前题渲染的卡片副本（无引用时为空数组，v-for / v-if 直接用）。 */
+function copiesOf(qi: number) {
+  return copiesOfQuestion(citeCopies.value, qi)
+}
+function toggleCitation(qi: number, chunkId: number, adopted: boolean): void {
+  citeCopies.value = withAdopted(citeCopies.value, qi, chunkId, adopted)
+}
+function citeSummary(qi: number): string {
+  return citationsHeaderText(citeCopies.value, qi)
+}
+/**
+ * 正文截断辅助。
+ * 副本的静态形状是 CitationLike（text 可选），运行时来自 CitationCard 一般都有正文；
+ * 缺字段就按「没有正文」处理，不显示假内容。
+ */
+function citeIsLong(text?: string): boolean {
+  return (text ?? '').length > CITE_TEXT_LIMIT
+}
+function citeExcerpt(text: string | undefined, qi: number, chunkId: number): string {
+  const t = text ?? ''
+  if (!citeIsLong(t) || citeFullOpen.value[`${qi}:${chunkId}`]) return t
+  return t.slice(0, CITE_TEXT_LIMIT) + '…'
+}
+function toggleCiteFull(qi: number, chunkId: number): void {
+  const key = `${qi}:${chunkId}`
+  citeFullOpen.value = { ...citeFullOpen.value, [key]: !citeFullOpen.value[key] }
+}
+
 function answersForRound(r: FrontierRound): Array<string | null> {
   return r.frontier.map((_, qi) => (skippedQ.value.includes(qi) ? null : (drafts.value[qi] || '').trim()))
 }
@@ -1078,7 +1208,13 @@ async function submitRound(): Promise<void> {
   }
   submitting.value = true
   try {
-    await submitAnswers(task.id, r.round_no, answersForRound(r))
+    // 第 4 参（工单 23）：本轮被取消的引用片段，确保它们不进后续提示词
+    await submitAnswers(
+      task.id,
+      r.round_no,
+      answersForRound(r),
+      roundRejectedChunkIds(citeCopies.value)
+    )
     const converged = await advanceAndRefresh()
     // 刚答完的轮次默认展开，让「我的回答」即时可见
     expandedIds.value = [...new Set([...expandedIds.value, r.round_no])]
@@ -1099,7 +1235,9 @@ async function submitSkipAll(): Promise<void> {
     await submitAnswers(
       task.id,
       r.round_no,
-      r.frontier.map(() => null)
+      r.frontier.map(() => null),
+      // 整轮跳过也带上已取消的引用：取消是用户看过的决定，不该因跳过而失效
+      roundRejectedChunkIds(citeCopies.value)
     )
     const converged = await advanceAndRefresh()
     expandedIds.value = [...new Set([...expandedIds.value, r.round_no])]
@@ -1178,6 +1316,15 @@ async function backToRevise(): Promise<void> {
   box.scrollIntoView({ behavior: 'smooth', block: 'center' })
   box.focus()
   ElMessage.info('请在这里说明要改哪几章；提交修订后方案回到草稿态，需再次确认')
+}
+
+/**
+ * 生成面板的「填充为正文」入口（工单 #9）：滚到填充卡并打开它的参数弹窗。
+ * 弹窗只在 FillPanel 一处——这里不复制第二套「设定篇幅」，避免两处口径不一致。
+ */
+function openFillDialog(): void {
+  fillWrap.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  fillPanel.value?.openDialog()
 }
 
 async function doResolve(item: OpenItem, status: ResolveStatus): Promise<void> {
@@ -1830,6 +1977,112 @@ onMounted(() => {
   border-color: var(--brand-200);
   color: var(--brand-600);
   background: var(--brand-50);
+}
+
+/* 参考资料区（工单 23）：沉底背景与题卡分层，字号走 --fs-xs 保持卡片密度 */
+.cites {
+  margin-top: var(--sp-3);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-sm);
+  background: var(--bg-sunken);
+  padding: 0 var(--sp-3) var(--sp-2);
+}
+.cites-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: var(--fs-xs);
+  padding: var(--sp-2) 0;
+  text-align: left;
+  cursor: pointer;
+}
+.cites-toggle b {
+  font-weight: 600;
+  color: var(--text-2);
+}
+.cites-toggle:hover b {
+  color: var(--brand-600);
+}
+.cites-toggle .chev {
+  flex: none;
+  color: var(--text-4);
+  transition: transform 0.16s;
+}
+.cites-toggle .chev.is-open {
+  transform: rotate(90deg);
+}
+.cite-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  margin: 0 0 var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--warn-fg);
+  line-height: 1.55;
+}
+/* 无引用、只给检索结论提示时的独立一行 */
+.cite-notice.bare {
+  margin-top: var(--sp-3);
+}
+.cite-notice .ico {
+  flex: none;
+  margin-top: 1px;
+  color: var(--warn-fg);
+}
+.cites-list {
+  list-style: none;
+  margin: 0;
+  padding: var(--sp-2) 0 0;
+  border-top: 1px solid var(--line-1);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.cite {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+}
+.cite-box {
+  flex: none;
+  margin-top: 3px;
+  accent-color: var(--brand-500);
+}
+.cite-main {
+  flex: 1;
+  min-width: 0;
+}
+.cite-line {
+  display: block;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text-2);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.cite-text {
+  margin: 2px 0 0;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.cite-more {
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: var(--fs-xs);
+  color: var(--brand-600);
+  padding: 2px 0 0;
+  cursor: pointer;
+}
+.cite-more:hover {
+  text-decoration: underline;
 }
 
 /* 跳过态 */

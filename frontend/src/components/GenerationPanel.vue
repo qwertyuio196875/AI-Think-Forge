@@ -22,6 +22,46 @@
 
     <!-- 解锁态：可操作 -->
     <div v-else class="card-body gp-live">
+      <!-- 填充 / 仅导出大纲：方案确认后的两条出路（工单 #9，US1/US2）。
+           平铺在面板顶部、不弹模态——「调不调模型、花不花额度」要在按下之前就说清，
+           而不是按完才发现。 -->
+      <div class="gfield">
+        <label>方案已确认 · 选择下一步</label>
+        <div class="paths" role="group" aria-label="填充为正文或仅导出大纲">
+          <button type="button" class="path" aria-label="填充为正文，打开设定目标字数弹窗" @click="emit('request-fill')">
+            <el-icon class="path-ico"><EditPen /></el-icon>
+            <span class="path-main">
+              <b>填充为正文</b>
+              <span class="path-d">
+                按成品章节把大纲逐章扩写为完整正文；生成阶段只有这一步会调模型写作、消耗额度。
+                填充完成后回到本面板选格式生成正文成品。
+              </span>
+            </span>
+            <el-icon class="path-go"><ArrowRight /></el-icon>
+          </button>
+          <button
+            type="button"
+            class="path"
+            :disabled="generating"
+            :aria-busy="outlineExporting ? 'true' : 'false'"
+            aria-label="仅导出大纲，生成 Word 文件并立即下载"
+            @click="runGenerateOutline()"
+          >
+            <el-icon class="path-ico" :class="{ 'is-loading': outlineExporting }">
+              <Loading v-if="outlineExporting" /><Download v-else />
+            </el-icon>
+            <span class="path-main">
+              <b>仅导出大纲<template v-if="outlineExporting"> · 正在导出…</template></b>
+              <span class="path-d">
+                不调用模型、不消耗模型额度：把结构化方案确定性渲染成 Word，点一下直接交出文件。
+                文件名带 <code>outline-</code> 前缀，与填充后的正文成品一眼可分；
+                使用下方「Word 模板」的当前选择（默认跟随全局）。
+              </span>
+            </span>
+          </button>
+        </div>
+      </div>
+
       <!-- 格式 -->
       <div class="gfield">
         <label>成品格式</label>
@@ -113,7 +153,14 @@
 
       <!-- 生成动作 -->
       <div class="gp-actions">
-        <el-button type="primary" size="large" :loading="generating" :icon="Box" @click="runGenerate()">
+        <el-button
+          type="primary"
+          size="large"
+          :loading="generating"
+          :disabled="outlineExporting"
+          :icon="Box"
+          @click="runGenerate()"
+        >
           {{ generating ? '正在生成…' : generateButtonText }}
         </el-button>
         <!-- PDF 是**可选**产物（工单 31）：与 PPT 同源同版式，按需单独导出，
@@ -121,7 +168,7 @@
         <el-button
           size="large"
           :loading="pdfGenerating"
-          :disabled="generating"
+          :disabled="generating || outlineExporting"
           @click="runGeneratePdf()"
         >
           {{ pdfGenerating ? '正在导出 PDF…' : '另存为 PDF（可选）' }}
@@ -270,9 +317,13 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
+  ArrowRight,
   Box,
   Document,
+  Download,
+  EditPen,
   Film,
+  Loading,
   Lock,
   Select,
   WarningFilled
@@ -307,6 +358,12 @@ const props = defineProps<{
   lockReason?: string
 }>()
 
+/**
+ * 「填充为正文」只在这里点一下：弹窗留在 FillPanel（设定篇幅的唯一出口），
+ * 本面板不复制第二套填充参数，避免「两处弹窗、两个口径」。
+ */
+const emit = defineEmits<{ (e: 'request-fill'): void }>()
+
 const BUILTIN_TEMPLATE = '_builtin/minimal-default.docx'
 const DECK_THEME_PREFIX = 'deck-theme:'
 /**
@@ -330,6 +387,8 @@ const metaById = ref<Record<number, GenerationResponse>>({})
 const generating = ref(false)
 /** PDF 导出中（工单 31，可选动作，与主生成互不阻塞）。 */
 const pdfGenerating = ref(false)
+/** 仅导出大纲中（工单 #9）：与「生成」并发互斥，见模板三条按钮的 disabled 绑定。 */
+const outlineExporting = ref(false)
 const viewerLoading = ref(false)
 const genError = ref('')
 const genErrorTitle = ref('')
@@ -485,7 +544,7 @@ async function loadGenerations(): Promise<void> {
 }
 
 async function runGenerate(override?: string | null): Promise<void> {
-  if (generating.value) return
+  if (generating.value || outlineExporting.value) return
   generating.value = true
   genError.value = ''
   genErrorTitle.value = ''
@@ -506,6 +565,44 @@ async function runGenerate(override?: string | null): Promise<void> {
     handleGenError(err)
   } finally {
     generating.value = false
+  }
+}
+
+/**
+ * 仅导出大纲（工单 #9，US2）：一次点击 = 生成 + 把文件交给用户。
+ *
+ * 与「生成 Word 成品」走同一个后端入口——方案确认后未填充时，后端产出的就是
+ * `outline-` 前缀的大纲成品（确定性渲染，不调模型），不新造接口也不新造格式卡。
+ * 刻意不切换 `format`：点了大纲就交大纲文件，页面上的格式选择保持用户原样，
+ * 不让一次导出悄悄改掉下一次生成的默认。
+ * 模板沿用当前 Word 模板选择（哨兵值映射回 null = 跟随全局默认）；
+ * 生成失败复用 handleGenError——与主轨同一套错误语义。
+ */
+async function runGenerateOutline(): Promise<void> {
+  if (generating.value || outlineExporting.value) return
+  outlineExporting.value = true
+  genError.value = ''
+  genErrorTitle.value = ''
+  canRetryBuiltin.value = false
+  try {
+    const resp = await generateDeliverable(props.taskId, {
+      format: 'docx',
+      template: templateSel.value === TEMPLATE_DEFAULT ? null : templateSel.value
+    })
+    generations.value = [resp, ...generations.value]
+    metaById.value = { ...metaById.value, [resp.id]: resp }
+    try {
+      await downloadDeliverable(resp.id, baseName(resp.file_path))
+      ElMessage.success('已导出大纲并交出文件（' + baseName(resp.file_path) + '）')
+    } catch (err) {
+      // 成品已生成、只是投递失败：按打开失败提示并留档在成品记录，
+      // 不能说成「生成失败」——那会让人以为要重来一遍，而其实只需重新点下载。
+      degradeOpen(err, baseName(resp.file_path))
+    }
+  } catch (err) {
+    handleGenError(err)
+  } finally {
+    outlineExporting.value = false
   }
 }
 
@@ -687,6 +784,73 @@ onMounted(() => {
   font-weight: 600;
   letter-spacing: 0.3px;
   margin-bottom: var(--sp-2);
+}
+
+/* 填充 / 仅导出大纲 二选一条（工单 #9）：与格式卡同一套卡片语言，窄屏自动单列 */
+.paths {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--sp-3);
+}
+.path {
+  display: flex;
+  gap: var(--sp-3);
+  align-items: flex-start;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-md);
+  padding: var(--sp-3);
+  background: var(--bg-surface);
+  cursor: pointer;
+}
+.path:hover:not(:disabled) {
+  border-color: var(--brand-200);
+  background: var(--brand-50);
+}
+.path:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.path-ico {
+  flex: none;
+  margin-top: 2px;
+  font-size: 16px;
+  color: var(--brand-600);
+}
+.path-go {
+  flex: none;
+  margin-top: 2px;
+  margin-left: auto;
+  font-size: 13px;
+  color: var(--text-4);
+}
+.path:hover:not(:disabled) .path-go {
+  color: var(--brand-600);
+}
+.path-main {
+  min-width: 0;
+}
+.path b {
+  display: block;
+  font-size: var(--fs-sm);
+  color: var(--text-1);
+}
+.path-d {
+  display: block;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  margin-top: 2px;
+  line-height: 1.55;
+}
+.path code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  background: var(--bg-sunken);
+  border-radius: var(--r-xs);
+  padding: 0 4px;
+  color: var(--text-2);
 }
 .fmt-grid {
   display: grid;
@@ -1060,6 +1224,12 @@ onMounted(() => {
   .card-body {
     padding-left: var(--sp-4);
     padding-right: var(--sp-4);
+  }
+}
+/* 窄屏（<=720px）二选一条改为单列堆叠，卡片文案不挤成细条 */
+@media (max-width: 720px) {
+  .paths {
+    grid-template-columns: 1fr;
   }
 }
 </style>
