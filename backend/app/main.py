@@ -142,6 +142,13 @@ def create_app(
 
     app.state.pptx_renderer = PlaywrightScreenshotRenderer()
 
+    # PDF 打印渲染器（工单 31）：与截图渲染器对称，生产默认把同一份 deck 打印成 PDF
+    # （Playwright，延迟加载）；测试经 `dependency_overrides[get_pdf_renderer]` 注入
+    # 写真实可读 PDF 的假实现，同样不启动浏览器。
+    from app.generation.pdfs import PlaywrightPdfRenderer
+
+    app.state.pdf_renderer = PlaywrightPdfRenderer()
+
     app.include_router(api_router, prefix=config.API_PREFIX)
 
     # API 路由注册在前；静态托管挂在 "/" 兜底，仅当前端构建产物存在时启用。

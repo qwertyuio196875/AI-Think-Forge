@@ -35,6 +35,7 @@ from app.generation.deck import (
     verify_html_deliverable,
 )
 from app.generation.page_deck import slides_for_page_plan
+from app.generation.pdfs import PdfRenderer, render_pdf, verify_pdf_deliverable
 from app.generation.pptx import assemble_pptx, verify_pptx_deliverable
 from app.generation.screenshots import SlideRenderer, screenshot_slides
 from app.generation.templates import resolve_template
@@ -44,6 +45,7 @@ from app.generation.word import build_word_deliverable, verify_word_deliverable
 FORMAT_DOCX = "docx"
 FORMAT_HTML = "html"
 FORMAT_PPTX = "pptx"
+FORMAT_PDF = "pdf"
 
 # 单文件 HTML 演示所用「主题模板」在生成记录里的标识前缀（`generations.template_used`）。
 # 术语（GLOSSARY）**模板**：样式文件；HTML 一轨的样式载体就是主题，故沿用同一列记录，
@@ -369,6 +371,82 @@ def generate_pptx_deliverable(
         task_id=task_id,
         plan_id=plan_id,
         format=FORMAT_PPTX,
+        file_path=str(output_path),
+        template_used=deck_template_name(theme.id),
+        source=SOURCE_BODY,
+        page_plan_id=page_plan_id,
+    )
+
+    return {
+        **record,
+        "integrity_ok": True,
+        "theme_used": theme.id,
+        "slides": len(slides),
+        "page_plan_id": page_plan_id,
+    }
+
+
+def generate_pdf_deliverable(
+    *,
+    task_id: int,
+    task_title: str,
+    theme: DeckTheme,
+    data_dir: str | Path,
+    generation_repository: GenerationRepository,
+    section_repository: PlanSectionRepository,
+    page_plan_repository: PagePlanRepository,
+    renderer: PdfRenderer,
+) -> dict:
+    """生成一份**可选 PDF**（同一份 HTML deck 直接打印）并记录。
+
+    与 `generate_pptx_deliverable` **同源同版式**：同一份页面规划、同一份 deck，只是导出
+    方式不同（PDF 打印而非逐页截图装配）。因此两者页数与版式天然一致（issue #31 验收 ①）。
+
+    纪律与既有各轨相同：**先确认产物合格，再落库**；打印失败 / 页数不符一律丢弃产物、
+    不落库、磁盘不留 `.pdf`（验收 ②）。PDF 是**独立格式**，不参与也不阻塞 HTML / PPTX
+    的生成路径（验收 ③）。
+    """
+    page_plan = page_plan_repository.latest_for_task(task_id)
+    if page_plan is None:
+        raise ValueError("该任务还没有页面规划：PDF 需要先按目标页数规划（#25）")
+    page_plan_id = int(page_plan["id"])
+    plan_id = int(page_plan["plan_id"])
+    pages = _decode_pages(page_plan["pages_json"])
+
+    sections = section_repository.list_for_plan(plan_id)
+    slides = slides_for_page_plan(
+        pages=pages,
+        sections=sections,
+        task_title=task_title,
+        plan_title=task_title,
+    )
+
+    output_dir = Path(data_dir) / config.DELIVERABLES_SUBDIR / str(task_id)
+    html_path = output_dir / f".pdf-stage-{page_plan_id}.html"
+    build = build_html_deck_from_slides(
+        slides=slides,
+        task_title=task_title,
+        plan_md="",
+        theme=theme,
+        output_path=html_path,
+    )
+    output_path = _unique_output_path(
+        output_dir, page_plan_id, suffix=".pdf", prefix=BODY_FILE_PREFIX
+    )
+
+    # 打印 → 回读校验，任一失败即丢弃，磁盘不留 pdf（issue #31 验收 ②）。
+    try:
+        render_pdf(build=build, output_path=output_path, renderer=renderer)
+        verify_pdf_deliverable(output_path, expected_pages=len(slides))
+    except Exception:
+        output_path.unlink(missing_ok=True)
+        html_path.unlink(missing_ok=True)
+        raise
+
+    record = generation_repository.create(
+        task_id=task_id,
+        plan_id=plan_id,
+        format=FORMAT_PDF,
         file_path=str(output_path),
         template_used=deck_template_name(theme.id),
         source=SOURCE_BODY,
