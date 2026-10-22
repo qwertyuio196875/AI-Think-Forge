@@ -110,14 +110,20 @@ npm run dev
 
 ## 技术栈
 
+完整版本约束见 `pyproject.toml` 与 `frontend/package.json`。
+
 | 层 | 选型 |
 | --- | --- |
-| 后端 | Python 3.12 · FastAPI · Pydantic v2 · SQLite |
-| Agent | LangGraph 显式状态机，节点级持久化，重启可恢复 |
-| 模型接入 | OpenAI 兼容客户端（`httpx` 直连，不绑定厂商 SDK） |
-| 前端 | Vue 3 · TypeScript · Vite · Element Plus |
-| 成品 | python-docx · 单文件 HTML · Playwright + python-pptx · PDF |
-| 检索 | 向量存 SQLite，numpy 暴力余弦；嵌入不可用时降级关键词检索 |
+| 运行环境 | Windows 10 / 11 · Python 3.12+ · Node.js 20+（仅构建前端） |
+| 后端框架 | FastAPI 0.115+ · Uvicorn 0.32+ · Pydantic 2.9+ · SQLite |
+| 流程编排 | LangGraph 1.2+：显式状态机、节点级持久化、重启恢复 |
+| 模型接入 | `httpx` 0.27+ 直连 OpenAI 兼容接口；`keyring` 25.4+ 将密钥存 Windows 凭据管理器 |
+| 前端 | Vue 3.5 · TypeScript 5.6 · Vite 5.4 · Vue Router 4.4 · Element Plus 2.8 |
+| 文档解析 | python-docx · pypdf · python-pptx · trafilatura · markdown-it-py · charset-normalizer |
+| 内容生成 | python-docx（Word）· 单文件 HTML deck · Playwright 1.44+ 与 Chromium（逐页截图）· python-pptx（PPTX 组装） |
+| 检索 | 向量存 SQLite，numpy 1.26+ 暴力余弦；嵌入不可用时降级关键词检索 |
+| 测试与检查 | pytest 8.3+ · ruff 0.7+ · vue-tsc 2.1+ · Node.js `node --test` |
+| 依赖管理 | 后端 `pyproject.toml`、前端 `package.json`；不另设 `requirements.txt` |
 
 ## 项目结构
 
