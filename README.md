@@ -1,384 +1,210 @@
 # ThinkForge
 
-个人 AI 阅读与内容创作工作台。运行在本机 Windows 上，把「阅读资料 → 辅助思考 → 完善想法 → 确认方案 → 生成成品」连成一条离线可用的本地工作流。
+**把一句模糊的想法，打磨成一份可交付的成品。**
 
-核心不是堆框架，而是**这条流程可靠、可持续使用**：用拷问式对话把模糊想法打磨成经你确认的结构化方案，再生成成品。任务状态全程持久化，模型可切换，密钥不出本机数据库。
+![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.115%2B-009688?logo=fastapi&logoColor=white)
+![Vue](https://img.shields.io/badge/Vue-3.5-42B883?logo=vuedotjs&logoColor=white)
+![Backend tests](https://img.shields.io/badge/backend_tests-666-2EA043)
+![Frontend tests](https://img.shields.io/badge/frontend_tests-170-2EA043)
+![Status](https://img.shields.io/badge/status-v1.1-0B7285)
 
-> 术语以 [`GLOSSARY.md`](GLOSSARY.md) 为准。本文中「主题创作 / 拷问 / 轮次 / 前沿 / 结构化方案 / 方案确认 / 待确认事项 / 资料分析 / 总结 / 成品 / 模板 / 单文件 HTML / 任务 / 模型配置 / 连接测试」均为定义过的领域词汇。
+ThinkForge 是一个运行在 Windows 单机上的 AI 阅读与内容创作工作台。
 
----
+大多数 AI 写作工具从一句话直接跳到成品；ThinkForge 把中间那一步——**把需求问清楚**——做成可检查、可修改、可复现的流程：拷问式对话收敛需求 → 结构化方案 → 显式确认 → 逐章写作 → Word / HTML / PPT / PDF。
 
-## 核心工作流
+任务、对话、方案与章节落本地 SQLite，成品与原始资料落 `data/`。密钥存 Windows 凭据管理器，不写数据库。
 
-### 主题创作（核心）
+> 唯一的外发通道是模型与嵌入调用：提示词和待索引文本会发送给所配置的服务商。除此之外不联网。
 
-拷问式对话闭环，规则源自 Matt Pocock 的 grilling 技能（MIT，规则移植适配，见 ADR-0001）：
+## 核心能力
 
-1. 用一句话、一段描述、一份文档或一份 PPT 发起任务；
-2. 系统先解析输入、识别目标 / 背景 / 约束 / 已知信息，不重复询问你已提供的内容；
-3. 每轮把当前**前沿**（现在就能问出口、无需猜测未听之答案）的问题一次问完，每题附推荐答案；
-4. 下一轮问题根据你的回答动态重算，而非固定问题集；
-5. 收敛后产出结构化方案（目标、读者、观点、章节、约束、风险、待确认事项等）；
-6. 继续对话修订方案，直到你**显式确认**——未确认的推测只记为待确认事项，绝不直接变成成品。
+| 阶段 | 能做什么 | 关键约束 |
+| --- | --- | --- |
+| 拷问与方案 | 每轮只问「现在就能问」的前沿问题，每题附推荐答案；可继续追问、对话式修订 | 方案必须显式确认；未处置的待确认事项会拦住确认与生成 |
+| 资料分析 | 上传 TXT / MD / DOCX / PDF / PPTX 或贴公开网页 URL，先解析再总结 | 总结 ≤ 500 汉字；扫描件无文本层直接说明；URL 抓取做 SSRF 校验 |
+| 知识库与引用 | 资料入库后，在拷问与填充时检索命中片段；引用默认全选、逐条可取消 | 嵌入不可用降级关键词检索；双失败明示「本次未使用知识库」 |
+| 填充正文 | 按成品章节逐章扩写；可中断、续写、单章重写 | 300–20000 字；各章分摊之和恒等于目标；±15% 偏差只对最短章重试一次 |
+| 成品生成 | Word、单文件 HTML 演示、截图版 PPTX、PDF | PPTX 为图片型、文字不可编辑；页数 3–60 是硬约束 |
+| 任务管理 | 状态自动保存、重启续作、软删除与回收站 | 删除前先展示影响范围；已删除任务不出现在创作页 |
 
-### 资料分析
+## 工作流
 
-面向单份资料（DOCX / PDF / TXT / MD / PPTX 或公开网页 URL）的「解析 → 总结」快捷路径，默认不走拷问：总结 ≤500 汉字、分块 map-reduce 不遗漏、识别不了的内容明示、结论可一键送入主题创作。
+```mermaid
+flowchart LR
+    A[一句想法 / 文档 / 演示] --> B[拷问：每轮前沿问题]
+    B --> C{结构化方案}
+    C -->|继续修订| B
+    C -->|显式确认| D[成品章节]
+    D --> E{下一步}
+    E -->|填充正文| F[逐章写作]
+    E -->|仅导出大纲| G[outline- Word]
+    F --> H[Word / HTML / PPTX / PDF]
+    G --> H
+    K[(知识库)] -.->|检索引用| B
+    K -.->|检索引用| F
+```
 
-### 填充正文（v1.1）
+1. 用一句话、一段描述、一份文档或 PPT 发起任务。
+2. 答完每一轮问题；拿不准的题可以「暂时跳过」，它会进入待确认事项。
+3. 收敛后检查方案，直接修订或确认。
+4. 选「填充为正文」逐章写，或「仅导出大纲」先拿文件。
+5. 在生成面板选格式、模板与主题，下载成品。
 
-方案确认后，生成面板顶部问一次「填充为正文 / 仅导出大纲」：选填充就按成品章节逐章写正文（先定总字数、可逐章调），进度显示「第 3 / 8 章」，可中断、下次续写，也可只重写某一章；选大纲则一次点击拿到 `outline-` 文件。填充后的 Word 带真实段落与小标题，末尾附本次实际用到的「参考资料」。
+## 快速开始
 
-### 知识库与检索（v1.1）
+### 环境
 
-上传自己的资料即入库并建索引。拷问问到需要外部依据的事实型问题时检索，命中片段以可折叠卡片显示（文件名 · 位置 · 相关度），默认全选、逐条可取消；决策型问题不检索。填充时同样可取消引用，成品只列真正用到的来源。嵌入不可用时自动降级关键词检索，并明确显示降级状态。
-
----
-
-## 当前状态
-
-领域文档与规格已就位，**TB-0 ~ TB-10 以及 v1.1 收尾（issue #2）的后端与前端均已落地并带自动化测试**：行走骨架、模型配置与连接测试、拷问闭环（第一轮 / 收敛 / 方案确认 / 修订与待确认事项）、资料分析（TXT / MD / DOCX / PDF / PPTX / URL）、历史与续作、Word 与单文件 HTML 演示，以及填充正文与字数控制、页面规划与截图版 PPT / PDF、知识库与最小版 RAG。除下表标 ✅ 者外，请以规格为准，勿当作已实现能力。
-
-| 部分 | 现状 |
+| 依赖 | 要求 |
 | --- | --- |
-| 领域文档 | ✅ `GLOSSARY.md`、`docs/adr/0001~0006` |
-| 规格与工单 | ✅ 权威规格 `.scratch/workbench-v1/issues/08-v1-unified-spec.md`；曳光弹工单 TB-0 ~ TB-10；v1.1 规格与工单见 GitHub issue #2 / #3~#31 |
-| 页面原型 | ✅ `.scratch/workbench-v1/prototype/index.html`（静态自包含四视图，含评审标注 `REVIEW.md`） |
-| 前端工作台 | ✅ 三栏壳 + 五路由（创作 / 分析 / 知识库 / 历史 / 设置）；任务级模型选择、分析回看与总结 Word、HTML 全局默认主题、填充与页数参数弹窗、引用卡片均已接入；`npm run build` / `type-check` 通过 |
-| 后端 | ✅ 行走骨架 TB-0：FastAPI 应用（`backend/app`）、`tasks` 最小表、健康检查与任务创建 / 列表 / 读取、模型客户端与 URL 抓取两个 fake 注入点接缝 |
-| 模型配置与连接测试 | ✅ TB-1：`providers` / `settings` 表、DeepSeek 默认播种（3 档角色）、密钥存 Windows 凭据管理器、OpenAI 兼容 httpx 客户端、配置 CRUD 与连接测试（错误分级）、开发期仅本机源的 CORS |
-| 拷问第一轮 | ✅ TB-2：`messages` 表（轮次 / 角色 / 内容 / 时间，问答同序落库）、版本化提示词资产（MIT 署名，见 ADR-0001）、LangGraph 最小节点图（分析输入 → 生成前沿 → 落库返回，前沿为空即停）、`/api/grilling/*` 发起 / 作答 / 读取对话 |
-| 收敛 → 方案 → 确认闸门 | ✅ TB-3：`plans` 表（内容 / 状态 draft\|confirmed / 确认时间 / 关联轮次）、每轮按上轮回答重算前沿、前沿为空即收敛并生成结构灵活的结构化方案草稿、显式确认动作、生成入口在方案未确认时服务端拒绝（409）、版本化方案提示词资产 |
-| 方案修订与待确认事项 | ✅ TB-4：`plan_revisions`（修订前 / 修订后 / 时间 / 差异提示，旧版本不丢）、`open_items`（来源轮次 / 条目 / 状态）、对话式修订（`POST …/plan/revisions`）与差异提示、前沿问题新增 `why`（为什么现在问）/ `alternatives`（备选方向）（资产升 `grilling-v2`）、「暂时跳过」入待确认事项、未处置条目拦截生成（409） |
-| Word 成品与模板机制 | ✅ TB-5：`generations`（任务 / 方案 / 格式 / 产物位置 / **本次实际所用模板** / 时间）、`templates`（模板登记：名称 / 格式 / 是否默认）、确认方案后经 `python-docx` 生成 .docx（标题 / 正文 / 列表 / 表格按模板样式映射）、内置最小默认模板按需幂等生成、全局默认模板与任务级**临时覆盖**分离、产物**回读**完整性检查（US 22）、模板缺失 / 损坏 / 非 `.docx` 明确报错不静默空白生成 |
-| 单文件 HTML 演示 | ✅ TB-6：同一张 `generations` 表（`format=html`、`template_used=deck-theme:<id>`）、三套内建主题（`slate` / `ember` / `mono`，调色板以原型 `DECKT` 为准）、方案确定性排成幻灯片、样式 / 翻页脚本 / **西文字体（latin 子集 woff2）全部内联**、中文走系统字体回退、产物**扫描断言 0 条外部网络引用**、`file://` 直开可用（键盘翻页 + 页码 + 页内演讲者模式）、`THIRD-PARTY-LICENSES` 与产物署名齐备 |
-| 资料分析（文本类） | ✅ TB-7：`sources` / `documents` / `document_chunks`（含 locator）/ `summaries`（含引用与档位证据）；分析管线自身**不写向量**（`embeddings` 由 v1.1 知识库检索填充，见 ADR-0005）；上传校验（TXT / MD / DOCX + 50MB）→ 解析（TXT 编码顺序 `utf-8-sig → gb18030 → charset-normalizer`；MD 走 `markdown-it-py` token 流；DOCX 标题按 `paragraph.style.name` + 启发式回退并标 `heading_source`）→ 分块 → **逐块分析 + 综合（map-reduce，不称 RAG）** → ≤500 汉字总结；未识别是一级输出字段（无文本层短路、不冒充成功）；模型失败可读 502 且不丢已存数据；总结走 **turbo 档**、缺失时回退默认并如实记录；一键送入主题创作只预填、不调用模型；模板 multipart 上传（仅 `.docx`） |
-| 资料分析（版式类） | ✅ TB-8：`pypdf` 解析 PDF 正文与字号启发式标题、`python-pptx` 解析每页标题 / 正文 / 表格；`documents.parser` 记录解析器；页 / 幻灯片级 locator 进入分块与引用；扫描件 / 纯图片文件 → `no_text_layer` + `needs_ocr=true` 短路；图片 / 图表 / 组合形状逐项进 `unrecognized_parts`；加密或损坏 PDF 明确失败，不绕过 |
-| 资料分析（URL） | ✅ TB-9：`POST /api/analysis/sources/url` 抓取公开网页后进入同一分析管线；纯函数 SSRF 校验（仅 http/https、拒绝内嵌凭据 / 环回 / 私网 / 链路本地 / 云元数据、解析前后双检）；重定向最多 3 跳且逐跳复检、超时 15s、下载上限 5MB；`trafilatura` 提取正文并过滤导航 / 广告；需登录 / 超时 / 超限如实提示且不绕过；无正文 → `no_main_text` / `empty_page` 明示 |
-| 填充正文 · 字数控制 | ✅ 工单 #3~#18：`plan_sections`（一章一行，`(plan_id, seq)` 唯一）在方案确认时落库；`POST /api/tasks/{id}/fill` 三道闸（未确认 409 / 无可切章节 422 / 未处置待确认事项 409）；逐章串行填充带前情提要，可中断续写、可单章重写；总字数 300–20000，各章建议字数之和**恒等于**目标；±15% 偏差只对最短一章重生成一次，仍偏差则如实上报；8000 字级长章分段生成；汉字计量只有 `app/hanzi.py` 一个入口；大纲导出文件名带 `outline-`，正文成品带 `body-` |
-| 页面规划 · 截图版 PPT · PDF | ✅ 工单 #25~#31：`POST /page-plans` 按章节权重合并 / 拆页，页数 3–60 是**硬约束**且封面计入；预览可单页增删，实际页数以修改后的规划为准；Playwright 内置 Chromium 逐页截图（1280×720、2x → 2560×1440 PNG），python-pptx 按 13.333×7.5 英寸满幅装配 `.pptx`；PDF 与 PPT 同源同版式，作为可选动作单独导出；测试注入假渲染器，**不启动浏览器** |
-| 知识库 · 最小版 RAG | ✅ 工单 #19~#24：知识库资料复用 `sources` / `documents` / `document_chunks`（以 `task_id IS NULL` 表示不隶属任务）；嵌入默认百炼 `text-embedding-v4`，向量以固定 JSON 存 SQLite，检索用 numpy 内存暴力余弦；top-k = 6、相似度 <0.3 丢弃、单次注入 ≤3000 汉字；嵌入不可用降级为二元组关键词检索，双失败明示「本次未使用知识库」且填充仍可完成；拷问事实型问题带可折叠引用卡片，填充前可逐条取消，成品末尾「参考资料」只列实际使用的来源 |
-| 运行时目录 | ✅ `data/`（运行时 SQLite 落此处，gitignored）、`启动.bat`、根 `.gitignore`（覆盖 `/data/`、`/templates/`、`.slim/`） |
-| 自动化测试 | ✅ `backend/tests`（pytest，进程内 HTTP 接缝，不联网；**666 项通过**，`ruff check` 全绿）+ `frontend/tests`（`node --test` 纯函数测试，**170 项通过**） |
+| 操作系统 | Windows 10 / 11 |
+| Python | 3.12+ |
+| Node.js | 20+（仅构建前端需要） |
+| 模型服务 | 任意 OpenAI 兼容服务；默认 DeepSeek，嵌入默认百炼 `text-embedding-v4` |
 
-### v1 收尾补齐（2026-10-19 评审）
+### 安装
 
-代码评审发现三项跨工单规格缺口，已在集成分支补齐：
+```powershell
+git clone https://github.com/qwertyuio196875/AI-Think-Forge.git
+cd AI-Think-Forge
 
-| 缺口 | 落地 |
-| --- | --- |
-| US23 任务级切换模型 | `tasks.provider_id` + `PUT /api/tasks/{id}/model`；创作 / 分析的模型选择器；拷问、方案、修订与总结按任务 provider 解析，未指定时沿用默认档位 |
-| US16 / US26 分析回看、续看与总结 Word | `GET /api/analysis/sources` 来源列表；历史条目 `source_id`；`?source=N` 恢复解析与总结；`POST /api/analysis/sources/{id}/summary/word` + `GET /api/analysis/summary-deliverables/{id}` 下载 |
-| US20 HTML 全局默认主题 | `settings.deck_theme_default` + `GET/PUT /api/settings/deck-theme`；生成未显式给 `theme` 时用全局默认，生成面板首项「跟随全局默认主题」 |
+python -m venv backend\.venv
+backend\.venv\Scripts\python.exe -m pip install `
+  fastapi "uvicorn[standard]" pydantic httpx keyring langgraph `
+  python-docx charset-normalizer markdown-it-py pypdf python-pptx `
+  python-multipart trafilatura numpy playwright pytest ruff
 
-同时修复：任务 404 样板统一、分析落库管线去重、URL fetcher 的 DNS rebinding 注释改为「缓解 + 残留窗口」、前端错误码改用 `ApiHttpError` / `isApiStatus`、静态托管支持 SPA 深链回退（刷新 `/analysis?source=N` 不再 404）。
+cd frontend
+npm install
+npm run build
+cd ..
+```
 
-规格层面的补充决策见 `.scratch/workbench-v1/issues/08-v1-unified-spec.md`：模板「可打开但缺样式」维持 `template_style_applied=false` 降级；「存在 open 待确认事项时拒绝确认与生成」维持服务端纵深防御。
+截图版 PPT / PDF 还需要内置 Chromium（约 150 MB，只需一次）：
 
-### v1.1 收尾（issue #2，2026-10）
+```powershell
+backend\.venv\Scripts\python.exe -m playwright install chromium
+```
 
-| 能力 | 落地 |
-| --- | --- |
-| 填充闸门与二选一 | 方案确认后，生成面板顶部是内联二选一：「填充为正文」跳到填充参数弹窗；「仅导出大纲」一次点击生成并下载 `outline-` 文件。未确认 / 有未处置待确认事项 → 409；切不出章节 → 422。 |
-| 字数与偏差 | 汉字字数唯一入口；分摊和恒等于目标；逐章可改；±15% 偏差只对最短章重写一次；长章按段落分段调用，任一段命中长度上限即硬错误。 |
-| 页数与截图版 PPT | 页面规划把「章节 → 页列表」定死，说 16 页就是 16 页；单页可增删；截图版 `.pptx` 一页一张满幅图（文字不可编辑 / 不可检索，选择前已说明）；PDF 可选导出。 |
-| 知识库与引用 | 上传即入库并建索引；拷问的事实型问题显示引用卡片（默认全选、逐条可取消），决策型不检索；填充引用只注入被保留的片段，成品末尾附实际用到的「参考资料」。 |
+> 依赖的唯一来源是根目录 `pyproject.toml`；上面的命令与它保持一致，不另设 `requirements.txt`。
 
-与规格的已知偏差（按实际接口调用即可，行为不受影响）：
+### 启动
 
-- 页面规划接口实际为 `/api/tasks/{id}/page-plans`（规格写作 `/page-plan`）；单章重写为 `/api/tasks/{id}/sections/{seq}/rewrite`（规格写作 `regenerate`）；另有 `/fill/run` 用于真正开跑串行填充（`/fill` 只登记任务与返回初始进度）。
-- 截图 / PDF 复用同一份 HTML deck，因此仍内联西文 latin 子集 woff2；规格建议截图轨不内联字体文件。产物视觉与 HTML 演示一致，中文仍走 Windows 系统字体回退。
-- 生成面板的 `docx` 轨始终是**大纲导出**；填充后的正文 Word 由填充流程自动产出并同样出现在成品记录里，两者靠文件名前缀区分。
+双击 `启动.bat`。它会启动后端并托管已构建的前端，自动打开 <http://127.0.0.1:8720>。
 
----
+开发时可分开跑：
+
+```powershell
+# 终端 1：后端
+cd backend
+.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8720
+
+# 终端 2：前端（http://localhost:5173，直连 8720 的 API）
+cd frontend
+npm run dev
+```
+
+### 配置模型
+
+打开「设置」，填写服务商的 API Key，点「连接测试」。密钥只写入 Windows 凭据管理器；连接测试会区分鉴权失败、限流、网络错误等情形，不会把失败伪装成成功。
 
 ## 技术栈
 
 | 层 | 选型 |
 | --- | --- |
-| 后端 | Python 3.12 + FastAPI 单进程，仅监听 `127.0.0.1:8720`，同时托管前端构建产物与 `/api/*` |
-| Agent 工作流 | LangGraph 状态机（拷问节点、逐轮持久化、任务可恢复） |
-| 模型接入 | 统一 OpenAI 兼容客户端（`httpx` 直连，不引入厂商 SDK）；默认服务商 DeepSeek，档位 plus / turbo / max 为角色标签，可任务级切换 |
-| 嵌入 | 同一套 OpenAI 兼容客户端打 `/embeddings`，默认百炼 `text-embedding-v4`；未配置 / 调用失败时降级为二元组关键词检索（ADR-0005） |
-| 存储 | SQLite（任务、对话、方案、成品章节、页面规划、知识库与向量、模板元数据、非敏感配置、生成记录）+ 文件系统（原始资料、模板、成品） |
-| 密钥 | Windows 凭据管理器，SQLite 与日志均不落密钥 |
-| 前端 | Vue 3 + TypeScript + Vite + Element Plus，布局与工作台同构（左导航 / 中会话流 / 底部输入胶囊） |
-| 成品 | Word（python-docx + 用户模板）+ 单文件 HTML 演示（OpenDesign 主题族适配，资源内联、`file://` 直开）+ 截图版 `.pptx`（Playwright 逐页出图、python-pptx 满幅装配）+ 可选 PDF（同一 deck 打印导出） |
+| 后端 | Python 3.12 · FastAPI · Pydantic v2 · SQLite |
+| Agent | LangGraph 显式状态机，节点级持久化，重启可恢复 |
+| 模型接入 | OpenAI 兼容客户端（`httpx` 直连，不绑定厂商 SDK） |
+| 前端 | Vue 3 · TypeScript · Vite · Element Plus |
+| 成品 | python-docx · 单文件 HTML · Playwright + python-pptx · PDF |
+| 检索 | 向量存 SQLite，numpy 暴力余弦；嵌入不可用时降级关键词检索 |
 
----
+## 项目结构
 
-## 目录结构
-
-```
-backend/          # FastAPI 应用包 app/（api、db、models、providers、grilling、analysis、fill、sections、pageplan、retrieval、generation、security）+ tests/ + scripts/（演示脚本）
-frontend/         # Vue3 + TS + Vite + Element Plus；src/{api,layouts,router,views,utils,components}
-fixtures/         # 15 份中文语料（技术文档 / 产品说明 / 调研摘要 / 访谈笔记），RAG 验收与回归夹具
-data/             # 运行时数据（SQLite、上传件、生成产物 data/deliverables/）—— gitignore
-templates/        # 用户 Word / PPT 模板 + 内置默认模板 templates/_builtin/ —— gitignore
+```text
+backend/
+  app/
+    api/          # HTTP 路由与依赖注入
+    grilling/     # 拷问状态机：前沿问题、收敛、方案修订
+    analysis/     # 单份资料的解析、分块、map-reduce 总结
+    fill/         # 逐章填充：字数分摊、偏差、分段、引用
+    sections/     # 成品章节切分与只读章节表
+    pageplan/     # 页面规划：章节 → 页
+    retrieval/    # 知识库索引、向量检索与关键词降级
+    generation/   # Word / HTML deck / 截图版 PPTX / PDF
+    providers/    # 模型配置、凭据、连接测试
+    db/ · models/ · security/
+  tests/          # 666 项，进程内 HTTP + fake 注入
+frontend/
+  src/{views,components,api,utils}
+  tests/          # 170 项纯函数测试
 docs/
-  adr/            # 架构决策记录（ADR-0001 ~ 0006）
-  agents/         # 智能体工作约定（issue 跟踪、分诊标签、领域文档）
-.scratch/
-  workbench-v1/
-    spec.md       # v1 实施规格
-    issues/       # 权威规格 08 与曳光弹工单 TB-0 ~ TB-10
-    prototype/    # 静态页面原型 + 评审标注
-GLOSSARY.md       # 领域术语表
+  adr/            # 架构决策记录 0001–0006
+  agents/         # issue 跟踪、分诊标签、领域文档约定
+fixtures/         # 中文语料夹具
+data/             # 运行时数据（gitignored）
+templates/        # 用户模板（gitignored）
+启动.bat
 ```
 
----
+## 核心 API
 
-## 快速开始
+完整接口见运行后的 Swagger：<http://127.0.0.1:8720/docs>（共 52 条路径）。
 
-依赖：Node.js（已在 Node 24 / npm 11 下开发）、Python 3.12、Windows。
-
-### 前端
-
-```bash
-cd frontend
-npm install
-npm run dev      # Vite 开发服务器，默认 http://localhost:5173
-```
-
-前端不做代理，直连后端 `http://127.0.0.1:8720/api`（见 `src/api/client.ts`）。后端为开发期提供了**仅放行本机开发源的 CORS 中间件**（`http://localhost:5173`、`http://127.0.0.1:5173`；方法 GET/POST/PUT/DELETE，头 Content-Type，不使用通配来源）；生产同源托管 `dist` 不受影响。后端未启动时，请求会被归类为「后端未启动」错误。
-
-四个视图（`CreationView.vue` / `AnalysisView.vue` / `HistoryView.vue` / `SettingsView.vue`）均已就位；`npm run build` 与 `npm run type-check` 可直接通过。
-
-### 后端
-
-后端为 FastAPI 应用（`backend/app`），仅监听本机回环 `127.0.0.1:8720`，API 前缀 `/api`；`tasks` 表在应用启动时幂等建表，SQLite 文件落在 `data/`（gitignored）。
-
-首次准备（在仓库根）：
-
-```powershell
-python -m venv backend\.venv
-backend\.venv\Scripts\python.exe -m pip install fastapi "uvicorn[standard]" pydantic httpx keyring langgraph python-docx charset-normalizer markdown-it-py pypdf python-pptx python-multipart trafilatura numpy playwright pytest ruff
-backend\.venv\Scripts\python.exe -m playwright install chromium
-```
-
-> 依赖记录在根 `pyproject.toml`（运行时依赖 + `dev` extras），不另设 `requirements.txt`。
-> `playwright install chromium` 需要联网下载约 150MB 的内置 Chromium；只有生成截图版 PPT / PDF 时才用得到，失败会明确报错，不会静默降级成「没有 PPT」。
-
-运行测试（在仓库根；进程内 HTTP 接缝，不起端口、不联网）：
-
-```powershell
-backend\.venv\Scripts\python.exe -m pytest -q
-```
-
-启动后端（开发）：
-
-```powershell
-cd backend
-.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8720
-```
-
-或直接双击仓库根 `启动.bat`：拉起后端，若 `frontend/dist` 存在则由后端静态托管工作台并自动打开浏览器。
-
-当前提供的 API：
-
-| 方法 | 路径 | 说明 |
+| 方法 | 路径 | 用途 |
 | --- | --- | --- |
-| GET | `/api/health` | 存活探针，返回 `{"status":"ok",...}` |
-| POST | `/api/tasks` | 创建任务，body `{"kind":"creation"\|"analysis","title":string?,"provider_id":int?}` → 201；`provider_id` 不存在 → 400 |
-| GET | `/api/tasks?kind=&status=` | 任务列表 `{"items":[...],"total":n}` |
-| GET | `/api/tasks/{id}` | 单个任务；不存在返回 404 |
-| PUT | `/api/tasks/{id}/model` | **任务级模型切换（US23）**：body `{"provider_id":int\|null}`，返回更新后的完整 Task；`null` 清除覆盖，未知 provider → 400，已删除任务 → 409。只影响该任务的拷问 / 方案 / 修订 / 分析总结 |
-| GET | `/api/providers` | 模型配置列表（**不含密钥**，含 `has_key`） |
-| POST | `/api/providers` | 新建模型配置，body `{"name","base_url","model_name","kind?","api_key?"}` → 201 |
-| PUT | `/api/providers/{id}` | 编辑；`api_key` 可选，**传了才更新凭据**，否则保留 |
-| DELETE | `/api/providers/{id}` | 删除配置，同时删除其凭据 → 204 |
-| POST | `/api/providers/{id}/default` | 设为唯一默认 |
-| POST | `/api/providers/{id}/test` | 连接测试，返回 `{"ok":bool,"category":str,"message":str}`；`category` ∈ `ok \| network_error \| auth_error \| model_error \| insufficient_balance \| rate_limited \| request_error \| server_error` |
-| POST | `/api/grilling/tasks` | 从一句话 / 一段描述发起主题创作，body `{"idea":string,"provider_id":int?}` → 201，返回 `{"task":Task,"round":{round_no,frontier:[{title,body,recommended_answer,why,alternatives}],answers}}`（第一轮前沿，1~5 个相互独立问题；每题带推荐答案，以及「为什么现在问」`why` 与「备选方向」`alternatives`，二者缺失容错；`provider_id` 为任务级模型覆盖，未知 provider → 400） |
-| POST | `/api/grilling/tasks/{id}/answers` | 提交某轮回答（与前沿问题一一对应），body `{"round_no":int,"answers":[string\|null]}`；`null`（或纯空白）= **暂时跳过**，该题入待确认事项、保持未定 → 写后对话状态 `Dialogue` |
-| GET | `/api/grilling/tasks/{id}/dialogue` | 读取某任务的对话 / 轮次（种子输入 + 各轮前沿与回答 + 原始消息流），供前端渲染对话流 |
-| POST | `/api/grilling/tasks/{id}/advance` | 按上一轮回答重算下一轮前沿；前沿为空即收敛并生成方案草稿。返回 `{"task_id","converged","next_round"\|null,"plan"\|null}` |
-| GET | `/api/grilling/tasks/{id}/plan` | 读取当前结构化方案（`{id,task_id,round_no,content_md,status,confirmed_at}`）；尚无方案返回 404 |
-| POST | `/api/grilling/tasks/{id}/plan/confirm` | **方案确认**：`draft → confirmed` 并记录 `confirmed_at`（进入生成阶段的唯一闸门） |
-| POST | `/api/grilling/tasks/{id}/plan/revisions` | **对话式修订**：body `{"instruction":string}` → 更新方案正文并返回 `{"plan","revision"}`；`revision.change_summary` 为差异提示（`added/removed/modified` + 章节标题），旧版本留痕。方案回到 `draft`（原确认不再覆盖新内容） |
-| GET | `/api/grilling/tasks/{id}/plan/revisions` | 方案的修订历史（逐条含修订前 / 修订后内容与时间）`{"items":[...],"total":n}` |
-| GET | `/api/grilling/tasks/{id}/open-items` | **待确认事项**清单 `{"items":[{id,task_id,round_no,text,status,created_at,resolved_at}],"total":n}` |
-| POST | `/api/grilling/tasks/{id}/open-items/{item_id}/resolve` | 处置一条待确认事项：body `{"status":"confirmed"\|"dismissed"}`（用户确认动作） |
-| POST | `/api/tasks/{id}/generations` | **成品生成入口（硬闸门）**：方案未确认 / 无方案 → 409；**仍有未处置的待确认事项 → 409**；已确认且无未定条目 → 按 `format` 生成成品 → 201。可选 body `{"format":"docx"\|"html"\|"pptx"\|"pdf","template":string?,"theme":"slate"\|"ember"\|"mono"\|null,"page_plan_id":int?}`（`pptx` / `pdf` 需要已有页面规划，省略 `page_plan_id` 时用最新一份）：`template` 为 Word 的**任务级临时覆盖**（不改变全局默认）；`theme` 为**单文件 HTML 演示**的主题，**省略或 null = 跟随设置页的全局默认主题**，显式值只覆盖本次（未知主题 → 400，不静默退回默认）。Word 返回 `template_style_applied` / `missing_styles` / `headings`；HTML 返回 `theme_used` / `inlined_fonts` / `cjk_fallback` / `slides` / `external_resources` / `network_resources_declared` / `presenter_mode`。模板缺失 / 损坏 / 非 `.docx` → 400（明确报错，不产出成品）；完整性检查未通过（含产物含外部网络引用）→ 500 且产物已丢弃、不落库 |
-| GET | `/api/tasks/{id}/generations` | 某任务已生成的成品记录 `{"items":[{id,task_id,plan_id,format,file_path,template_used,created_at}],"total":n}`（HTML 一轨的 `template_used` 为 `deck-theme:<主题 id>`） |
-| GET | `/api/deliverables/{generation_id}` | **成品投递**：按 generation id 取产物字节（浏览器无法读 `file://`，前端「打开成品」与「应用内预览演示」都走这里）。`.docx` → `application/vnd.openxmlformats-officedocument.wordprocessingml.document`（`attachment`）；`.html` → `text/html; charset=utf-8`（`inline`，不加 CSP，可在 `iframe` 内直接渲染）；中文文件名用 `filename*=UTF-8''…`。只投递 `data/deliverables/` 内的真实文件（`resolve()` 后校验，越界 / 缺失 / 未知 id 一律 404，响应体不带路径） |
-| POST | `/api/tasks/{id}/fill` | **开始填充（工单 9）**：未确认方案 / 仍有未处置的待确认事项 → 409；方案切不出章节 → 422 并提示返回修订；成功 → 200，登记填充任务并返回目标字数、章节清单与初始进度 |
-| POST | `/api/tasks/{id}/fill/allocation` | **字数分摊试算（工单 15）**：只算不写。body `{"target_length":int,"overrides":{seq:int}}`；300–20000 越界或分摊不成立 → 422 并说明差多少，不静默改成边界值 |
-| POST | `/api/tasks/{id}/fill/run` | **串行填充（工单 11）**：逐章写正文，全部完成后拼装一次正文 Word；任一章失败 → 报错且不产残缺成品；返回逐章进度与偏差 |
-| POST | `/api/tasks/{id}/fill/cancel` | **中断填充（工单 13）**：已完成章节保留、不产成品；再次 `fill/run` 从下一章继续 |
-| GET | `/api/tasks/{id}/sections` | **成品章节只读清单（工单 7）**：`(plan_id, seq)` 唯一，返回每章标题 / 建议字数 / 已写字数 / 状态；不提供改名、排序、增删 |
-| POST | `/api/tasks/{id}/sections/{seq}/fill` | **单章填充（工单 10 / 24）**：可带 `reference_cards` 指定本章保留的引用片段 |
-| POST | `/api/tasks/{id}/sections/{seq}/references` | **本章引用预览（工单 24）**：只读，返回引用卡片与检索状态 |
-| POST | `/api/tasks/{id}/sections/{seq}/rewrite` | **单章重写（工单 14）**：只改目标章，重新拼装同一份正文成品；仅已完成 / 失败章可重写，其余 → 409 |
-| POST | `/api/tasks/{id}/page-plans` | **创建页面规划（工单 25）**：body `{"target_pages":int}`，3–60；未填充完成 → 409；规划页数恒等于目标，封面与结尾页计入 |
-| GET | `/api/tasks/{id}/page-plans/latest` | 最新页面规划；`GET /page-plans/{plan_id}` 取指定一份，供预览与增删页 |
-| POST | `/api/tasks/{id}/page-plans/{plan_id}/pages` | **单页增页（工单 26）**：生成新规划，实际页数以修改后的规划为准 |
-| DELETE | `/api/tasks/{id}/page-plans/{plan_id}/pages/{at_index}` | **单页删页（工单 26）**：封面不可删 |
-| POST | `/api/knowledge/sources` | **知识库上传（工单 19，multipart `file`）**：TXT / MD / DOCX / PDF / PPTX，落库并建索引；解析或索引失败仍可看可删，状态明确 |
-| GET | `/api/knowledge/sources` | **知识库清单**：文件名 / 分块数 / 索引状态（已入库 / 索引中 / 索引失败） |
-| DELETE | `/api/knowledge/sources/{id}` | **删除知识库资料**：连带删除分块与向量 |
-| POST | `/api/knowledge/reindex` | **重建索引（工单 20）**：换嵌入模型后整体替换旧向量，不与新向量混存 |
-| GET | `/api/deck-themes` | **演示主题族清单**：三套内建主题的 `id` / `name` / `palette`（以原型 `DECKT` 为准）/ 内联字体 / 来源署名 / 许可 / 需保留的网络资源；与生成入口读同一份事实 |
-| GET | `/api/settings/deck-theme` | **HTML 全局默认主题（US20）**：`{"theme":"slate\|ember\|mono","available":[...]}` |
-| PUT | `/api/settings/deck-theme` | 设置 HTML 全局默认主题，body `{"theme":string}`；未知主题 → 400 |
-| GET | `/api/templates` | **模板清单**：模板目录里可被选用的模板（含内置 `_builtin/minimal-default.docx`）+ 是否全局默认 / 是否内置 / 是否可用 / 是否已登记 / 是否文件已缺失 |
-| POST | `/api/templates` | **模板登记**：body `{"name":string,"is_default":bool?}`，登记已放入 `templates/` 的模板 → 201；只接受 `.docx`，`.dotx` / `.dotm` / `.docm`（含改名成 `.docx` 的模板类型文件）→ 400 并提示「请另存为 .docx」；文件不存在 → 404 |
-| POST | `/api/templates/upload` | **模板文件上传**（multipart，字段 `file`）：直接落进 `templates/` 并登记 → 201；只接受 `.docx`，复用同一套扩展名 + 50MB 校验；同名已存在 → 409（不静默覆盖）；模板类型 / 损坏文件 → 400 且不留下半成品 |
-| PUT | `/api/templates/{name}/default` | 设为该格式的**全局默认模板**（同格式至多一个） |
-| POST | `/api/analysis/sources` | **资料分析上传 + 解析**（multipart，字段 `file`）：收 TXT / MD / DOCX / PDF / PPTX，扩展名 + 50MB 校验，文件落 `data/uploads/`；建来源 / 文档 / 分块（长文按约 1200 字切块），`document.parser` 记录实际解析器。解析失败仍 201 且 `document.parse_status="failed"` + 可读 `message`（来源与文件保留，不丢已存数据）；无文本层 → `parse_status="unrecognized"` + 一级 `unrecognized` 契约（`reason` / `locator` / `needs_ocr`），不返回空总结冒充成功 |
-| POST | `/api/analysis/sources/url` | **URL 来源 + 抓取解析**：body `{"url":string}` → 安全校验 → 抓取 → 正文提取 → 建来源 / 文档 / 分块（201）。安全拒绝（非法协议 / 内嵌凭据 / 环回 / 私网 / 链路本地 / 云元数据等）→ 400 + 可读原因，**不落库、不抓取**；抓取失败 / 需登录 / 超时 / 超限 → 201 + `parse_status="failed"` + 可读 `message`（与上传失败同口径）；无正文 → `unrecognized`（`no_main_text` / `empty_page`）。`source.meta` 记 `url` / `final_url` / `fetched_at` / `status` / `content_type` / `size` / `redirects` |
-| GET | `/api/analysis/sources?limit=&offset=` | **最近资料列表（US16/US26）**：按登记顺序倒序返回来源、最新文档（`parse_status` / 分块数 / 文件名）与总结标记；已软删除任务的资料不出现；供分析页「最近资料」与历史回看 |
-| GET | `/api/analysis/sources/{id}` | 来源 + 文档解析结果（`parser` / `parse_status` / `heading_source` / `encoding` / `headings` / `chunks` / `unrecognized` / `unrecognized_parts`），供分析页展示与重试 |
-| POST | `/api/analysis/sources/{id}/analyze` | **分析**：分块 → 逐块分析 → 综合（N 块 = N 次逐块 + 1 次综合，**分析管线不是 RAG**）→ 保存 ≤500 汉字总结并返回引用位置与实际档位（`provider_kind` / `provider_used` / `model_used` / `provider_fallback` / `provider_note`）。总结走 **turbo** 档；该档缺失 → 回退默认 provider 并如实记录。未识别 → 200 + `summary:null` + 显式契约、**不调用模型**；解析失败或所属任务已软删除 → 409；模型失败 → 502（已存来源 / 文档 / 分块保留） |
-| GET | `/api/analysis/sources/{id}/summary` | 读取该来源最新总结（保存即落库，可查看 / 复制 / 导出 Word）；尚无总结 → 404 |
-| POST | `/api/analysis/sources/{id}/summary/word` | **总结导出 Word（US16）**：body 可选 `{"template":string?}` → 200，用已保存总结 + 模板生成 `.docx` 并写入 `summary_deliverables`；无总结 → 409；模板缺失 / 损坏 / 非 `.docx` → 400。**不创建方案、不写 `generations`**，避免把资料总结冒充方案成品 |
-| GET | `/api/analysis/summary-deliverables/{id}` | 下载总结 Word 成品；只投递 `data/deliverables/` 内真实文件，越界 / 缺失 / 未知 id → 404 |
-| POST | `/api/analysis/sources/{id}/send-to-creation` | **一键送入主题创作**：新建 `creation` 任务，把该来源的总结预填为第 0 轮种子输入（已知信息）→ 201；**不调用模型**（首轮问题等用户下次推进时才需要模型）；可选 body `{"title":string?}` |
+| POST | `/api/grilling/tasks` | 发起任务与第一轮拷问 |
+| POST | `/api/grilling/tasks/{id}/answers` | 提交本轮回答与取消的引用 |
+| POST | `/api/grilling/tasks/{id}/plan/confirm` | 确认方案（生成闸门） |
+| POST | `/api/tasks/{id}/fill/run` | 逐章填充正文 |
+| POST | `/api/tasks/{id}/sections/{seq}/rewrite` | 单章重写 |
+| POST | `/api/tasks/{id}/page-plans` | 创建页面规划 |
+| POST | `/api/tasks/{id}/generations` | 生成 Word / HTML / PPTX / PDF |
+| GET | `/api/knowledge/sources` | 知识库清单 |
 
-### Word 成品与模板机制
-
-- **成品**：方案确认后，`POST /api/tasks/{id}/generations` 把结构化方案的正文确定性渲染成 `.docx`（不调用模型），产物落在 `data/deliverables/{任务 id}/`。
-- **样式映射**：`Heading 1~3` / 正文 / 列表 / 表格 六类样式按**模板自己的定义**套用，因此「换模板 → 成品外观随模板变化」。
-- **内置最小默认模板**：开箱可用，首次生成时按需幂等生成到 `templates/_builtin/minimal-default.docx`（**不往 Git 里塞二进制**；`templates/` 本身 gitignore）。它显式定义上述六类样式。
-- **用户模板**：把 `.docx` 模板放进仓库根 `templates/` 即可被选用（`GET /api/templates` 会列出），机制不变；登记（`POST /api/templates`）只补「是否全局默认」等元数据。
-- **默认模板 vs 临时覆盖**：`PUT /api/templates/{name}/default` 设**全局默认模板**；生成请求里的 `template` 是**任务级临时覆盖**——只影响当次生成，**不改变全局默认**，两者在数据与 API 上都分开。
-- **每次生成记录实际所用模板**（`generations.template_used`，取 `templates/` 下的相对路径）。
-- **明确报错而非静默降级**：模板缺失 / 损坏 / 是 `.dotx`、`.dotm`、`.docm` → 400 并提示「请另存为 .docx」；模板未定义某样式 → 该段回退为「直接设字号 / 加粗」并在产物元数据标 `template_style_applied: false`；产物回读完整性检查（US 22）未通过 → 丢弃产物、不落库、返回 5xx。
-- **资料总结也可以用模板导出 Word**：`POST /api/analysis/sources/{id}/summary/word` 把已保存总结写入 `.docx`，记录在 `summary_deliverables`；与方案 Word 共用模板解析顺序（任务级临时选择 > 全局默认 > 内置最小默认），但**不创建方案、不写 `generations`**。
-- **可复现演示记录**：`backend\scripts\demo_word_deliverable.py`（进程内 HTTP 接缝 + 脚本化模型替身，不联网）会真的生成 .docx 并回读打印章节与样式映射，含换模板、缺模板、非 `.docx`、样式回退四种情形。
-
-### 单文件 HTML 演示（主题族、资源内联与署名）
-
-- **成品形态**（术语「单文件 HTML」）：自包含 `.html`，双击经 `file://` 离线打开；不依赖服务器、Node 或外网。
-- **主题族**：内建三套本地主题，**id 与调色板以页面原型的 `DECKT` 为准**——`slate`（Slate 极简）/ `ember`（Ember 暖调）/ `mono`（Mono 等宽）。未知主题 → 400 明确报错，**绝不静默退回默认主题**。
-- **全局默认主题（US20）**：设置页保存 `deck_theme_default`；生成请求省略 `theme` 或传 `null` 时使用它，生成面板首项「跟随全局默认主题」并显示当前默认名；显式主题只覆盖本次，实际主题仍记入 `template_used=deck-theme:<id>`。
-- **资源内联（硬要求）**：样式、翻页脚本、**西文字体**全部内联；西文只打包**实际用到的 latin 子集 woff2**（base64，约 1.33x 膨胀），**中文用系统字体回退**（调研结论：中文单字重全量子集约 2.3 MB，base64 约 3.1 MB，是西文的 10~30 倍，且全量内联会丧失 CJK 按 `unicode-range` 的按需分片加载）。产物元数据记 `inlined_fonts` 与 `cjk_fallback: true`。
-- **无外部网络引用**：生成后扫描产物文本（`http(s)://`、指向网络的 `src=`/`href=`、`<link>`、CDN、非 `data:` 的 `url()`），要求 **0 条**；未过则视为结构损坏 → 丢弃产物、不落库、返回 5xx（US 22）。若将来有主题必须保留网络资源，必须在产物与生成记录里**明确声明**，不得静默（当前三套主题均为 `[]`）。
-- **演示能力**：键盘翻页（← / → / PageUp / PageDown / 空格，另支持 Home / End）、页码与进度条、触屏滑动、**页内演讲者模式**（`S` 切换：当前 / 下一页标题、计时器、讲者备注）。参照的 OpenDesign 主题示例**没有**演讲者模式，故这部分为本项目自写（`presenter_mode: "in-page-overlay"`）。
-- **方案映射是确定性的**：把 `plans.content_md` 解析为块序列再排成幻灯片（标题页 → 各章节页 → 结束页），不调用模型；识别不了的整行按正文处理，绝不丢内容。
-- **可复现演示记录**：`backend\scripts\demo_html_deck.py` 会真的生成三套主题的 `.html`，打印体积、内联字体体积、外部引用扫描结果、页数与离线可用证据。
-- **许可与署名**：版式骨架与翻页运行时改编自 OpenDesign 的 MIT 主题（`html-ppt-zhangzara-{blue-professional,coral,studio}`，`Copyright (c) 2026 Zara Zhang`）；调色板、CSS 与演讲者模式为本地原创；字体为 OFL-1.1（Inter / Source Serif 4 / JetBrains Mono）。许可全文与版权行随包分发在 `backend/app/generation/assets/THIRD-PARTY-LICENSES.md` 与 `assets/licenses/`，署名同时保留在每份产物的注释块里。**白名单只放 MIT 族，`guizang-ppt` 一律排除**（上游实测 AGPL-3.0，冲突未解决）。
-
-### 真实连接测试操作手册（配好 `DEEPSEEK_API_KEY` 后自证真连）
-
-自动化测试一律走 fake 注入、不联网。要在本机确认真连 DeepSeek，按下面一条命令跑（先启动后端，或让 `启动.bat` 拉起）：
+## 测试
 
 ```powershell
-# 一条命令：把 Key 写入默认 provider 的凭据，再点一次连接测试
-$env:DEEPSEEK_API_KEY = "<你的 DeepSeek Key>"
-Invoke-RestMethod -Method Put  http://127.0.0.1:8720/api/providers/1 -ContentType application/json -Body (@{ api_key = $env:DEEPSEEK_API_KEY } | ConvertTo-Json) | Out-Null
-Invoke-RestMethod -Method Post http://127.0.0.1:8720/api/providers/1/test | ConvertTo-Json
-```
+# 后端（仓库根）
+backend\.venv\Scripts\python.exe -m pytest
+backend\.venv\Scripts\python.exe -m ruff check .
 
-预期输出 `"ok": true, "category": "ok", "message": "连接成功"`。把 Key 改坏（删末尾一位）重跑，预期 `category` 为 `auth_error`。
-密钥写入 Windows 凭据管理器（service 名 `ThinkForge/provider/DeepSeek 主流程`，可用 `cmdkey /list` 核对），SQLite 与日志中不会出现明文。
-前端设置页的连接测试按钮（TB-1 前端车道）会调用同一接口，届时无需手敲命令。
-
----
-
-## 架构决策（ADR）
-
-| 编号 | 决策 |
-| --- | --- |
-| [0001](docs/adr/0001-grilling-uses-ported-rules.md) | 拷问工作流**规则移植**，不调用原始技能、不驱动外部 Agent CLI（应用自包含、状态可控） |
-| [0002](docs/adr/0002-defer-rag-to-v1-1.md) | 首版**不做 RAG**，schema 预留，v1.1 第一优先补齐（空知识库上实现 RAG 零收益） |
-| [0003](docs/adr/0003-output-formats-dual-track.md) | 输出**双轨**：v1 = Word + 单文件 HTML；PPTX 推迟到 v1.1，且与 OpenDesign HTML deck 分轨（「PPTX 分轨 / 推迟」两条已被 0004 取代） |
-| [0004](docs/adr/0004-ppt-via-html-page-screenshots.md) | 输出扩为四种；PPT 走 **HTML 逐页截图**装配 `.pptx`（图片型、文字不可编辑），PDF 同源可选导出 |
-| [0005](docs/adr/0005-adopt-minimal-rag.md) | 引入**最小版 RAG**：显式入库、本地索引、可降级检索（取代 0002「首版不做 RAG」的结论） |
-| [0006](docs/adr/0006-introduce-fill-stage.md) | 引入**填充阶段**：逐章扩写正文；生成模块从此会调模型（推翻「生成模块不调模型」的旧契约） |
-
----
-
-## 路线图（曳光弹工单）
-
-v1 以曳光弹方式推进，编号即依赖顺序；每条工单的验收证据见 `.scratch/workbench-v1/issues/`。
-
-| 单 | 内容 |
-| --- | --- |
-| TB-0 | 行走骨架：tasks 最小表 + 健康检查 + 任务创建/列表/读取 + 三栏壳 + 启动脚本 |
-| TB-1 | 模型配置与连接测试 |
-| TB-2 | 拷问第一轮 |
-| TB-3 | 收敛 → 结构化方案 → 确认闸门 |
-| TB-4 | 方案对话式修订与待确认事项 |
-| TB-5 | Word 成品（模板机制） |
-| TB-6 | 单文件 HTML 演示成品 |
-| TB-7 | 资料分析：文本类文件（TXT / MD / DOCX）→ 总结 |
-| TB-8 | 资料分析：版式类文件（PDF / PPTX） |
-| TB-9 | URL 分析 + SSRF 防护 |
-| TB-10 | 历史、续作与删除 |
-
-v1.1 已完成：RAG 最小版（#19~#24）、填充正文与字数控制（#3~#18）、页面规划与截图版 PPT / PDF（#25~#31）。
-
-剩余队列（顺序即优先级）：PPTX 填用户模板 → 文档型 HTML → 方案直接编辑 → exe 打包 → 模板版本管理。
-
----
-
-## 测试与验收
-
-- **后端自动化测试接缝 = 本地工作台 HTTP API 边界**：进程内客户端驱动，不起真实端口、不开浏览器、不联网。前端另有 `node --test` 纯函数单测（170 项），不替代 API 接缝；UI 走手工验收。
-- 断言三类可观察结果：API 状态、持久化数据（「重启续作」靠重建客户端再读验证）、数据目录中的成品文件。
-- 外部世界有四个 fake 注入点：模型客户端（脚本化应答，零真实花费）、URL 抓取（假响应 + 纯函数式 URL 安全校验负测）、嵌入客户端（同文本恒得同一假向量）、页面渲染器（预置 PNG / PDF 字节，**测试绝不启动 Chromium**）。
-- 不对模型输出的语义质量做自动化断言，语义质量由人看证据链验收；前端走手工验收。
-
-### 验证命令（集成分支）
-
-```powershell
-# 后端（在 backend/ 下）：666 passed，ruff 全绿
-.\.venv\Scripts\python.exe -m pytest --no-header -q --tb=short
-.\.venv\Scripts\python.exe -m ruff check .
-
-# 前端（在 frontend/ 下）：170 passed，type-check / build 通过
-npm run test:unit   # node --test "tests/*.test.mts"，覆盖全部纯函数测试
+# 前端
+cd frontend
+npm run test:unit
 npm run type-check
 npm run build
 ```
 
-真实后端联调（无需有效模型 Key）：启动后端后用 `backend/scripts/` 下的演示脚本，或按 TB-7 工单（`16-tb7-file-analysis-text.md`）的演示记录上传 DOCX → 分析页「最近资料」→ `?source=N` 回看 → 总结「下载 Word」→ 设置页切 HTML 全局默认主题 → 生成面板「跟随全局默认主题」。真实模型总结的语义质量与引用渲染仍需持有效 Key 走查一次。
+- 后端 666 项、前端 170 项；`ruff` 全绿，`vue-tsc` 零错误。
+- 测试接缝在 HTTP API 边界：进程内客户端驱动，不起真实端口、不联网、不启动浏览器。
+- 模型、URL 抓取、嵌入、页面渲染器都是可注入的 fake；测试零真实花费。
+- 不对模型输出的语义质量做自动断言——语义由人看证据链验收。
 
----
+## 安全与边界
 
-## 安全边界
+- 只监听 `127.0.0.1`，同网段其他设备无法访问；CORS 仅放行本机开发端口。
+- 上传限制文件类型与大小（默认 50 MB），落盘路径不越出 `data/` 白名单。
+- URL 抓取只允许 http/https，双阶段拦截环回、私网、链路本地与云元数据地址；最多 3 跳、15 s 超时、5 MB 上限。
+- 密钥只进 Windows 凭据管理器；SQLite、日志、前端都不出现明文 Key。
+- 不做 OCR：扫描件与纯图片会明确返回 `no_text_layer`，不猜内容。
+- PPTX 是「一页一张截图」的图片型成品，文字不可编辑、不可检索；需要可编辑 PPT 时选 Word 或 HTML。
+- 首次使用真实 Key 前，建议先跑一次设置页的「连接测试」。
 
-- 仅监听本机回环 `127.0.0.1`，同网段他人无法使用。
-- 文件访问限定工作目录白名单（`data/`、`templates/`），上传校验扩展名与大小上限（默认 50MB）。
-- URL 抓取：仅 http/https；解析前后双检封禁环回 / 私网 / 链路本地 / 元数据地址；最大重定向 3、超时 15s、下载上限 5MB；需登录或受访问控制的站点如实提示且不绕过。
-- 密钥存 Windows 凭据管理器，不入 SQLite、不入日志、不进前端。
-- 调用云端模型前明确告知：提示词与资料片段可能发送给所配置的服务商——「本地运行」不等于「数据不出机」。
-- 知识库入库时，分块文本会发送给嵌入服务商换取向量；检索只在本地 SQLite + numpy 里做，不再外发。未配置嵌入时自动降级为本地关键词检索。
+## 文档与决策
 
----
+- [GLOSSARY.md](GLOSSARY.md)：领域术语表（权威口径）。
+- [docs/adr/](docs/adr/)：架构决策记录 0001–0006，含被取代的旧结论与原因。
+- [docs/agents/](docs/agents/)：issue 跟踪、分诊标签与领域文档约定。
+- [.scratch/workbench-v1/issues/08-v1-unified-spec.md](.scratch/workbench-v1/issues/08-v1-unified-spec.md)：v1 统一规格。
+- [.scratch/workbench-v1/spec.md](.scratch/workbench-v1/spec.md)：产品与技术方案。
 
-## 开发约定
+## 路线图
 
-- 分支主线为 `main`；issue 与规格以 `.scratch/<feature-slug>/` 下的 markdown 跟踪，约定见 [`docs/agents/issue-tracker.md`](docs/agents/issue-tracker.md)。
-- 动手改代码前，先读 [`GLOSSARY.md`](GLOSSARY.md) 与涉及区域的 ADR；命名领域概念时严格使用术语表词汇。
-- 与既有 ADR 冲突时明确摆出，不静默覆盖。
+- **v1.0**：拷问闭环、资料分析、Word 与单文件 HTML、历史与续作。
+- **v1.1（当前）**：填充正文与字数控制、页面规划与截图版 PPTX / PDF、知识库与最小版 RAG。
+- **下一步**：PPTX 填用户模板 → 文档型 HTML → 方案直接编辑 → 可执行打包 → 模板版本管理。
 
----
+## 许可证
 
-## 许可与署名
-
-- 拷问机制基于 Matt Pocock 的 `grilling` 技能规则移植（MIT），保留署名；本项目**不声称**直接调用原始技能。
-- HTML 演示主题的**版式骨架与翻页运行时**改编自 [nexu-io/open-design](https://github.com/nexu-io/open-design) 的 MIT 主题目录（`html-ppt-zhangzara-blue-professional` / `-coral` / `-studio`，`Copyright (c) 2026 Zara Zhang`；仓库主体为 Apache-2.0）；调色板、CSS、方案→幻灯片映射与页内演讲者模式为本项目**本地原创**，不做像素级复刻。
-- 内联字体为 SIL OFL-1.1（Inter / Source Serif 4 / JetBrains Mono），不单独售卖字体。
-- 许可全文、版权行与「OpenDesign 派生 / 本地原创」的逐项区分见 [`backend/app/generation/assets/THIRD-PARTY-LICENSES.md`](backend/app/generation/assets/THIRD-PARTY-LICENSES.md)；每份生成的 `.html` 里也保留署名注释。
-
-### 资料分析（文件与 URL → 总结）
-
-- **命名纪律**：这是「分块 → 逐块分析 → 综合」的**分析管线**，**不是 RAG**（ADR-0002 的命名纪律仍有效）。只处理刚上传的单份资料，不建索引、不做跨文档检索；跨资料的向量检索属于 v1.1 知识库（ADR-0005），两条路径不共用入口。
-- **入口与校验**：`POST /api/analysis/sources` 收 TXT / MD / DOCX / PDF / PPTX，扩展名白名单 + 50MB 上限；`POST /api/analysis/sources/url` 收公开网页 URL。上传件落在 `data/uploads/`，路径不越出 `data/` 白名单。
-- **解析规则**（调研 A1 / A5）：
-  - TXT 编码顺序 `utf-8-sig` → `gb18030` → `charset-normalizer`，并把实际编码回传（`document.encoding`）；
-  - MD 走 `markdown-it-py` 的 token 流，**不用正则**——代码围栏里的 `#` 不会被误判为标题；
-  - DOCX 用 `paragraph.style.name` 判标题（`Title` / `Heading N`），作者手写加粗放大时退回字号 / 加粗启发式，并以 `heading_source: style | heuristic | none` 如实标注；图片、SmartArt、图表内文字、文本框浮动内容读不到 → 归入未识别；
-  - PDF 用 `pypdf` 逐页提取文本，按字号相对全文众数字号的比例识别标题（`heading_source: heuristic | none`）；locator 为 `{page, line}`，分块引用可回溯到页 / 行；页内图片计入未识别，扫描件（无文本层）→ `no_text_layer` + `needs_ocr=true`；
-  - PPTX 用 `python-pptx` 读每页标题占位符、正文、表格逐行；locator 为 `{slide, shape, paragraph}` / `{slide, table, row}`；图片 / 图表 / 组合形状 / 嵌入对象逐项明示未识别，组合形状不递归展开；
-  - 所有解析器都在 `documents.parser` 记录实际实现（`pypdf` / `python-pptx` / `python-docx` / `markdown-it-py` / `plain-text`），不把不同格式混为一个不可区分的“已解析”。
-- **URL 安全边界**：仅 http/https；拒绝内嵌用户名 / 密码、环回、私网、链路本地、云元数据、未指定 / 组播 / 保留地址；解析前与解析后双检，重定向最多 3 跳且每跳复检；超时 15s、下载上限 5MB；需登录 / 受访问控制 / 超时 / 超限如实提示，**不绕过**。正文由 `trafilatura` 精确抽取，导航 / 广告不进正文；抽不出正文 → `no_main_text` / `empty_page` 明示。
-- **分析**：按约 1200 字切块（超长单块按句读二次切分），逐块分析后再综合成 **≤500 汉字**的总结，提炼主题 / 核心观点 / 关键内容 / 重要数据 / 结论；模型给长了按句读收敛并记 `truncated`。
-- **未识别是一级输出字段**：统一契约 `{unrecognized, reason, locator, needs_ocr}`。无文本层（典型：扫描件 / 图片型文件）→ `reason="no_text_layer"`、`needs_ocr=true`，**短路不调用模型**、不返回空总结；有正文但含图片 / 图表 / 组合形状时用 `unrecognized_parts` 逐项明示，不伪装成完整分析。
-- **失败不丢数据**：解析失败 → 文档 `parse_status="failed"` + 可读提示，来源 / 文件仍在；模型失败 → 502 可读错误，已入库的来源 / 文档 / 分块保留，可安全重试。
-- **删除是留痕终态**：任务软删除后，其资料不再出现在「最近资料」，直接调用分析返回 409；分析请求不会把任务状态改回 `completed`。若任务 pin 的模型配置已被删除，任务页会明确提示“当前绑定的模型配置已不存在”，并允许改回「跟随默认模型」；不静默降级。
-- **档位**：总结固定走 **turbo** 档（规格：主流程 plus、总结流程 turbo），由 `TieredModelClient` 按档位解析 provider；该档不存在时回退当前默认 provider，并在总结记录与 API 结果里写明 `provider_fallback` / `provider_used` / `provider_note`（不静默）。主流程（拷问 / 方案 / 修订）默认仍走原默认 provider 客户端；任务级覆盖存在时按 `tasks.provider_id` 解析（US23）。
-- **一键送入主题创作**：`POST /api/analysis/sources/{id}/send-to-creation` 新建 `creation` 任务，把总结作为第 0 轮种子输入预填；**不调用模型**，首轮问题等用户下次推进 / 发起时才产生。
-- **可复现演示记录**：`backend\scripts\demo_analysis_long_docx.py`（320 段长 DOCX：分块数、调用次数、总结汉字数、引用位置、档位证据、未识别提示）；`backend\scripts\demo_analysis_layout.py`（PDF / PPTX 页与幻灯片 locator、扫描件与损坏文件路径）。两者都走进程内 HTTP + 脚本化模型，不联网、零花费。
+本仓库目前**未声明开源许可证**。public 仓库仅表示可公开访问，不构成复制、分发或商用授权；如需对外使用，请先补充 `LICENSE`。
